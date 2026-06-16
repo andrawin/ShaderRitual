@@ -14,18 +14,55 @@ Every shader is broken into named **elements**. For each element you can:
 Each shader has its own menu generated from its element list, so the element →
 audio mapping is per-shader. MIDI-learn is available on every amount slider.
 
+## Beyond per-element reactivity
+
+Two newer manipulation layers sit on top of the element system:
+
+- **Camera / Motion rig** — a *global* virtual camera shared by every shader,
+  decoupled from element reactivity. Pick a **Mode**:
+  - `Manual` — a steady orbit at a chosen speed.
+  - `BPM` — tempo-locked jump-cuts + drift (set the BPM; `Cut variety` controls
+    how wild the re-framing gets). This reproduces the "camera angle play" of the
+    reference shader.
+  - `Audio` — orbit speed, push-in and FOV are driven by a chosen band.
+
+  Distance, Height and Field of view are always adjustable, and every camera
+  slider is MIDI-learnable.
+
+- **Detachable controls** — the gear panel can pop out into its **own window**
+  (the ⧉ button). The detached controller and the render window stay in
+  lock-step over a `BroadcastChannel`: moving any slider, changing the camera
+  mode, learning MIDI or toggling audio updates the other window **instantly**.
+  The detached window carries the live band meter too, so you can run the visual
+  full-screen on one display and drive it from another.
+
 ## Architecture
 
 | File | Responsibility |
 | --- | --- |
 | `analyser.ts` | Web Audio `AnalyserNode` FFT wrapper |
 | `audio-bands.ts` | Splits FFT into Low/Mid/High, applies sensitivity + noise gate |
+| `camera.ts` | CPU camera rig — turns the camera config + bands into shared uniforms |
 | `shaders/common.ts` | Shared full-screen-quad vertex shader |
-| `shaders/sanctum.ts` | The first shader (Buffer A + Image bloom pass) with element metadata |
+| `shaders/sanctum.ts` | Raymarched chamber shader (Buffer A + Image bloom pass) |
+| `shaders/cathedral.ts` | Reactive column-grid shader; showcase for the camera rig |
 | `shader-registry.ts` | Shader list + default/sanitized config |
-| `shader-view.ts` | Three.js two-pass renderer; auto-creates per-element uniforms |
-| `main.ts` | Lit UI: shader selector, per-element menus, MIDI, audio, metering |
+| `shader-view.ts` | Three.js two-pass renderer; auto-creates per-element + camera uniforms |
+| `main.ts` | Lit UI: shader selector, camera/motion, per-element menus, MIDI, detachable controls |
 | `types.ts` | Shared config + shader-definition types |
+
+### Camera uniforms available to every shader
+
+The renderer feeds these from the global camera rig each frame:
+
+| Uniform | Meaning |
+| --- | --- |
+| `iCamOrbit` | orbit angle in radians |
+| `iCamDist` | distance multiplier around the shader's native framing |
+| `iCamHeight` | normalised height offset (−1..1) — scale to your world |
+| `iCamFov` | field of view in degrees |
+| `iCamReact` | 0..1 motion energy (beat pulse / audio level) |
+| `iBeat` | continuous beat phase = `time * bpm / 60` |
 
 ### How an element maps to the shader
 

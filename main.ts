@@ -7,10 +7,13 @@ import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { Band, ShaderRitualConfig } from './types';
+import type { Band, CameraMode, ShaderRitualConfig } from './types';
 
 const STORAGE_KEY = 'shader-ritual-settings-v1';
 const MIDI_MAP_KEY = 'shader-ritual-midi-map-v1';
+// Cross-window bus that keeps a detached control panel and the render window
+// in lock-step (config edits, live band meter, audio start/stop).
+const SYNC_CHANNEL = 'shader-ritual-sync';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -44,6 +47,11 @@ export class ShaderRitualApp extends LitElement {
   private pendingMidiUpdate = false;
   private saveTimeout: any = null;
   private monitorRaf = 0;
+
+  // Detached control-panel support.
+  private readonly isController = new URLSearchParams(location.search).has('control');
+  private sync: BroadcastChannel | null = null;
+  @state() private remoteBands: any = null;
 
   @state() config: ShaderRitualConfig = this.loadSavedConfig();
 
@@ -88,6 +96,23 @@ export class ShaderRitualApp extends LitElement {
       overflow-y: auto; color: #ddd; border-left: 1px solid rgba(255,255,255,0.1);
     }
     .settings-panel.open { transform: translateX(0); }
+
+    /* Detached controller window: panel fills the whole tab. */
+    :host(.controller-host) { display: block; }
+    .settings-panel.controller {
+      position: static; width: auto; transform: none; height: 100vh;
+      border-left: none; box-sizing: border-box;
+    }
+
+    .header-actions { display: flex; align-items: center; gap: 6px; }
+    .live-dot {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 0.65rem;
+      color: #10b981; text-transform: uppercase; letter-spacing: 1px;
+    }
+    .live-dot::before {
+      content: ''; width: 8px; height: 8px; border-radius: 50%;
+      background: #10b981; box-shadow: 0 0 8px #10b981; animation: pulse 1.5s infinite;
+    }
 
     .panel-header {
       display: flex; justify-content: space-between; align-items: center;
@@ -192,9 +217,86 @@ export class ShaderRitualApp extends LitElement {
   `;
 
   firstUpdated() {
+    this.setupSync();
     this.initMidi();
     this.startMonitor();
   }
+
+  /* ----------------------- Cross-window sync ---------------------- */
+
+  private setupSync() {
+    if (this.isController) {
+      // This window only drives the controls; force the panel open and let the
+      // host fill the tab.
+      this.showSettings = true;
+      (this as any).classList?.add('controller-host');
+    }
+    if (typeof BroadcastChannel === 'undefined') return;
+    this.sync = new BroadcastChannel(SYNC_CHANNEL);
+    this.sync.onmessage = (e) => this.handleSync(e.data);
+    // A freshly opened controller asks the render window for the current state.
+    if (this.isController) this.sync.postMessage({ type: 'request' });
+  }
+
+  private handleSync(msg: any) {
+    if (!msg || typeof msg !== 'object') return;
+    switch (msg.type) {
+      case 'request':
+        // Render window answers a controller with the full current config.
+        if (!this.isController) this.broadcastConfig();
+        break;
+      case 'config':
+        this.config = sanitizeConfig(msg.config);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+        break;
+      case 'bands':
+        // Controller mirrors the render window's live meter + audio state.
+        if (this.isController) {
+          this.remoteBands = msg.bands;
+          this.isRecording = msg.isRecording;
+          this.status = msg.status;
+          this.error = msg.error || '';
+        }
+        break;
+      case 'command':
+        if (!this.isController) this.runCommand(msg.name);
+        break;
+    }
+  }
+
+  /** Push the live config to the other window (called on every local edit). */
+  private broadcastConfig() {
+    this.sync?.postMessage({ type: 'config', config: this.config });
+  }
+
+  private runCommand(name: string) {
+    if (name === 'startAudio') this.startRecording();
+    else if (name === 'stopAudio') this.stopRecording();
+    else if (name === 'scanMidi') this.initMidi();
+  }
+
+  /** Open the control panel in its own window, kept in sync via BroadcastChannel. */
+  private detachControls = () => {
+    window.open(
+      `${location.pathname}?control`,
+      'shader-ritual-control',
+      'width=440,height=920',
+    );
+  };
+
+  /** Audio toggle that works from either window (controller proxies a command). */
+  private toggleAudio = () => {
+    if (this.isController) {
+      this.sync?.postMessage({
+        type: 'command',
+        name: this.isRecording ? 'stopAudio' : 'startAudio',
+      });
+    } else if (this.isRecording) {
+      this.stopRecording();
+    } else {
+      this.startRecording();
+    }
+  };
 
   /* ----------------------------- MIDI ----------------------------- */
 
@@ -286,6 +388,13 @@ export class ShaderRitualApp extends LitElement {
       'sensitivity.mid': { min: 0, max: 5 },
       'sensitivity.high': { min: 0, max: 10 },
       fftSmoothing: { min: 0, max: 0.95 },
+      'camera.bpm': { min: 60, max: 200 },
+      'camera.orbitSpeed': { min: 0, max: 3 },
+      'camera.distance': { min: 0.3, max: 2.5 },
+      'camera.height': { min: -1, max: 1 },
+      'camera.fov': { min: 20, max: 120 },
+      'camera.reactAmount': { min: 0, max: 3 },
+      'camera.cutChance': { min: 0, max: 1 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
@@ -309,6 +418,7 @@ export class ShaderRitualApp extends LitElement {
         requestAnimationFrame(() => {
           this.config = { ...this.config };
           this.pendingMidiUpdate = false;
+          this.broadcastConfig();
           clearTimeout(this.saveTimeout);
           this.saveTimeout = setTimeout(
             () => localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config)),
@@ -373,14 +483,34 @@ export class ShaderRitualApp extends LitElement {
   };
 
   private startMonitor = () => {
+    let lastBroadcast = 0;
     const draw = () => {
       this.monitorRaf = requestAnimationFrame(draw);
+
+      // Render window: stream the live meter + audio state to any controller.
+      if (!this.isController && this.sync) {
+        const view = this.shadowRoot?.querySelector('shader-ritual-view') as any;
+        const bands = view?.getBandData?.();
+        const now = performance.now();
+        if (bands && now - lastBroadcast > 60) {
+          lastBroadcast = now;
+          this.sync.postMessage({
+            type: 'bands',
+            bands,
+            isRecording: this.isRecording,
+            status: this.status,
+            error: this.error,
+          });
+        }
+      }
+
       if (!this.showSettings) return;
-      const view = this.shadowRoot?.querySelector('shader-ritual-view') as any;
       const canvas = this.shadowRoot?.querySelector('#monitorCanvas') as HTMLCanvasElement;
-      if (!view || !canvas) return;
+      if (!canvas) return;
       const ctx = canvas.getContext('2d');
-      const data = view.getBandData?.();
+      const data = this.isController
+        ? this.remoteBands
+        : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
       if (!ctx || !data) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const bands = [
@@ -422,6 +552,7 @@ export class ShaderRitualApp extends LitElement {
     ref[keys[keys.length - 1]] = value;
     this.config = { ...this.config };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.broadcastConfig();
   };
 
   /* ----------------------------- UI ------------------------------ */
@@ -483,13 +614,70 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
+  private renderCameraSection() {
+    const cam = this.config.camera;
+    const modes: { id: CameraMode; label: string }[] = [
+      { id: 'manual', label: 'Manual orbit' },
+      { id: 'bpm', label: 'BPM cuts' },
+      { id: 'audio', label: 'Audio reactive' },
+    ];
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Camera · Motion</span>
+        <div class="element-desc" style="margin-bottom:10px;">
+          Drives the whole shot independently of element reactivity — orbit,
+          framing and field of view. Pick how it's animated below.
+        </div>
+        <div class="control-row">
+          <label>Mode</label>
+          <select
+            .value=${cam.mode}
+            @change=${(e: any) => this.updateConfig('camera.mode', e.target.value as CameraMode)}>
+            ${modes.map((m) => html`<option value=${m.id}>${m.label}</option>`)}
+          </select>
+        </div>
+        ${this.renderSlider('Tempo (BPM)', 'camera.bpm', 60, 200, 1)}
+        ${cam.mode !== 'bpm'
+          ? this.renderSlider('Orbit speed', 'camera.orbitSpeed', 0, 3, 0.05)
+          : this.renderSlider('Cut variety', 'camera.cutChance', 0, 1, 0.05)}
+        ${cam.mode === 'audio'
+          ? html`<div class="control-row">
+              <label>Drive band</label>
+              <select
+                .value=${cam.audioBand}
+                @change=${(e: any) => this.updateConfig('camera.audioBand', e.target.value as Band)}>
+                <option value="none">None</option>
+                <option value="low">Low</option>
+                <option value="mid">Mid</option>
+                <option value="high">High</option>
+              </select>
+            </div>`
+          : ''}
+        ${cam.mode !== 'manual'
+          ? this.renderSlider('React amount', 'camera.reactAmount', 0, 3, 0.05)
+          : ''}
+        ${this.renderSlider('Distance', 'camera.distance', 0.3, 2.5, 0.05)}
+        ${this.renderSlider('Height', 'camera.height', -1, 1, 0.02)}
+        ${this.renderSlider('Field of view', 'camera.fov', 20, 120, 1)}
+      </div>
+    `;
+  }
+
   private renderSettings() {
     const def = getShader(this.config.activeShader);
     return html`
-      <div class="settings-panel ${this.showSettings ? 'open' : ''}">
+      <div class="settings-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
         <div class="panel-header">
           <h2>Shader Ritual</h2>
-          <button class="icon-btn" @click=${() => (this.showSettings = false)}>&times;</button>
+          <div class="header-actions">
+            ${this.isController
+              ? html`<span class="live-dot">Live control</span>`
+              : html`
+                  <button class="icon-btn" title="Pop controls out to a separate window"
+                    @click=${this.detachControls}>⧉</button>
+                  <button class="icon-btn" @click=${() => (this.showSettings = false)}>&times;</button>
+                `}
+          </div>
         </div>
 
         <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
@@ -505,6 +693,9 @@ export class ShaderRitualApp extends LitElement {
           </select>
           <div class="element-desc" style="margin-top:8px;">${def.description}</div>
         </div>
+
+        <!-- CAMERA / MOTION (global) -->
+        ${this.renderCameraSection()}
 
         <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
         <div class="setting-group">
@@ -582,7 +773,7 @@ export class ShaderRitualApp extends LitElement {
           <div class="control-row action-row">
             <button
               class="action-btn ${this.isRecording ? 'active' : ''}"
-              @click=${this.isRecording ? this.stopRecording : this.startRecording}>
+              @click=${this.toggleAudio}>
               ${this.isRecording ? 'Kill Audio' : 'Ignite Audio'}
             </button>
           </div>
@@ -592,6 +783,10 @@ export class ShaderRitualApp extends LitElement {
   }
 
   render() {
+    // Detached controller window: just the panel, no render canvas / gear.
+    if (this.isController) {
+      return html`<div>${this.renderSettings()}</div>`;
+    }
     return html`
       <div>
         <button class="settings-btn" @click=${() => (this.showSettings = !this.showSettings)}>

@@ -26,6 +26,13 @@ varying vec2 vUv;
 uniform vec3 iResolution;
 uniform float iTime;
 
+uniform float iCamOrbit;
+uniform float iCamDist;
+uniform float iCamHeight;
+uniform float iCamFov;
+uniform float iCamReact;
+uniform float iBeat;
+
 uniform float core_react;
 uniform float core_visible;
 uniform float beams_react;
@@ -105,10 +112,12 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     uv -= 0.5;
   uv *=2.;
   uv *= vec2(iResolution.x /iResolution.y, 1.);
-  float t = (it(time*0.1)-0.5)*30.+time*0.1;
+  // Camera driven by the global motion rig (manual / BPM / audio).
+  float t = iCamOrbit;
+  float focal = 1.0 / tan(iCamFov * 3.14159265 / 360.);
 
-  vec3 e = vec3(0.,-0.5,-3.5);
-  vec3 r = normalize(vec3(uv,1.6));
+  vec3 e = vec3(0., -0.5 + iCamHeight * 2.0, -3.5 * iCamDist);
+  vec3 r = normalize(vec3(uv, focal));
   e.xz *= rot(t);
   r.xz *= rot(t);
 

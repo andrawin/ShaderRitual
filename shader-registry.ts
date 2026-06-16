@@ -2,11 +2,27 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
+import type { CameraConfig, ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
 import { sanctum } from './shaders/sanctum';
+import { cathedral } from './shaders/cathedral';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum];
+export const SHADERS: ShaderDef[] = [sanctum, cathedral];
+
+/** Fresh camera / motion rig defaults. */
+export function defaultCamera(): CameraConfig {
+  return {
+    mode: 'bpm',
+    bpm: 128,
+    orbitSpeed: 0.3,
+    distance: 1.0,
+    height: 0.0,
+    fov: 60,
+    audioBand: 'low',
+    reactAmount: 1.5,
+    cutChance: 0.5,
+  };
+}
 
 export function getShader(id: string): ShaderDef {
   return SHADERS.find((s) => s.id === id) || SHADERS[0];
@@ -34,6 +50,7 @@ export function defaultConfig(): ShaderRitualConfig {
     fftSmoothing: 0.7,
     sensitivity: { low: 1.5, mid: 1.5, high: 2.5 },
     thresholds: { low: 0.15, mid: 0.15, high: 0.15 },
+    camera: defaultCamera(),
     shaders,
   };
 }
@@ -51,6 +68,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     ...saved,
     sensitivity: { ...base.sensitivity, ...(saved.sensitivity || {}) },
     thresholds: { ...base.thresholds, ...(saved.thresholds || {}) },
+    camera: { ...base.camera, ...(saved.camera || {}) },
     shaders: { ...base.shaders },
   };
 

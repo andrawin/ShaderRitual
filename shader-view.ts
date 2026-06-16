@@ -7,6 +7,7 @@ import { customElement, property } from 'lit/decorators.js';
 import * as THREE from 'three';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
+import { CameraRig } from './camera';
 import { commonVertex } from './shaders/common';
 import { getShader } from './shader-registry';
 import type { Bands, ShaderDef, ShaderRitualConfig } from './types';
@@ -27,6 +28,8 @@ export class ShaderRitualView extends LitElement {
   private uniforms: Record<string, { value: any }> = {};
   private currentShaderId = '';
   private startTime = performance.now();
+  private lastFrame = performance.now();
+  private cameraRig = new CameraRig();
   private lastBands: Bands = { low: 0, mid: 0, high: 0, rawLow: 0, rawMid: 0, rawHigh: 0 };
   private canvas!: HTMLCanvasElement;
 
@@ -96,6 +99,13 @@ export class ShaderRitualView extends LitElement {
       iResolution: { value: new THREE.Vector3(1, 1, 1) },
       iTime: { value: 0 },
       iChannel0: { value: this.bufferTarget.texture },
+      // Global camera / motion rig — available to every shader.
+      iCamOrbit: { value: 0 },
+      iCamDist: { value: 1 },
+      iCamHeight: { value: 0 },
+      iCamFov: { value: 60 },
+      iCamReact: { value: 0 },
+      iBeat: { value: 0 },
     };
     for (const el of def.elements) {
       this.uniforms[`${el.id}_react`] = { value: 0 };
@@ -161,7 +171,20 @@ export class ShaderRitualView extends LitElement {
       this.uniforms[`${el.id}_visible`].value = c ? (c.visible ? 1 : 0) : 1;
     }
 
-    this.uniforms.iTime.value = (performance.now() - this.startTime) / 1000;
+    const now = performance.now();
+    const time = (now - this.startTime) / 1000;
+    const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
+    this.lastFrame = now;
+    this.uniforms.iTime.value = time;
+
+    // Drive the shared camera uniforms from the global motion rig.
+    const cam = this.cameraRig.update(dt, time, this.config.camera, this.lastBands);
+    this.uniforms.iCamOrbit.value = cam.orbit;
+    this.uniforms.iCamDist.value = cam.dist;
+    this.uniforms.iCamHeight.value = cam.height;
+    this.uniforms.iCamFov.value = cam.fov;
+    this.uniforms.iCamReact.value = cam.react;
+    this.uniforms.iBeat.value = cam.beat;
 
     this.renderer.setRenderTarget(this.bufferTarget);
     this.renderer.render(this.bufferScene, this.camera);
