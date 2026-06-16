@@ -17,3 +17,19 @@ void main() {
   gl_Position = vec4(position.xy, 0.0, 1.0);
 }
 `;
+
+/**
+ * GLSL ES 3.00 variant of {@link commonVertex} for shaders that need WebGL2
+ * features (uint/bit ops, `texture()`, dynamic-ish loops). Used with
+ * `glslVersion: THREE.GLSL3`; Three prepends the `#version 300 es` directive.
+ */
+export const commonVertex3 = `
+precision highp float;
+in vec3 position;
+in vec2 uv;
+out vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;

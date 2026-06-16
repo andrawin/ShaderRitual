@@ -13,9 +13,20 @@ import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
 import { phantom } from './shaders/phantom';
 import { mandala } from './shaders/mandala';
+import { cosa } from './shaders/cosa';
+import { thunder } from './shaders/thunder';
+import { brainfiller } from './shaders/brainfiller';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum, cathedral, phantom, mandala];
+export const SHADERS: ShaderDef[] = [
+  sanctum,
+  cathedral,
+  phantom,
+  mandala,
+  cosa,
+  thunder,
+  brainfiller,
+];
 
 /** Fresh camera / motion rig defaults. */
 export function defaultCamera(): CameraConfig {

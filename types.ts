@@ -105,6 +105,11 @@ export interface ShaderDef {
   bufferBShader?: string;
   /** Image fragment shader (samples Buffer A via iChannel0, draws to screen). */
   imageShader: string;
+  /**
+   * When true the buffer passes are compiled as GLSL ES 3.00 (`#version 300 es`)
+   * for WebGL2 features such as uint / bit ops. The image pass stays ES 1.00.
+   */
+  glsl3?: boolean;
   elements: ShaderElement[];
 }
 

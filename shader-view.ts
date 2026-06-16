@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
-import { commonVertex } from './shaders/common';
+import { commonVertex, commonVertex3 } from './shaders/common';
 import { getShader } from './shader-registry';
 import type { Bands, ShaderDef, ShaderRitualConfig } from './types';
 
@@ -147,10 +147,12 @@ export class ShaderRitualView extends LitElement {
       this.uniforms[`${el.id}_visible`] = { value: 1 };
     }
 
+    // Buffer passes may opt into GLSL ES 3.00; the image pass stays ES 1.00.
     const bufferMat = new THREE.RawShaderMaterial({
       uniforms: this.uniforms,
-      vertexShader: commonVertex,
+      vertexShader: def.glsl3 ? commonVertex3 : commonVertex,
       fragmentShader: def.bufferShader,
+      glslVersion: def.glsl3 ? THREE.GLSL3 : null,
     });
     const imageMat = new THREE.RawShaderMaterial({
       uniforms: this.uniforms,
@@ -300,10 +302,12 @@ export class ShaderRitualView extends LitElement {
     const oldBuf = bufMesh.material as THREE.Material;
     const oldImg = imgMesh.material as THREE.Material;
 
+    const glsl3 = !!getShader(this.config.activeShader).glsl3;
     const bufferMat = new THREE.RawShaderMaterial({
       uniforms: this.uniforms,
-      vertexShader: commonVertex,
+      vertexShader: glsl3 ? commonVertex3 : commonVertex,
       fragmentShader: bufferSrc,
+      glslVersion: glsl3 ? THREE.GLSL3 : null,
     });
     const imageMat = new THREE.RawShaderMaterial({
       uniforms: this.uniforms,
