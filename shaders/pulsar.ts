@@ -68,8 +68,12 @@ float cyl(vec2 p, float r){ return length(p) - r; }
 
 float needles(vec3 p){
   vec3 pp = p;
-  // was: 0.8 - clamp(megabass, 0., 0.75) — now driven by the ball element
-  float l_needle = 0.8 - clamp(ball_react, 0., 0.75);
+  // Original: l_needle = 0.8 - clamp(megabass, 0., 0.75), where megabass was a
+  // RAW (hot) FFT bin near 1.0 on a kick. The engine's band is gated/normalised
+  // and peaks lower, so we remap it through a smoothstep to reach the same
+  // 0.8..0.05 range — spikes still only emerge past the sphere on strong hits.
+  float drive = clamp(ball_react, 0., 1.0);
+  float l_needle = 0.8 - 0.75 * smoothstep(0.05, 0.45, drive);
 
   p.xz = moda(p.xz, 2. * PI / 7.);
   float n1 = cyl(p.yz, 0.1 - p.x * l_needle);
@@ -193,9 +197,9 @@ export const pulsar: ShaderDef = {
     {
       id: 'ball',
       name: 'Spikes',
-      description: 'Length of the body spikes (the original audio "megabass"). React on bass.',
+      description: 'Length of the body spikes (the original audio "megabass"). Bass drives them out.',
       defaultBand: 'low',
-      defaultAmount: 1.0,
+      defaultAmount: 1.3,
       canHide: true,
       defaultVisible: true,
     },
