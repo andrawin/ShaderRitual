@@ -77,6 +77,7 @@ export function defaultConfig(): ShaderRitualConfig {
     thresholds: { low: 0.15, mid: 0.15, high: 0.15 },
     camera: defaultCamera(),
     motion: defaultMotion(),
+    overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
     shaders,
   };
 }
@@ -96,6 +97,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     thresholds: { ...base.thresholds, ...(saved.thresholds || {}) },
     camera: { ...base.camera, ...(saved.camera || {}) },
     motion: { ...base.motion, ...(saved.motion || {}) },
+    overlay: { ...base.overlay, ...(saved.overlay || {}) },
     shaders: { ...base.shaders },
   };
 
@@ -112,6 +114,9 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
 
   if (!SHADERS.some((s) => s.id === merged.activeShader)) {
     merged.activeShader = base.activeShader;
+  }
+  if (!SHADERS.some((s) => s.id === merged.overlay.shader)) {
+    merged.overlay = { ...merged.overlay, shader: base.overlay.shader };
   }
   return merged;
 }

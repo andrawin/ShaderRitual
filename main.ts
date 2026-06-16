@@ -609,6 +609,7 @@ export class ShaderRitualApp extends LitElement {
       'camera.cutChance': { min: 0, max: 1 },
       'motion.idle': { min: 0, max: 1 },
       'motion.gain': { min: 0, max: 3 },
+      'overlay.opacity': { min: 0, max: 1 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
@@ -964,6 +965,52 @@ export class ShaderRitualApp extends LitElement {
     `;
   }
 
+  private renderOverlaySection() {
+    const ov = this.config.overlay;
+    const ovDef = getShader(ov.shader);
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Overlay Layer · combine across shaders</span>
+        <div class="element-desc" style="margin-bottom:10px;">
+          Composite a second shader on top of the active one, then hide the
+          overlay's other elements to keep only the part you want — e.g. set this
+          to Mandala and hide all but its Light Columns to ride its beams over any
+          shader. Add / Screen drop the overlay's dark areas out.
+        </div>
+        <div class="control-row">
+          <label>Enable overlay</label>
+          <input type="checkbox" .checked=${ov.enabled}
+            @change=${(e: any) => this.updateConfig('overlay.enabled', e.target.checked)} />
+        </div>
+        ${ov.enabled
+          ? html`
+              <div class="control-row">
+                <label>Overlay shader</label>
+                <select .value=${ov.shader}
+                  @change=${(e: any) => this.updateConfig('overlay.shader', e.target.value)}>
+                  ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
+                </select>
+              </div>
+              <div class="control-row">
+                <label>Blend</label>
+                <select .value=${ov.blend}
+                  @change=${(e: any) => this.updateConfig('overlay.blend', e.target.value)}>
+                  <option value="add">Add (glow)</option>
+                  <option value="screen">Screen</option>
+                  <option value="mix">Mix</option>
+                </select>
+              </div>
+              ${this.renderSlider('Opacity', 'overlay.opacity', 0, 1, 0.02)}
+              <div class="element-desc" style="margin:12px 0 6px;">
+                ${ovDef.name} elements — hide what you don't want:
+              </div>
+              ${ovDef.elements.map((el) => this.renderElement(ovDef.id, el.id))}
+            `
+          : ''}
+      </div>
+    `;
+  }
+
   private renderSettings() {
     const def = getShader(this.config.activeShader);
     return html`
@@ -1019,6 +1066,9 @@ export class ShaderRitualApp extends LitElement {
           <span class="group-title">${def.name} · Element Allocation</span>
           ${def.elements.map((el) => this.renderElement(def.id, el.id))}
         </div>
+
+        <!-- OVERLAY LAYER (combine elements across shaders) -->
+        ${this.renderOverlaySection()}
 
         <!-- RESPONSE PROFILE -->
         <div class="setting-group">

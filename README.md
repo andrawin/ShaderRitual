@@ -35,6 +35,14 @@ Two newer manipulation layers sit on top of the element system:
   slider is MIDI-learnable. BPM has a **number input** + **Tap** button for
   exact tempo matching.
 
+- **Overlay layer (combine elements across shaders)** — composite a *second*
+  shader on top of the active one (Add / Screen / Mix + opacity). Because each
+  element has a hide toggle, you can mute everything in the overlay except the
+  part you want — e.g. set the overlay to **Mandala**, hide all but its **Light
+  Columns**, and ride its beams over any base shader. Under Add/Screen the
+  overlay's dark areas drop out, so only the kept element shows through. Both
+  layers run their own full pipeline (feedback + elements), so it's ~2× the GPU.
+
 - **Calm on silence (Motion)** — animation time advances at `idle + level × gain`
   where `level` is the live audio energy. So the whole scene (and the camera)
   **calms when no sound is coming in**, and at `idle = 0` it freezes entirely.
@@ -73,7 +81,8 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/thunder.ts` | Single-pass procedural lightning bolt |
 | `shaders/pulsar.ts` | Spiky body + warped tunnel ringed by kaleidoscopic **laser** beams |
 | `shader-registry.ts` | Shader list + default/sanitized config |
-| `shader-view.ts` | Three.js two-pass renderer; **ping-pong** targets; per-element + camera uniforms |
+| `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
+| `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |
 | `main.ts` | Lit UI: shader selector, camera/motion, per-element menus, MIDI, detachable controls |
 | `types.ts` | Shared config + shader-definition types |
 

@@ -62,6 +62,21 @@ export interface MotionConfig {
   gain: number;
 }
 
+/** How an overlay layer is blended over the base shader. */
+export type BlendMode = 'add' | 'screen' | 'mix';
+
+/**
+ * A second shader rendered on top of the active one. Use the overlay shader's
+ * per-element hide toggles to keep only the part you want (e.g. just Mandala's
+ * light columns); under add/screen its dark areas drop out.
+ */
+export interface LayerConfig {
+  enabled: boolean;
+  shader: string;
+  blend: BlendMode;
+  opacity: number;
+}
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -70,6 +85,7 @@ export interface ShaderRitualConfig {
   thresholds: { low: number; mid: number; high: number };
   camera: CameraConfig;
   motion: MotionConfig;
+  overlay: LayerConfig;
   shaders: Record<string, ShaderSetting>;
 }
 
