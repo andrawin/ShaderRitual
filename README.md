@@ -65,6 +65,7 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/sanctum.ts` | Raymarched chamber shader (Buffer A + Image bloom pass) |
 | `shaders/cathedral.ts` | Reactive column-grid shader; showcase for the camera rig |
 | `shaders/phantom.ts` | Box-lattice **frame-feedback** shader (reads its own previous frame) |
+| `shaders/mandala.ts` | Kaleidoscopic **two-buffer** shader (Buffer B noise → `iChannel1`) + feedback |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-view.ts` | Three.js two-pass renderer; **ping-pong** targets; per-element + camera uniforms |
 | `main.ts` | Lit UI: shader selector, camera/motion, per-element menus, MIDI, detachable controls |
@@ -94,6 +95,11 @@ For each element `<id>` the renderer auto-creates two uniforms:
 > pass may sample its **own previous frame** through `iChannel0` (trails, echoes,
 > motion blur). The `phantom` shader relies on this. Shaders that don't read
 > `iChannel0` in their buffer pass are unaffected.
+>
+> **Helper buffer (`iChannel1`):** a `ShaderDef` may also declare an optional
+> `bufferBShader`. It's rendered once into a fixed-size, **repeat-wrapped** target
+> and exposed to Buffer A as `iChannel1` — handy for tiling noise or lookup
+> tables. The `mandala` shader uses this for its surface noise + reflection map.
 
 The shader reads these to modulate or remove that part of the image. For the
 `sanctum` shader:

@@ -12,9 +12,10 @@ import type {
 import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
 import { phantom } from './shaders/phantom';
+import { mandala } from './shaders/mandala';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum, cathedral, phantom];
+export const SHADERS: ShaderDef[] = [sanctum, cathedral, phantom, mandala];
 
 /** Fresh camera / motion rig defaults. */
 export function defaultCamera(): CameraConfig {

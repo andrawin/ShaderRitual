@@ -97,6 +97,12 @@ export interface ShaderDef {
   description: string;
   /** Buffer A fragment shader (rendered to an offscreen target). */
   bufferShader: string;
+  /**
+   * Optional Buffer B fragment shader, exposed to Buffer A as `iChannel1`
+   * (repeat-wrapped). Rendered once per shader build — use it for static
+   * helper textures such as tiling noise.
+   */
+  bufferBShader?: string;
   /** Image fragment shader (samples Buffer A via iChannel0, draws to screen). */
   imageShader: string;
   elements: ShaderElement[];

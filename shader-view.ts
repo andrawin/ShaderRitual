@@ -24,6 +24,10 @@ export class ShaderRitualView extends LitElement {
   private camera!: THREE.OrthographicCamera;
   private bufferScene!: THREE.Scene;
   private imageScene!: THREE.Scene;
+  // Optional Buffer B (static helper texture, e.g. tiling noise) -> iChannel1.
+  private bufferBScene!: THREE.Scene;
+  private bufferBTarget!: THREE.WebGLRenderTarget;
+  private hasBufferB = false;
   // Ping-pong targets so a Buffer-A pass can read its own previous frame
   // (frame feedback) via iChannel0 without reading the texture it writes.
   private targetA!: THREE.WebGLRenderTarget;
@@ -88,6 +92,7 @@ export class ShaderRitualView extends LitElement {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.bufferScene = new THREE.Scene();
     this.imageScene = new THREE.Scene();
+    this.bufferBScene = new THREE.Scene();
     const targetOpts = {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
@@ -97,6 +102,10 @@ export class ShaderRitualView extends LitElement {
     this.targetB = new THREE.WebGLRenderTarget(1, 1, targetOpts);
     this.readTarget = this.targetA;
     this.writeTarget = this.targetB;
+    // Fixed-size, repeat-wrapped helper buffer (uv is resolution-independent).
+    this.bufferBTarget = new THREE.WebGLRenderTarget(1024, 1024, targetOpts);
+    this.bufferBTarget.texture.wrapS = THREE.RepeatWrapping;
+    this.bufferBTarget.texture.wrapT = THREE.RepeatWrapping;
 
     this.buildShader();
     this.resize();
@@ -117,12 +126,14 @@ export class ShaderRitualView extends LitElement {
     // Dispose previous quads/materials.
     this.disposeScene(this.bufferScene);
     this.disposeScene(this.imageScene);
+    this.disposeScene(this.bufferBScene);
 
     // Shared uniform set — both passes read from the same object.
     this.uniforms = {
       iResolution: { value: new THREE.Vector3(1, 1, 1) },
       iTime: { value: 0 },
       iChannel0: { value: this.readTarget.texture },
+      iChannel1: { value: this.bufferBTarget.texture },
       // Global camera / motion rig — available to every shader.
       iCamOrbit: { value: 0 },
       iCamDist: { value: 1 },
@@ -150,7 +161,25 @@ export class ShaderRitualView extends LitElement {
     const quad = new THREE.PlaneGeometry(2, 2);
     this.bufferScene.add(new THREE.Mesh(quad, bufferMat));
     this.imageScene.add(new THREE.Mesh(quad.clone(), imageMat));
+
+    // Optional Buffer B: render its static content once into iChannel1.
+    this.hasBufferB = !!def.bufferBShader;
+    if (this.hasBufferB) {
+      const bufferBMat = new THREE.RawShaderMaterial({
+        uniforms: this.uniforms,
+        vertexShader: commonVertex,
+        fragmentShader: def.bufferBShader!,
+      });
+      this.bufferBScene.add(new THREE.Mesh(quad.clone(), bufferBMat));
+    }
+
     this.resize();
+
+    if (this.hasBufferB && this.renderer) {
+      this.renderer.setRenderTarget(this.bufferBTarget);
+      this.renderer.render(this.bufferBScene, this.camera);
+      this.renderer.setRenderTarget(null);
+    }
   }
 
   private disposeScene(scene: THREE.Scene | undefined) {
