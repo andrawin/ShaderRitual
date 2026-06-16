@@ -14,6 +14,11 @@ Every shader is broken into named **elements**. For each element you can:
 Each shader has its own menu generated from its element list, so the element →
 audio mapping is per-shader. MIDI-learn is available on every amount slider.
 
+Every element also has a **Manual level** — a baseline added on top of the
+band-driven value. Set an element's band to **None** and ride the Manual level
+(by hand, MIDI, or the detached controller) to drive lighting / colour / shape
+**without** audio. `react = level + band × amount`.
+
 ## Beyond per-element reactivity
 
 Two newer manipulation layers sit on top of the element system:
@@ -27,7 +32,20 @@ Two newer manipulation layers sit on top of the element system:
   - `Audio` — orbit speed, push-in and FOV are driven by a chosen band.
 
   Distance, Height and Field of view are always adjustable, and every camera
-  slider is MIDI-learnable.
+  slider is MIDI-learnable. BPM has a **number input** + **Tap** button for
+  exact tempo matching.
+
+- **Calm on silence (Motion)** — animation time advances at `idle + level × gain`
+  where `level` is the live audio energy. So the whole scene (and the camera)
+  **calms when no sound is coming in**, and at `idle = 0` it freezes entirely.
+  Toggle it off for constant motion. Applies to all shaders.
+
+- **Live code panel** (the `</>` button or the `C` key) — a semi-live-coding
+  overlay showing the active shader's GLSL plus a **live-updating block of the
+  current uniform values** (element react, camera orbit/fov/beat, motion time).
+  The source is **editable**: edits recompile the shader ~0.5 s after you stop
+  typing. A failed compile is rejected (the last working shader keeps running)
+  and the GLSL error is shown; **Reset** restores the original source.
 
 - **Detachable controls** — the gear panel can pop out into its **own window**
   (the ⧉ button). The detached controller and the render window stay in

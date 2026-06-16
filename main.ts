@@ -5,6 +5,7 @@
  */
 import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
 import type { Band, CameraMode, ShaderRitualConfig } from './types';
@@ -52,6 +53,17 @@ export class ShaderRitualApp extends LitElement {
   private readonly isController = new URLSearchParams(location.search).has('control');
   private sync: BroadcastChannel | null = null;
   @state() private remoteBands: any = null;
+
+  // Live-coding code panel.
+  @state() showCode = false;
+  @state() codeTab: 'buffer' | 'image' = 'buffer';
+  @state() editBuffer = '';
+  @state() editImage = '';
+  @state() codeError = '';
+  @state() codeValues: Record<string, number> = {};
+  private codeShaderId = '';
+  private codeApplyTimer: any = null;
+  private lastCodeValueTick = 0;
 
   @state() config: ShaderRitualConfig = this.loadSavedConfig();
 
@@ -214,13 +226,118 @@ export class ShaderRitualApp extends LitElement {
     }
     .vis-toggle.on { color: #10b981; border-color: #10b981; }
     .vis-toggle.off { color: #ef4444; border-color: #ef4444; }
+
+    input[type="number"].bpm-num {
+      width: 64px; text-align: center; -moz-appearance: textfield;
+    }
+
+    /* ----- Live-coding code panel ----- */
+    .code-btn {
+      position: absolute; top: 20px; right: 78px; z-index: 20;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.7); cursor: pointer; padding: 10px 12px;
+      border-radius: 8px; backdrop-filter: blur(10px); transition: 0.2s;
+      font-family: monospace; font-weight: bold; font-size: 1rem; height: 50px;
+    }
+    .code-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+    .code-btn.active { border-color: #a855f7; color: #a855f7; }
+
+    .code-panel {
+      position: absolute; top: 0; left: 0; bottom: 0; width: 46vw; max-width: 720px;
+      background: rgba(8,8,12,0.92); backdrop-filter: blur(8px); z-index: 25;
+      display: flex; flex-direction: column; color: #cdd6f4;
+      border-right: 1px solid rgba(255,255,255,0.1);
+      transform: translateX(-100%); transition: transform 0.25s ease;
+    }
+    .code-panel.open { transform: translateX(0); }
+    .code-head {
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap;
+    }
+    .code-head .title { font-family: monospace; font-size: 0.8rem; color: #a855f7; margin-right: auto; }
+    .code-tab {
+      background: none; border: 1px solid rgba(255,255,255,0.15); color: #aaa;
+      border-radius: 4px; padding: 3px 8px; font-size: 0.7rem; cursor: pointer; font-family: monospace;
+    }
+    .code-tab.active { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.15); }
+
+    .code-values {
+      font-family: monospace; font-size: 0.68rem; line-height: 1.5;
+      padding: 8px 12px; max-height: 26%; overflow-y: auto;
+      border-bottom: 1px solid rgba(255,255,255,0.08); color: #94e2d5;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .code-values .k { color: #f9e2af; }
+    .code-textarea {
+      flex: 1; width: 100%; box-sizing: border-box; resize: none; border: none;
+      background: transparent; color: #cdd6f4; font-family: monospace;
+      font-size: 0.72rem; line-height: 1.4; padding: 10px 12px; outline: none;
+      tab-size: 2;
+    }
+    .code-foot {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.7rem;
+    }
+    .code-error {
+      flex: 1; font-family: monospace; font-size: 0.66rem; color: #f38ba8;
+      white-space: pre-wrap; max-height: 60px; overflow-y: auto;
+    }
+    .code-ok { flex: 1; font-family: monospace; font-size: 0.66rem; color: #a6e3a1; }
   `;
 
   firstUpdated() {
     this.setupSync();
     this.initMidi();
     this.startMonitor();
+    if (!this.isController) {
+      window.addEventListener('keydown', (e) => {
+        const el = e.composedPath()[0] as HTMLElement;
+        const tag = el?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey) {
+          this.showCode = !this.showCode;
+        }
+      });
+    }
   }
+
+  updated() {
+    // Keep the code editor in sync with the active shader's source.
+    if (!this.isController && this.config.activeShader !== this.codeShaderId) {
+      this.codeShaderId = this.config.activeShader;
+      const src = this.viewEl?.getActiveSource?.();
+      const def = getShader(this.codeShaderId);
+      this.editBuffer = src?.buffer ?? def.bufferShader;
+      this.editImage = src?.image ?? def.imageShader;
+      this.codeError = '';
+    }
+  }
+
+  private get viewEl(): any {
+    return this.shadowRoot?.querySelector('shader-ritual-view');
+  }
+
+  /* ------------------------- Live coding -------------------------- */
+
+  private onCodeInput = (which: 'buffer' | 'image', value: string) => {
+    if (which === 'buffer') this.editBuffer = value;
+    else this.editImage = value;
+    clearTimeout(this.codeApplyTimer);
+    this.codeApplyTimer = setTimeout(() => this.applyCode(), 500);
+  };
+
+  private applyCode = () => {
+    const err = this.viewEl?.applySource?.(this.editBuffer, this.editImage);
+    this.codeError = err || '';
+  };
+
+  private resetCode = () => {
+    this.viewEl?.resetSource?.();
+    const def = getShader(this.config.activeShader);
+    this.editBuffer = def.bufferShader;
+    this.editImage = def.imageShader;
+    this.codeError = '';
+  };
 
   /* ----------------------- Cross-window sync ---------------------- */
 
@@ -395,9 +512,12 @@ export class ShaderRitualApp extends LitElement {
       'camera.fov': { min: 20, max: 120 },
       'camera.reactAmount': { min: 0, max: 3 },
       'camera.cutChance': { min: 0, max: 1 },
+      'motion.idle': { min: 0, max: 1 },
+      'motion.gain': { min: 0, max: 3 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
+    if (path.endsWith('.level')) return { min: 0, max: 2 };
     if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
     return { min: 0, max: 1 };
   };
@@ -504,6 +624,16 @@ export class ShaderRitualApp extends LitElement {
         }
       }
 
+      // Live uniform values for the code panel (~10fps to keep it cheap).
+      if (this.showCode && !this.isController) {
+        const tnow = performance.now();
+        if (tnow - this.lastCodeValueTick > 100) {
+          this.lastCodeValueTick = tnow;
+          const snap = this.viewEl?.getUniformSnapshot?.();
+          if (snap) this.codeValues = snap;
+        }
+      }
+
       if (!this.showSettings) return;
       const canvas = this.shadowRoot?.querySelector('#monitorCanvas') as HTMLCanvasElement;
       if (!canvas) return;
@@ -577,6 +707,7 @@ export class ShaderRitualApp extends LitElement {
     const setting = this.config.shaders[shaderId].elements[elementId];
     const bandPath = `shaders.${shaderId}.elements.${elementId}.band`;
     const amountPath = `shaders.${shaderId}.elements.${elementId}.amount`;
+    const levelPath = `shaders.${shaderId}.elements.${elementId}.level`;
     const visiblePath = `shaders.${shaderId}.elements.${elementId}.visible`;
     return html`
       <div class="element-card ${setting.visible ? '' : 'hidden-el'}">
@@ -610,8 +741,30 @@ export class ShaderRitualApp extends LitElement {
           <input type="range" min="0" max="3" step="0.05" .value=${setting.amount}
             @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
         </div>
+        <div class="control-row">
+          <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">Manual level</label>
+          <button
+            class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
+            @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
+          <input type="range" min="0" max="2" step="0.02" .value=${setting.level}
+            @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
+        </div>
       </div>
     `;
+  };
+
+  private tapTimes: number[] = [];
+  private tapTempo = () => {
+    const now = performance.now();
+    this.tapTimes = this.tapTimes.filter((t) => now - t < 3000);
+    this.tapTimes.push(now);
+    if (this.tapTimes.length >= 2) {
+      let sum = 0;
+      for (let i = 1; i < this.tapTimes.length; i++) sum += this.tapTimes[i] - this.tapTimes[i - 1];
+      const avg = sum / (this.tapTimes.length - 1);
+      const bpm = Math.max(40, Math.min(240, Math.round(60000 / avg)));
+      this.updateConfig('camera.bpm', bpm);
+    }
   };
 
   private renderCameraSection() {
@@ -636,7 +789,16 @@ export class ShaderRitualApp extends LitElement {
             ${modes.map((m) => html`<option value=${m.id}>${m.label}</option>`)}
           </select>
         </div>
-        ${this.renderSlider('Tempo (BPM)', 'camera.bpm', 60, 200, 1)}
+        <div class="control-row">
+          <label>Tempo (BPM)</label>
+          <button
+            class="midi-learn-btn ${this.learningParam === 'camera.bpm' ? 'active' : ''} ${this.isMapped('camera.bpm') ? 'mapped' : ''}"
+            @click=${() => this.toggleMidiLearn('camera.bpm')}>●</button>
+          <input class="bpm-num" type="number" min="40" max="240" step="1" .value=${String(Math.round(cam.bpm))}
+            @input=${(e: any) => this.updateConfig('camera.bpm', parseFloat(e.target.value) || cam.bpm)} />
+          <button class="action-btn small" @click=${this.tapTempo}>Tap</button>
+        </div>
+        ${this.renderSlider('· fine', 'camera.bpm', 60, 200, 1)}
         ${cam.mode !== 'bpm'
           ? this.renderSlider('Orbit speed', 'camera.orbitSpeed', 0, 3, 0.05)
           : this.renderSlider('Cut variety', 'camera.cutChance', 0, 1, 0.05)}
@@ -659,6 +821,41 @@ export class ShaderRitualApp extends LitElement {
         ${this.renderSlider('Distance', 'camera.distance', 0.3, 2.5, 0.05)}
         ${this.renderSlider('Height', 'camera.height', -1, 1, 0.02)}
         ${this.renderSlider('Field of view', 'camera.fov', 20, 120, 1)}
+      </div>
+    `;
+  }
+
+  private fmt(v: number) {
+    if (!Number.isFinite(v)) return String(v);
+    return Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3);
+  }
+
+  private renderCodePanel() {
+    const def = getShader(this.config.activeShader);
+    const src = this.codeTab === 'buffer' ? this.editBuffer : this.editImage;
+    const keys = Object.keys(this.codeValues).sort();
+    return html`
+      <div class="code-panel ${this.showCode ? 'open' : ''}">
+        <div class="code-head">
+          <span class="title">${def.name} · live source</span>
+          <button class="code-tab ${this.codeTab === 'buffer' ? 'active' : ''}"
+            @click=${() => (this.codeTab = 'buffer')}>Buffer A</button>
+          <button class="code-tab ${this.codeTab === 'image' ? 'active' : ''}"
+            @click=${() => (this.codeTab = 'image')}>Image</button>
+          <button class="icon-btn" @click=${() => (this.showCode = false)}>&times;</button>
+        </div>
+        <div class="code-values">${keys.map(
+          (k) => html`<span class="k">${k}</span> = ${this.fmt(this.codeValues[k])}\n`,
+        )}</div>
+        <textarea class="code-textarea" spellcheck="false" .value=${live(src)}
+          @input=${(e: any) => this.onCodeInput(this.codeTab, e.target.value)}></textarea>
+        <div class="code-foot">
+          ${this.codeError
+            ? html`<div class="code-error">${this.codeError}</div>`
+            : html`<div class="code-ok">✓ compiled · edits apply ~0.5s after you stop typing</div>`}
+          <button class="action-btn small" @click=${this.applyCode}>Apply</button>
+          <button class="action-btn small" @click=${this.resetCode}>Reset</button>
+        </div>
       </div>
     `;
   }
@@ -696,6 +893,22 @@ export class ShaderRitualApp extends LitElement {
 
         <!-- CAMERA / MOTION (global) -->
         ${this.renderCameraSection()}
+
+        <!-- AUDIO-GATED MOTION -->
+        <div class="setting-group">
+          <span class="group-title">Motion · Calm on silence</span>
+          <div class="element-desc" style="margin-bottom:10px;">
+            Animation speed follows the audio. With this on, the scene calms (or
+            freezes, at Idle 0) when no sound is coming in.
+          </div>
+          <div class="control-row">
+            <label>Audio-gated</label>
+            <input type="checkbox" .checked=${this.config.motion.audioGated}
+              @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
+          </div>
+          ${this.renderSlider('Idle drift', 'motion.idle', 0, 1, 0.01)}
+          ${this.renderSlider('Audio gain', 'motion.gain', 0, 3, 0.05)}
+        </div>
 
         <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
         <div class="setting-group">
@@ -789,11 +1002,14 @@ export class ShaderRitualApp extends LitElement {
     }
     return html`
       <div>
+        <button class="code-btn ${this.showCode ? 'active' : ''}" title="Live code panel (C)"
+          @click=${() => (this.showCode = !this.showCode)}>&lt;/&gt;</button>
         <button class="settings-btn" @click=${() => (this.showSettings = !this.showSettings)}>
           <svg viewBox="0 0 24 24">
             <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" />
           </svg>
         </button>
+        ${this.renderCodePanel()}
         ${this.renderSettings()}
         <div id="status">${this.error || this.status}</div>
         <shader-ritual-view .config=${this.config} .inputNode=${this.audioNode}></shader-ritual-view>

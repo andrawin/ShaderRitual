@@ -2,7 +2,13 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { CameraConfig, ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
+import type {
+  CameraConfig,
+  MotionConfig,
+  ShaderDef,
+  ShaderRitualConfig,
+  ShaderSetting,
+} from './types';
 import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
 import { phantom } from './shaders/phantom';
@@ -29,6 +35,11 @@ export function getShader(id: string): ShaderDef {
   return SHADERS.find((s) => s.id === id) || SHADERS[0];
 }
 
+/** Fresh audio-gated motion defaults (gentle drift when silent). */
+export function defaultMotion(): MotionConfig {
+  return { audioGated: true, idle: 0.12, gain: 1.2 };
+}
+
 /** Build the per-shader element settings from a shader's declared defaults. */
 function defaultShaderSetting(def: ShaderDef): ShaderSetting {
   const elements: ShaderSetting['elements'] = {};
@@ -36,6 +47,7 @@ function defaultShaderSetting(def: ShaderDef): ShaderSetting {
     elements[el.id] = {
       band: el.defaultBand,
       amount: el.defaultAmount,
+      level: el.defaultLevel ?? 0,
       visible: el.defaultVisible,
     };
   }
@@ -52,6 +64,7 @@ export function defaultConfig(): ShaderRitualConfig {
     sensitivity: { low: 1.5, mid: 1.5, high: 2.5 },
     thresholds: { low: 0.15, mid: 0.15, high: 0.15 },
     camera: defaultCamera(),
+    motion: defaultMotion(),
     shaders,
   };
 }
@@ -70,6 +83,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     sensitivity: { ...base.sensitivity, ...(saved.sensitivity || {}) },
     thresholds: { ...base.thresholds, ...(saved.thresholds || {}) },
     camera: { ...base.camera, ...(saved.camera || {}) },
+    motion: { ...base.motion, ...(saved.motion || {}) },
     shaders: { ...base.shaders },
   };
 

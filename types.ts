@@ -10,6 +10,8 @@ export type Band = 'none' | 'low' | 'mid' | 'high';
 export interface ElementSetting {
   band: Band;
   amount: number;
+  /** Manual baseline added to the reactive value (drive by hand / MIDI / LFO). */
+  level: number;
   visible: boolean;
 }
 
@@ -47,6 +49,19 @@ export interface CameraConfig {
   cutChance: number;
 }
 
+/**
+ * Audio-gated motion: animation time advances at `idle + level * gain` where
+ * `level` is the live audio energy. With `audioGated` on, the scene calms (or
+ * freezes, at idle 0) when no sound is coming in.
+ */
+export interface MotionConfig {
+  audioGated: boolean;
+  /** Baseline time speed when silent (0 = freeze). */
+  idle: number;
+  /** How much audio energy accelerates time. */
+  gain: number;
+}
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -54,6 +69,7 @@ export interface ShaderRitualConfig {
   sensitivity: { low: number; mid: number; high: number };
   thresholds: { low: number; mid: number; high: number };
   camera: CameraConfig;
+  motion: MotionConfig;
   shaders: Record<string, ShaderSetting>;
 }
 
@@ -68,6 +84,8 @@ export interface ShaderElement {
   description: string;
   defaultBand: Band;
   defaultAmount: number;
+  /** Default manual baseline (added to the band-driven value). */
+  defaultLevel?: number;
   canHide: boolean;
   defaultVisible: boolean;
 }
