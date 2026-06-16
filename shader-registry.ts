@@ -15,6 +15,7 @@ import { phantom } from './shaders/phantom';
 import { mandala } from './shaders/mandala';
 import { cosa } from './shaders/cosa';
 import { thunder } from './shaders/thunder';
+import { pulsar } from './shaders/pulsar';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -24,6 +25,7 @@ export const SHADERS: ShaderDef[] = [
   mandala,
   cosa,
   thunder,
+  pulsar,
 ];
 
 /** Fresh camera / motion rig defaults. */
