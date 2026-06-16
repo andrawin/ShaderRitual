@@ -15,7 +15,6 @@ import { phantom } from './shaders/phantom';
 import { mandala } from './shaders/mandala';
 import { cosa } from './shaders/cosa';
 import { thunder } from './shaders/thunder';
-import { brainfiller } from './shaders/brainfiller';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -25,7 +24,6 @@ export const SHADERS: ShaderDef[] = [
   mandala,
   cosa,
   thunder,
-  brainfiller,
 ];
 
 /** Fresh camera / motion rig defaults. */
@@ -110,6 +108,8 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     merged.shaders[def.id] = { elements };
   }
 
-  if (!getShader(merged.activeShader)) merged.activeShader = base.activeShader;
+  if (!SHADERS.some((s) => s.id === merged.activeShader)) {
+    merged.activeShader = base.activeShader;
+  }
   return merged;
 }

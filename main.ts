@@ -49,9 +49,16 @@ export class ShaderRitualApp extends LitElement {
   private saveTimeout: any = null;
   private monitorRaf = 0;
 
-  // Detached control-panel support.
-  private readonly isController = new URLSearchParams(location.search).has('control');
+  // Detached control-panel / code-window support.
+  private readonly params = new URLSearchParams(location.search);
+  private readonly isController = this.params.has('control');
+  private readonly isCodeWindow = this.params.has('code');
+  /** True only for the render window that owns the WebGL view. */
+  private get isMain() {
+    return !this.isController && !this.isCodeWindow;
+  }
   private sync: BroadcastChannel | null = null;
+  private codeWindowOpen = false;
   @state() private remoteBands: any = null;
 
   // Live-coding code panel.
@@ -242,54 +249,74 @@ export class ShaderRitualApp extends LitElement {
     .code-btn:hover { background: rgba(255,255,255,0.2); color: white; }
     .code-btn.active { border-color: #a855f7; color: #a855f7; }
 
+    /* In-page panel sits transparently over the shader so the code reads as
+       part of the visual layer. The detached window adds .windowed for a
+       solid backdrop (no shader behind it there). */
     .code-panel {
       position: absolute; top: 0; left: 0; bottom: 0; width: 46vw; max-width: 720px;
-      background: rgba(8,8,12,0.92); backdrop-filter: blur(8px); z-index: 25;
-      display: flex; flex-direction: column; color: #cdd6f4;
-      border-right: 1px solid rgba(255,255,255,0.1);
+      background: transparent; z-index: 25;
+      display: flex; flex-direction: column; color: #e6edf3;
       transform: translateX(-100%); transition: transform 0.25s ease;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,0.9);
+      pointer-events: none;
     }
     .code-panel.open { transform: translateX(0); }
-    .code-head {
-      display: flex; align-items: center; gap: 8px; padding: 10px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap;
+    /* Re-enable interaction only on the controls/editor, not the whole strip. */
+    .code-panel .code-head,
+    .code-panel .code-textarea,
+    .code-panel .code-foot,
+    .code-panel .code-values { pointer-events: auto; }
+
+    .code-panel.windowed {
+      position: fixed; inset: 0; width: 100%; max-width: none; transform: none;
+      background: rgba(8,8,12,0.97); text-shadow: none; pointer-events: auto;
     }
-    .code-head .title { font-family: monospace; font-size: 0.8rem; color: #a855f7; margin-right: auto; }
+
+    .code-head {
+      display: flex; align-items: center; gap: 8px; padding: 10px 12px; flex-wrap: wrap;
+    }
+    .code-head .title { font-family: monospace; font-size: 0.8rem; color: #c4a7f7; margin-right: auto; }
     .code-tab {
-      background: none; border: 1px solid rgba(255,255,255,0.15); color: #aaa;
+      background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.2); color: #cbd5e1;
       border-radius: 4px; padding: 3px 8px; font-size: 0.7rem; cursor: pointer; font-family: monospace;
     }
-    .code-tab.active { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.15); }
+    .code-tab.active { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.3); }
 
     .code-values {
       font-family: monospace; font-size: 0.68rem; line-height: 1.5;
       padding: 8px 12px; max-height: 26%; overflow-y: auto;
-      border-bottom: 1px solid rgba(255,255,255,0.08); color: #94e2d5;
-      white-space: pre-wrap; word-break: break-all;
+      color: #a8f0e0; white-space: pre-wrap; word-break: break-all;
     }
-    .code-values .k { color: #f9e2af; }
+    .code-values .k { color: #fbe09a; }
     .code-textarea {
       flex: 1; width: 100%; box-sizing: border-box; resize: none; border: none;
-      background: transparent; color: #cdd6f4; font-family: monospace;
+      background: transparent; color: #e6edf3; font-family: monospace;
       font-size: 0.72rem; line-height: 1.4; padding: 10px 12px; outline: none;
-      tab-size: 2;
+      tab-size: 2; text-shadow: inherit;
     }
     .code-foot {
-      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-      border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.7rem;
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 0.7rem;
     }
     .code-error {
-      flex: 1; font-family: monospace; font-size: 0.66rem; color: #f38ba8;
+      flex: 1; font-family: monospace; font-size: 0.66rem; color: #ff9db1;
       white-space: pre-wrap; max-height: 60px; overflow-y: auto;
     }
-    .code-ok { flex: 1; font-family: monospace; font-size: 0.66rem; color: #a6e3a1; }
+    .code-ok { flex: 1; font-family: monospace; font-size: 0.66rem; color: #b6f0a8; }
+
+    /* Hairline scrollbars so the editor melts into the layer. */
+    .code-values, .code-textarea { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
+    .code-values::-webkit-scrollbar, .code-textarea::-webkit-scrollbar { width: 4px; height: 4px; }
+    .code-values::-webkit-scrollbar-track, .code-textarea::-webkit-scrollbar-track { background: transparent; }
+    .code-values::-webkit-scrollbar-thumb, .code-textarea::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.25); border-radius: 3px;
+    }
   `;
 
   firstUpdated() {
     this.setupSync();
     this.initMidi();
     this.startMonitor();
-    if (!this.isController) {
+    if (this.isMain) {
       window.addEventListener('keydown', (e) => {
         const el = e.composedPath()[0] as HTMLElement;
         const tag = el?.tagName;
@@ -302,14 +329,16 @@ export class ShaderRitualApp extends LitElement {
   }
 
   updated() {
-    // Keep the code editor in sync with the active shader's source.
-    if (!this.isController && this.config.activeShader !== this.codeShaderId) {
+    // Render window: keep the code editor in sync with the active shader's
+    // source and push it to any detached code window.
+    if (this.isMain && this.config.activeShader !== this.codeShaderId) {
       this.codeShaderId = this.config.activeShader;
       const src = this.viewEl?.getActiveSource?.();
       const def = getShader(this.codeShaderId);
       this.editBuffer = src?.buffer ?? def.bufferShader;
       this.editImage = src?.image ?? def.imageShader;
       this.codeError = '';
+      this.broadcastCodeState();
     }
   }
 
@@ -322,22 +351,55 @@ export class ShaderRitualApp extends LitElement {
   private onCodeInput = (which: 'buffer' | 'image', value: string) => {
     if (which === 'buffer') this.editBuffer = value;
     else this.editImage = value;
-    clearTimeout(this.codeApplyTimer);
-    this.codeApplyTimer = setTimeout(() => this.applyCode(), 500);
+    if (this.isCodeWindow) {
+      // No WebGL here — push edits to the render window to compile.
+      clearTimeout(this.codeApplyTimer);
+      this.codeApplyTimer = setTimeout(
+        () => this.sync?.postMessage({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage }),
+        500,
+      );
+    } else {
+      clearTimeout(this.codeApplyTimer);
+      this.codeApplyTimer = setTimeout(() => this.applyCode(), 500);
+    }
   };
 
   private applyCode = () => {
+    if (this.isCodeWindow) {
+      this.sync?.postMessage({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage });
+      return;
+    }
     const err = this.viewEl?.applySource?.(this.editBuffer, this.editImage);
     this.codeError = err || '';
+    this.broadcastCodeState();
   };
 
   private resetCode = () => {
+    if (this.isCodeWindow) {
+      this.sync?.postMessage({ type: 'codeReset' });
+      return;
+    }
     this.viewEl?.resetSource?.();
     const def = getShader(this.config.activeShader);
     this.editBuffer = def.bufferShader;
     this.editImage = def.imageShader;
     this.codeError = '';
+    this.broadcastCodeState();
   };
+
+  /** Open the live-code editor in its own window, synced via BroadcastChannel. */
+  private detachCode = () => {
+    window.open(`${location.pathname}?code`, 'shader-ritual-code', 'width=640,height=900');
+  };
+
+  private broadcastCodeState() {
+    this.sync?.postMessage({
+      type: 'codeState',
+      buffer: this.editBuffer,
+      image: this.editImage,
+      error: this.codeError,
+    });
+  }
 
   /* ----------------------- Cross-window sync ---------------------- */
 
@@ -348,11 +410,15 @@ export class ShaderRitualApp extends LitElement {
       this.showSettings = true;
       (this as any).classList?.add('controller-host');
     }
+    if (this.isCodeWindow) {
+      this.showCode = true;
+    }
     if (typeof BroadcastChannel === 'undefined') return;
     this.sync = new BroadcastChannel(SYNC_CHANNEL);
     this.sync.onmessage = (e) => this.handleSync(e.data);
-    // A freshly opened controller asks the render window for the current state.
+    // A freshly opened satellite window asks the render window for current state.
     if (this.isController) this.sync.postMessage({ type: 'request' });
+    if (this.isCodeWindow) this.sync.postMessage({ type: 'codeRequest' });
   }
 
   private handleSync(msg: any) {
@@ -360,7 +426,7 @@ export class ShaderRitualApp extends LitElement {
     switch (msg.type) {
       case 'request':
         // Render window answers a controller with the full current config.
-        if (!this.isController) this.broadcastConfig();
+        if (this.isMain) this.broadcastConfig();
         break;
       case 'config':
         this.config = sanitizeConfig(msg.config);
@@ -376,7 +442,36 @@ export class ShaderRitualApp extends LitElement {
         }
         break;
       case 'command':
-        if (!this.isController) this.runCommand(msg.name);
+        if (this.isMain) this.runCommand(msg.name);
+        break;
+      case 'codeRequest':
+        // Render window registers the code window and sends current source.
+        if (this.isMain) {
+          this.codeWindowOpen = true;
+          this.broadcastCodeState();
+        }
+        break;
+      case 'codeEdit':
+        // Render window compiles an edit from the detached code window.
+        if (this.isMain) {
+          this.editBuffer = msg.buffer;
+          this.editImage = msg.image;
+          this.applyCode();
+        }
+        break;
+      case 'codeReset':
+        if (this.isMain) this.resetCode();
+        break;
+      case 'codeState':
+        // Code window mirrors the render window's source + compile result.
+        if (this.isCodeWindow) {
+          this.editBuffer = msg.buffer;
+          this.editImage = msg.image;
+          this.codeError = msg.error || '';
+        }
+        break;
+      case 'codeValues':
+        if (this.isCodeWindow) this.codeValues = msg.values;
         break;
     }
   }
@@ -624,13 +719,17 @@ export class ShaderRitualApp extends LitElement {
         }
       }
 
-      // Live uniform values for the code panel (~10fps to keep it cheap).
-      if (this.showCode && !this.isController) {
+      // Live uniform values for the code panel (~10fps). The render window
+      // serves both its own in-page panel and any detached code window.
+      if (this.isMain && (this.showCode || this.codeWindowOpen)) {
         const tnow = performance.now();
         if (tnow - this.lastCodeValueTick > 100) {
           this.lastCodeValueTick = tnow;
           const snap = this.viewEl?.getUniformSnapshot?.();
-          if (snap) this.codeValues = snap;
+          if (snap) {
+            this.codeValues = snap;
+            if (this.codeWindowOpen) this.sync?.postMessage({ type: 'codeValues', values: snap });
+          }
         }
       }
 
@@ -835,14 +934,19 @@ export class ShaderRitualApp extends LitElement {
     const src = this.codeTab === 'buffer' ? this.editBuffer : this.editImage;
     const keys = Object.keys(this.codeValues).sort();
     return html`
-      <div class="code-panel ${this.showCode ? 'open' : ''}">
+      <div class="code-panel ${this.showCode ? 'open' : ''} ${this.isCodeWindow ? 'windowed' : ''}">
         <div class="code-head">
-          <span class="title">${def.name} · live source</span>
+          <span class="title">${def.name} · live source${this.isCodeWindow ? ' · detached' : ''}</span>
           <button class="code-tab ${this.codeTab === 'buffer' ? 'active' : ''}"
             @click=${() => (this.codeTab = 'buffer')}>Buffer A</button>
           <button class="code-tab ${this.codeTab === 'image' ? 'active' : ''}"
             @click=${() => (this.codeTab = 'image')}>Image</button>
-          <button class="icon-btn" @click=${() => (this.showCode = false)}>&times;</button>
+          ${this.isCodeWindow
+            ? ''
+            : html`<button class="icon-btn" title="Pop the code editor out to its own window"
+                @click=${this.detachCode}>⧉</button>`}
+          <button class="icon-btn"
+            @click=${() => (this.isCodeWindow ? window.close() : (this.showCode = false))}>&times;</button>
         </div>
         <div class="code-values">${keys.map(
           (k) => html`<span class="k">${k}</span> = ${this.fmt(this.codeValues[k])}\n`,
@@ -999,6 +1103,10 @@ export class ShaderRitualApp extends LitElement {
     // Detached controller window: just the panel, no render canvas / gear.
     if (this.isController) {
       return html`<div>${this.renderSettings()}</div>`;
+    }
+    // Detached code window: just the editor, synced to the render window.
+    if (this.isCodeWindow) {
+      return html`<div>${this.renderCodePanel()}</div>`;
     }
     return html`
       <div>

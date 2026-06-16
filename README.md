@@ -45,7 +45,10 @@ Two newer manipulation layers sit on top of the element system:
   current uniform values** (element react, camera orbit/fov/beat, motion time).
   The source is **editable**: edits recompile the shader ~0.5 s after you stop
   typing. A failed compile is rejected (the last working shader keeps running)
-  and the GLSL error is shown; **Reset** restores the original source.
+  and the GLSL error is shown; **Reset** restores the original source. In-page
+  the panel is fully **transparent** (it reads as part of the visual), and it
+  can **pop out to its own window** (⧉) which stays synced over `BroadcastChannel`
+  — edit in the detached window, watch it recompile on the render window live.
 
 - **Detachable controls** — the gear panel can pop out into its **own window**
   (the ⧉ button). The detached controller and the render window stay in
@@ -68,7 +71,6 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/mandala.ts` | Kaleidoscopic **two-buffer** shader (Buffer B noise → `iChannel1`) + feedback |
 | `shaders/cosa.ts` | Grid-lattice + radial-beam **feedback** shader |
 | `shaders/thunder.ts` | Single-pass procedural lightning bolt |
-| `shaders/brainfiller.ts` | **GLSL ES 3.00** quadtree path tracer (progressive / feedback) |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-view.ts` | Three.js two-pass renderer; **ping-pong** targets; per-element + camera uniforms |
 | `main.ts` | Lit UI: shader selector, camera/motion, per-element menus, MIDI, detachable controls |
@@ -106,7 +108,7 @@ For each element `<id>` the renderer auto-creates two uniforms:
 >
 > **GLSL ES 3.00:** set `glsl3: true` on a `ShaderDef` to compile its buffer
 > passes as `#version 300 es` (WebGL2 — uint / bit ops / `texture()`). The image
-> pass stays ES 1.00. The `brainfiller` path tracer needs this.
+> pass stays ES 1.00. Use this for shaders that need WebGL2-only features.
 
 The shader reads these to modulate or remove that part of the image. For the
 `sanctum` shader:
