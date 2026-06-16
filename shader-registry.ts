@@ -5,9 +5,10 @@
 import type { CameraConfig, ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
 import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
+import { phantom } from './shaders/phantom';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum, cathedral];
+export const SHADERS: ShaderDef[] = [sanctum, cathedral, phantom];
 
 /** Fresh camera / motion rig defaults. */
 export function defaultCamera(): CameraConfig {

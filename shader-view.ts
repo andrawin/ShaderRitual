@@ -24,7 +24,12 @@ export class ShaderRitualView extends LitElement {
   private camera!: THREE.OrthographicCamera;
   private bufferScene!: THREE.Scene;
   private imageScene!: THREE.Scene;
-  private bufferTarget!: THREE.WebGLRenderTarget;
+  // Ping-pong targets so a Buffer-A pass can read its own previous frame
+  // (frame feedback) via iChannel0 without reading the texture it writes.
+  private targetA!: THREE.WebGLRenderTarget;
+  private targetB!: THREE.WebGLRenderTarget;
+  private readTarget!: THREE.WebGLRenderTarget;
+  private writeTarget!: THREE.WebGLRenderTarget;
   private uniforms: Record<string, { value: any }> = {};
   private currentShaderId = '';
   private startTime = performance.now();
@@ -72,11 +77,15 @@ export class ShaderRitualView extends LitElement {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.bufferScene = new THREE.Scene();
     this.imageScene = new THREE.Scene();
-    this.bufferTarget = new THREE.WebGLRenderTarget(1, 1, {
+    const targetOpts = {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
-    });
+    };
+    this.targetA = new THREE.WebGLRenderTarget(1, 1, targetOpts);
+    this.targetB = new THREE.WebGLRenderTarget(1, 1, targetOpts);
+    this.readTarget = this.targetA;
+    this.writeTarget = this.targetB;
 
     this.buildShader();
     this.resize();
@@ -98,7 +107,7 @@ export class ShaderRitualView extends LitElement {
     this.uniforms = {
       iResolution: { value: new THREE.Vector3(1, 1, 1) },
       iTime: { value: 0 },
-      iChannel0: { value: this.bufferTarget.texture },
+      iChannel0: { value: this.readTarget.texture },
       // Global camera / motion rig — available to every shader.
       iCamOrbit: { value: 0 },
       iCamDist: { value: 1 },
@@ -145,8 +154,11 @@ export class ShaderRitualView extends LitElement {
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
     const dpr = this.renderer.getPixelRatio();
-    this.bufferTarget.setSize(Math.floor(w * dpr), Math.floor(h * dpr));
-    (this.uniforms.iResolution.value as THREE.Vector3).set(w * dpr, h * dpr, 1);
+    const pw = Math.floor(w * dpr);
+    const ph = Math.floor(h * dpr);
+    this.targetA.setSize(pw, ph);
+    this.targetB.setSize(pw, ph);
+    (this.uniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
   }
 
   private renderLoop = () => {
@@ -186,10 +198,20 @@ export class ShaderRitualView extends LitElement {
     this.uniforms.iCamReact.value = cam.react;
     this.uniforms.iBeat.value = cam.beat;
 
-    this.renderer.setRenderTarget(this.bufferTarget);
+    // Buffer A reads the previous frame (readTarget) and renders into
+    // writeTarget; the Image pass then samples the just-written frame.
+    this.uniforms.iChannel0.value = this.readTarget.texture;
+    this.renderer.setRenderTarget(this.writeTarget);
     this.renderer.render(this.bufferScene, this.camera);
+
+    this.uniforms.iChannel0.value = this.writeTarget.texture;
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.imageScene, this.camera);
+
+    // Swap so this frame's output becomes next frame's feedback input.
+    const tmp = this.readTarget;
+    this.readTarget = this.writeTarget;
+    this.writeTarget = tmp;
   };
 
   protected render() {
