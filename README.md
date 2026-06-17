@@ -11,8 +11,11 @@ Every shader is broken into named **elements**. For each element you can:
 - **Set a reactive amount** — how strongly that band drives the element.
 - **Hide it** — toggle each element on/off independently.
 
-Each shader has its own menu generated from its element list, so the element →
-audio mapping is per-shader. MIDI-learn is available on every amount slider.
+Each shader's elements are laid out as **mixer-style channel strips** (an
+encoder for reactive amount, L/M/H band-routing buttons, a fader for the manual
+level, and an on/off button) to mirror a hardware MIDI controller. **MIDI-learn
+(the ● dot) is available on the amount, level *and* on/off** of every channel —
+map a hardware button to an element's on/off and a knob/fader to its amount/level.
 
 Every element also has a **Manual level** — a baseline added on top of the
 band-driven value. Set an element's band to **None** and ride the Manual level

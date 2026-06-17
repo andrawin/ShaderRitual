@@ -219,6 +219,47 @@ export class ShaderRitualApp extends LitElement {
     .action-btn.active { border-color: #a855f7; color: #a855f7; }
     .action-btn.small { padding: 4px 8px; font-size: 0.65rem; }
 
+    /* ----- Mixer-style channel strips (mirror the MIDI controller) ----- */
+    .channels {
+      display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 10px;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent;
+    }
+    .channels::-webkit-scrollbar { height: 5px; }
+    .channels::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
+    .channel {
+      flex: 0 0 auto; width: 74px; box-sizing: border-box;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      padding: 8px 4px; background: rgba(255,255,255,0.03);
+      display: flex; flex-direction: column; align-items: center; gap: 7px;
+    }
+    .channel.ch-off { opacity: 0.45; }
+    .ch-name {
+      font-size: 0.6rem; color: #eee; font-weight: 600; text-align: center;
+      line-height: 1.15; min-height: 2.3em; display: flex; align-items: center;
+    }
+    .ch-cap { font-size: 0.5rem; letter-spacing: 1px; color: #888; }
+    .ch-knob-wrap, .ch-fader-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .ch-knob { width: 56px; accent-color: #a855f7; }
+    .ch-band { display: flex; gap: 3px; }
+    .ch-band button {
+      width: 15px; height: 16px; padding: 0; font-size: 0.55rem; line-height: 1;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
+      color: #aaa; border-radius: 3px; cursor: pointer;
+    }
+    .ch-band button.sel { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); }
+    .ch-fader {
+      -webkit-appearance: slider-vertical; appearance: slider-vertical;
+      writing-mode: vertical-lr; direction: rtl;
+      width: 22px; height: 96px; accent-color: #a855f7;
+    }
+    .ch-onoff-wrap { display: flex; align-items: center; gap: 5px; min-height: 22px; }
+    .ch-onoff {
+      font-size: 0.55rem; padding: 3px 7px; border-radius: 4px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
+    }
+    .ch-onoff.on { color: #10b981; border-color: #10b981; }
+    .ch-onoff.off { color: #ef4444; border-color: #ef4444; }
+
     .element-card {
       border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 12px; background: rgba(255,255,255,0.02);
@@ -492,7 +533,7 @@ export class ShaderRitualApp extends LitElement {
     window.open(
       `${location.pathname}?control`,
       'shader-ritual-control',
-      'width=440,height=920',
+      'width=820,height=720',
     );
   };
 
@@ -585,8 +626,16 @@ export class ShaderRitualApp extends LitElement {
       const mapping = this.midiMappings[id];
       if (mapping) {
         const normalized = type === 'pb' ? value / 16383 : value / 127;
-        this.lastMidiMsg = `${id.toUpperCase()} [${Math.round(normalized * 100)}%]`;
-        this.applyNormalizedValue(mapping.path, normalized);
+        if (mapping.path.endsWith('.visible')) {
+          // Boolean toggle: a note/button press flips it; a knob/fader sets it.
+          const cur = !!this.getConfigValue(mapping.path);
+          const on = type === 'note' ? !cur : normalized > 0.5;
+          this.lastMidiMsg = `${id.toUpperCase()} ${on ? 'ON' : 'OFF'}`;
+          this.applyBooleanValue(mapping.path, on);
+        } else {
+          this.lastMidiMsg = `${id.toUpperCase()} [${Math.round(normalized * 100)}%]`;
+          this.applyNormalizedValue(mapping.path, normalized);
+        }
       } else {
         this.lastMidiMsg = `${id.toUpperCase()} value: ${value} (Unmapped)`;
       }
@@ -616,6 +665,25 @@ export class ShaderRitualApp extends LitElement {
     if (path.endsWith('.level')) return { min: 0, max: 2 };
     if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
     return { min: 0, max: 1 };
+  };
+
+  private getConfigValue = (path: string) =>
+    path.split('.').reduce((o: any, k) => (o == null ? undefined : o[k]), this.config as any);
+
+  /** Set a boolean config value (used by MIDI-mapped on/off buttons). */
+  private applyBooleanValue = (path: string, on: boolean) => {
+    const keys = path.split('.');
+    let ref: any = this.config;
+    for (let i = 0; i < keys.length - 1; i++) {
+      if (!ref[keys[i]]) ref[keys[i]] = {};
+      ref = ref[keys[i]];
+    }
+    if (ref[keys[keys.length - 1]] !== on) {
+      ref[keys[keys.length - 1]] = on;
+      this.config = { ...this.config };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+      this.broadcastConfig();
+    }
   };
 
   private applyNormalizedValue = (path: string, norm: number) => {
@@ -801,6 +869,8 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
+  /** A mixer-style channel strip (encoder + band + fader + on/off) per element,
+   *  laid out to mirror the MIDI controller's per-channel hardware. */
   private renderElement = (shaderId: string, elementId: string) => {
     const def = getShader(shaderId);
     const meta = def.elements.find((e) => e.id === elementId)!;
@@ -809,46 +879,47 @@ export class ShaderRitualApp extends LitElement {
     const amountPath = `shaders.${shaderId}.elements.${elementId}.amount`;
     const levelPath = `shaders.${shaderId}.elements.${elementId}.level`;
     const visiblePath = `shaders.${shaderId}.elements.${elementId}.visible`;
+    const bands: { id: Band; label: string }[] = [
+      { id: 'none', label: '–' },
+      { id: 'low', label: 'L' },
+      { id: 'mid', label: 'M' },
+      { id: 'high', label: 'H' },
+    ];
+    const dot = (path: string) => html`<button
+      class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
+      title="MIDI-learn" @click=${() => this.toggleMidiLearn(path)}>●</button>`;
     return html`
-      <div class="element-card ${setting.visible ? '' : 'hidden-el'}">
-        <div class="element-head">
-          <span class="element-name">${meta.name}</span>
-          ${meta.canHide
-            ? html`<button
-                class="vis-toggle ${setting.visible ? 'on' : 'off'}"
-                @click=${() => this.updateConfig(visiblePath, !setting.visible)}>
-                ${setting.visible ? 'SHOWN' : 'HIDDEN'}
-              </button>`
-            : ''}
-        </div>
-        <div class="element-desc">${meta.description}</div>
-        <div class="control-row">
-          <label>Audio band</label>
-          <select
-            .value=${setting.band}
-            @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
-            <option value="none">None</option>
-            <option value="low">Low</option>
-            <option value="mid">Mid</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-        <div class="control-row">
-          <label>Reactive amount</label>
-          <button
-            class="midi-learn-btn ${this.learningParam === amountPath ? 'active' : ''} ${this.isMapped(amountPath) ? 'mapped' : ''}"
-            @click=${() => this.toggleMidiLearn(amountPath)}>●</button>
-          <input type="range" min="0" max="3" step="0.05" .value=${setting.amount}
+      <div class="channel ${setting.visible ? '' : 'ch-off'}" title=${meta.description}>
+        <div class="ch-name">${meta.name}</div>
+        <!-- assignable encoder = reactive amount -->
+        <div class="ch-knob-wrap">${dot(amountPath)}
+          <input class="ch-knob" type="range" min="0" max="3" step="0.05" .value=${setting.amount}
             @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
+          <span class="ch-cap">AMT</span>
         </div>
-        <div class="control-row">
-          <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">Manual level</label>
-          <button
-            class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
-            @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
-          <input type="range" min="0" max="2" step="0.02" .value=${setting.level}
+        <!-- audio-band routing -->
+        <div class="ch-band">
+          ${bands.map(
+            (b) => html`<button class=${setting.band === b.id ? 'sel' : ''}
+              title="React to ${b.id}" @click=${() => this.updateConfig(bandPath, b.id)}>${b.label}</button>`,
+          )}
+        </div>
+        <!-- fader = manual level -->
+        <div class="ch-fader-wrap">${dot(levelPath)}
+          <input class="ch-fader" orient="vertical" type="range" min="0" max="2" step="0.02" .value=${setting.level}
             @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
+          <span class="ch-cap">LVL</span>
         </div>
+        <!-- on/off (assignable to a controller button) -->
+        ${meta.canHide
+          ? html`<div class="ch-onoff-wrap">
+              <button class="ch-onoff ${setting.visible ? 'on' : 'off'}"
+                @click=${() => this.updateConfig(visiblePath, !setting.visible)}>
+                ${setting.visible ? 'ON' : 'OFF'}
+              </button>
+              ${dot(visiblePath)}
+            </div>`
+          : html`<div class="ch-onoff-wrap"><span class="ch-cap">ALWAYS</span></div>`}
       </div>
     `;
   };
@@ -1002,9 +1073,9 @@ export class ShaderRitualApp extends LitElement {
               </div>
               ${this.renderSlider('Opacity', 'overlay.opacity', 0, 1, 0.02)}
               <div class="element-desc" style="margin:12px 0 6px;">
-                ${ovDef.name} elements — hide what you don't want:
+                ${ovDef.name} channels — hide what you don't want:
               </div>
-              ${ovDef.elements.map((el) => this.renderElement(ovDef.id, el.id))}
+              <div class="channels">${ovDef.elements.map((el) => this.renderElement(ovDef.id, el.id))}</div>
             `
           : ''}
       </div>
@@ -1063,8 +1134,8 @@ export class ShaderRitualApp extends LitElement {
 
         <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
         <div class="setting-group">
-          <span class="group-title">${def.name} · Element Allocation</span>
-          ${def.elements.map((el) => this.renderElement(def.id, el.id))}
+          <span class="group-title">${def.name} · Channels</span>
+          <div class="channels">${def.elements.map((el) => this.renderElement(def.id, el.id))}</div>
         </div>
 
         <!-- OVERLAY LAYER (combine elements across shaders) -->
