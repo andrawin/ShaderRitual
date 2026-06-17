@@ -176,9 +176,12 @@ const imageShader = `
 precision highp float;
 varying vec2 vUv;
 uniform vec3 iResolution;
+uniform float iTime;
 uniform sampler2D iChannel0;
 uniform float bloom_react;
 uniform float bloom_visible;
+uniform float sparks_react;
+uniform float sparks_visible;
 
 vec3 bl(vec2 uv){
  vec2 r  = iResolution.xy;
@@ -195,11 +198,42 @@ vec3 bl(vec2 uv){
     col /= 64.;
     return col;
 }
+
+// --- electric arc field (adapted from a Shadertoy lightning shader) ---
+mat2 erot(float r){ return mat2(cos(r), sin(r), -sin(r), cos(r)); }
+vec2 enoise(vec2 p){
+  vec2 res = vec2(0.); float f = 2.;
+  for(int i = 0; i < 5; i++){ p *= erot(f); f *= 1.4; res += sin(p + sin(2.*p.yx)); }
+  return res / 3.;
+}
+float eseg(vec2 ba, vec2 pa){ float h = clamp(dot(pa,ba)/dot(ba,ba), 0., 2.); return length(pa - ba*h); }
+float earc(vec2 x, vec2 p, vec2 dir){
+  vec2 r = p; float d = 10.;
+  for(int i = 0; i < 12; i++){ vec2 s = enoise(r + iTime) + dir; d = min(d, eseg(s, x - r)); r += s; }
+  return d * 3.;
+}
+// sparks crawling outward from the centre (the core), flickering
+float sparks(vec2 x){
+  float s = 0.;
+  for(int i = 0; i < 3; i++){
+    float a = float(i) * 2.0944 + iTime * 0.6; // 120 deg apart, rotating
+    vec2 dir = vec2(cos(a), sin(a)) * 0.45;
+    s += exp(-9. * earc(x, vec2(0.), dir));
+  }
+  s *= 0.45 + 0.55 * step(0.5, fract(iTime * 9.)); // sparkle flicker
+  return s;
+}
+
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec2 uv = fragCoord/iResolution.xy;
     vec3 src = (bloom_visible > 0.5) ? bl(uv) : texture2D(iChannel0,uv).xyz;
     vec3 t = smoothstep(vec3(-0.05,-0.1,-0.05),vec3(1.,1.,0.95),src);
+    if(sparks_visible > 0.5){
+        vec2 ex = (fragCoord - 0.5*iResolution.xy)/iResolution.y * 16.0;
+        float sp = sparks(ex);
+        t += vec3(0.45, 0.7, 1.0) * sp * (0.5 + sparks_react*2.5);
+    }
     fragColor = vec4(t,1.);
 }
 void main(){ vec4 c; mainImage(c, vUv*iResolution.xy); gl_FragColor = c; }
@@ -244,6 +278,15 @@ export const sanctum: ShaderDef = {
       name: 'Atmosphere',
       description: 'Post-process bloom haze. React drives bloom spread.',
       defaultBand: 'low',
+      defaultAmount: 1.0,
+      canHide: true,
+      defaultVisible: true,
+    },
+    {
+      id: 'sparks',
+      name: 'Electric',
+      description: 'Electric arcs crackling off the core. React on treble. Toggle off to save GPU.',
+      defaultBand: 'high',
       defaultAmount: 1.0,
       canHide: true,
       defaultVisible: true,
