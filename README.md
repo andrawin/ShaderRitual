@@ -12,18 +12,23 @@ Every shader is broken into named **elements**. For each element you can:
 - **Hide it** — toggle each element on/off independently.
 
 The control panel is laid out as a **hardware-style device surface** docked
-along the bottom, mirroring a MIDI controller: a row of **8 rotary encoders**
-(drag to set each element's reactive amount), an **LED row** that lights with the
-live per-channel react, **8 channel strips** (a vertical fader for manual level
-plus a ⏻ on/off button and L/M/H band-routing buttons), and a **transport row**
-(ignite/kill audio, toggle overlay, BPM ±, prev/next shader, camera mode, prev/
-next overlay). A **SHIFT** pill flips to a setup page with everything else
-(shader picker, camera/motion/overlay, response profile, gates, MIDI bridge).
+along the bottom, mirroring a MIDI controller. The global controls take the prime
+real estate:
 
-The active shader's elements map onto the 8 channels in order. **MIDI-learn (the
-● dot) is available on each encoder (amount), fader (level) and the on/off
-button** — map a hardware button to an element's on/off (a note press toggles it)
-and knobs/faders to amount/level.
+- **8 rotary encoders** (drag up/down) → camera / motion: BPM, FOV, distance,
+  height, orbit speed, react amount, cut variety, audio gain.
+- **LED row** → lights with the live low/mid/high band meter.
+- **8 faders** → response / gates: low/mid/high gain, FFT smoothing, low/mid/high
+  gate, motion idle drift.
+- **Transport row** → ignite/kill audio, toggle overlay, BPM ±, prev/next shader,
+  camera mode, prev/next overlay shader.
+
+Below that, a compact **ELEMENTS** row holds the per-shader element on/off + band
+chips (lower priority), then a **SETUP** section (overlay layer, MIDI bridge).
+
+**MIDI-learn (the ● dot)** is on every encoder, fader and element on/off — map a
+hardware knob/fader to a camera/response param and a hardware button to an
+element's on/off (a note press toggles it).
 
 Every element also has a **Manual level** — a baseline added on top of the
 band-driven value. Set an element's band to **None** and ride the Manual level

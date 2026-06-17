@@ -63,7 +63,6 @@ export class ShaderRitualApp extends LitElement {
 
   // Live-coding code panel.
   @state() showCode = false;
-  @state() shiftPage = false;
   @state() codeTab: 'buffer' | 'image' = 'buffer';
   @state() editBuffer = '';
   @state() editImage = '';
@@ -143,7 +142,8 @@ export class ShaderRitualApp extends LitElement {
     .pill.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); box-shadow: 0 0 8px rgba(168,85,247,0.5); }
 
     /* ----- Device performance surface ----- */
-    .dev-surface { padding: 16px 18px 18px; overflow-x: auto; flex: 1 1 auto; min-height: 0; }
+    .dev-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .dev-surface { padding: 16px 18px 18px; overflow-x: auto; }
     .dev-row { display: flex; gap: 10px; justify-content: center; min-width: max-content; }
     .dev-leds { margin: 9px 0; }
     .dev-slot { width: 78px; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px; }
@@ -161,7 +161,31 @@ export class ShaderRitualApp extends LitElement {
       background: #c4a7f7; border-radius: 2px; transform-origin: 50% 18px;
     }
 
-    .led { width: 34px; height: 6px; border-radius: 3px; background: #15161c; border: 1px solid #000; opacity: 0.5; }
+    .led { width: 34px; height: 6px; border-radius: 3px; background: #a855f7; border: 1px solid #000; opacity: 0.18; }
+
+    .dev-shaderpick { display: flex; align-items: center; gap: 6px; margin-right: auto; }
+    .dev-shaderpick select {
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+      color: #fff; padding: 4px 8px; border-radius: 5px; font-size: 0.8rem; min-width: 130px;
+    }
+    .dev-cap-row {
+      font-size: 0.55rem; letter-spacing: 2px; color: #888; text-transform: uppercase;
+      text-align: center; margin: 4px 0 8px;
+    }
+    .dev-row + .dev-cap-row { margin-top: 16px; }
+
+    /* Compact, lower-priority per-shader element chips. */
+    .dev-els { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .dev-els-label { font-size: 0.55rem; letter-spacing: 2px; color: #888; text-transform: uppercase; }
+    .dev-els-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    .el-chip {
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 6px 8px;
+      background: rgba(255,255,255,0.03);
+    }
+    .el-chip.off { opacity: 0.5; }
+    .el-chip-name { font-size: 0.58rem; color: #ddd; }
+    .el-chip-btns { display: flex; align-items: center; gap: 4px; }
 
     .fader-col { display: flex; gap: 7px; align-items: stretch; }
     .ch-fader-empty { width: 22px; height: 104px; }
@@ -193,8 +217,8 @@ export class ShaderRitualApp extends LitElement {
     .tbtn:hover { background: rgba(255,255,255,0.14); }
     .tbtn.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); }
 
-    /* ----- Advanced (SHIFT) page reuses the old controls ----- */
-    .dev-advanced { padding: 16px 18px 22px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+    /* ----- Setup section (below the surface) reuses the old controls ----- */
+    .dev-advanced { padding: 6px 18px 22px; border-top: 1px solid rgba(255,255,255,0.08); }
     .dev-advanced .setting-group { max-width: 460px; }
 
     .header-actions { display: flex; align-items: center; gap: 6px; }
@@ -923,28 +947,19 @@ export class ShaderRitualApp extends LitElement {
 
       if (!this.showSettings) return;
 
-      // Drive the device LED row from the live per-channel react (no re-render).
-      if (!this.shiftPage) {
-        const bands = this.isController
-          ? this.remoteBands
-          : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
-        const def = getShader(this.config.activeShader);
-        const elemCfg = this.config.shaders[def.id]?.elements || {};
+      // Drive the device LED row from the live band meter (no Lit re-render).
+      const ledData = this.isController
+        ? this.remoteBands
+        : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
+      if (ledData) {
+        const ledBand = ['low', 'mid', 'high', 'vol', 'low', 'mid', 'high', 'vol'];
+        const vol = (ledData.low + ledData.mid + ledData.high) / 3;
         const leds = this.shadowRoot?.querySelectorAll('.led');
         leds?.forEach((node, i) => {
+          const lvl = Math.min(1, ledBand[i] === 'vol' ? vol : ledData[ledBand[i]] || 0);
           const led = node as HTMLElement;
-          const el = def.elements[i];
-          const c = el ? elemCfg[el.id] : null;
-          if (!c || !c.visible) {
-            led.style.opacity = '0.12';
-            led.style.background = '#15161c';
-            return;
-          }
-          const bandVal = bands && c.band !== 'none' ? bands[c.band] || 0 : 0;
-          const react = Math.min(1, (c.level || 0) + bandVal * c.amount);
-          led.style.opacity = String(0.25 + 0.75 * react);
-          led.style.background = '#a855f7';
-          led.style.boxShadow = react > 0.4 ? '0 0 7px #a855f7' : 'none';
+          led.style.opacity = String(0.18 + 0.82 * lvl);
+          led.style.boxShadow = lvl > 0.4 ? '0 0 7px #a855f7' : 'none';
         });
       }
 
@@ -1228,15 +1243,19 @@ export class ShaderRitualApp extends LitElement {
   }
 
   private renderSettings() {
-    const def = getShader(this.config.activeShader);
     return html`
       <div class="settings-panel device-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
         <div class="dev-head">
-          <span class="dev-title">SHADER RITUAL</span>
-          <span class="dev-sub">${def.name}${this.config.overlay.enabled ? ` + ${getShader(this.config.overlay.shader).name}` : ''}</span>
+          <span class="dev-title">SHADER&nbsp;RITUAL</span>
+          <div class="dev-shaderpick">
+            <button class="tbtn" title="Previous shader" @click=${() => this.stepShader(-1)}>‹</button>
+            <select .value=${this.config.activeShader}
+              @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
+              ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
+            </select>
+            <button class="tbtn" title="Next shader" @click=${() => this.stepShader(1)}>›</button>
+          </div>
           <div class="dev-pills">
-            <button class="pill ${this.shiftPage ? 'on' : ''}" title="Toggle setup page"
-              @click=${() => (this.shiftPage = !this.shiftPage)}>SHIFT</button>
             ${this.isController
               ? html`<span class="live-dot">Live</span>`
               : html`
@@ -1246,70 +1265,105 @@ export class ShaderRitualApp extends LitElement {
                 `}
           </div>
         </div>
-        ${this.shiftPage ? this.renderAdvancedPage() : this.renderDeviceSurface()}
+        <div class="dev-scroll">
+          ${this.renderDeviceSurface()}
+          ${this.renderSetup()}
+        </div>
       </div>
     `;
   }
 
-  /** Map the active shader's elements onto 8 hardware channel slots. */
-  private slots() {
-    const def = getShader(this.config.activeShader);
-    const out: ({ id: string; el: any } | null)[] = [];
-    for (let i = 0; i < 8; i++) out.push(def.elements[i] ? { id: def.id, el: def.elements[i] } : null);
-    return out;
-  }
+  // Eight encoders -> camera / motion shaping; eight faders -> response / gates.
+  private encSpecs = [
+    { path: 'camera.bpm', label: 'BPM', min: 40, max: 240 },
+    { path: 'camera.fov', label: 'FOV', min: 20, max: 120 },
+    { path: 'camera.distance', label: 'DIST', min: 0.3, max: 2.5 },
+    { path: 'camera.height', label: 'HGT', min: -1, max: 1 },
+    { path: 'camera.orbitSpeed', label: 'ORB', min: 0, max: 3 },
+    { path: 'camera.reactAmount', label: 'RCT', min: 0, max: 3 },
+    { path: 'camera.cutChance', label: 'CUT', min: 0, max: 1 },
+    { path: 'motion.gain', label: 'GAIN', min: 0, max: 3 },
+  ];
+  private fadSpecs = [
+    { path: 'sensitivity.low', label: 'LOW', min: 0, max: 5 },
+    { path: 'sensitivity.mid', label: 'MID', min: 0, max: 5 },
+    { path: 'sensitivity.high', label: 'HIGH', min: 0, max: 10 },
+    { path: 'fftSmoothing', label: 'SMTH', min: 0, max: 0.95 },
+    { path: 'thresholds.low', label: 'L·GT', min: 0, max: 1 },
+    { path: 'thresholds.mid', label: 'M·GT', min: 0, max: 1 },
+    { path: 'thresholds.high', label: 'H·GT', min: 0, max: 1 },
+    { path: 'motion.idle', label: 'IDLE', min: 0, max: 1 },
+  ];
 
-  private renderEncoder(shaderId: string, el: any) {
-    const path = `shaders.${shaderId}.elements.${el.id}.amount`;
-    const setting = this.config.shaders[shaderId].elements[el.id];
-    const ang = -135 + (setting.amount / 3) * 270;
+  private renderKnob(spec: { path: string; label: string; min: number; max: number }) {
+    const val = Number(this.getConfigValue(spec.path) ?? spec.min);
+    const ang = -135 + ((val - spec.min) / (spec.max - spec.min)) * 270;
+    const step = (spec.max - spec.min) / 200;
     return html`
       <div class="dev-slot">
-        <div class="enc" title="${el.name} · reactive amount (drag)"
-          @pointerdown=${(e: PointerEvent) => this.onKnobDown(e, path, 0, 3, 0.05, setting.amount)}>
+        <div class="enc" title="${spec.label} (drag up/down)"
+          @pointerdown=${(e: PointerEvent) => this.onKnobDown(e, spec.path, spec.min, spec.max, step, val)}>
           <div class="enc-ind" style="transform:rotate(${ang}deg)"></div>
         </div>
-        <button class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
-          title="MIDI-learn amount" @click=${() => this.toggleMidiLearn(path)}>●</button>
+        <button class="midi-learn-btn ${this.learningParam === spec.path ? 'active' : ''} ${this.isMapped(spec.path) ? 'mapped' : ''}"
+          title="MIDI-learn ${spec.label}" @click=${() => this.toggleMidiLearn(spec.path)}>●</button>
+        <span class="ch-cap">${spec.label}</span>
       </div>
     `;
   }
 
-  private renderChannelStrip(shaderId: string, el: any) {
-    const setting = this.config.shaders[shaderId].elements[el.id];
-    const bandPath = `shaders.${shaderId}.elements.${el.id}.band`;
-    const levelPath = `shaders.${shaderId}.elements.${el.id}.level`;
-    const visiblePath = `shaders.${shaderId}.elements.${el.id}.visible`;
+  private renderFader(spec: { path: string; label: string; min: number; max: number }) {
+    const val = Number(this.getConfigValue(spec.path) ?? spec.min);
+    const step = (spec.max - spec.min) / 200;
+    return html`
+      <div class="dev-slot">
+        <input class="ch-fader" orient="vertical" type="range" min=${spec.min} max=${spec.max} step=${step} .value=${val}
+          @input=${(e: any) => this.updateConfig(spec.path, parseFloat(e.target.value))} />
+        <button class="midi-learn-btn ${this.learningParam === spec.path ? 'active' : ''} ${this.isMapped(spec.path) ? 'mapped' : ''}"
+          title="MIDI-learn ${spec.label}" @click=${() => this.toggleMidiLearn(spec.path)}>●</button>
+        <span class="ch-cap">${spec.label}</span>
+      </div>
+    `;
+  }
+
+  // Lower-priority: per-shader element on/off + band routing, as compact chips.
+  private renderElementsRow() {
+    const def = getShader(this.config.activeShader);
     const bands: { id: Band; label: string }[] = [
       { id: 'low', label: 'L' },
       { id: 'mid', label: 'M' },
       { id: 'high', label: 'H' },
     ];
     return html`
-      <div class="dev-slot ${setting.visible ? '' : 'dim'}" title=${el.description}>
-        <div class="fader-col">
-          <input class="ch-fader" orient="vertical" type="range" min="0" max="2" step="0.02" .value=${setting.level}
-            @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
-          <div class="btn-col">
-            <button class="dev-btn ${setting.visible ? 'pwr-on' : 'pwr-off'}"
-              title=${el.canHide ? 'On / Off' : 'Always on'}
-              @click=${() => el.canHide && this.updateConfig(visiblePath, !setting.visible)}>⏻</button>
-            ${bands.map(
-              (b) => html`<button class="dev-btn ${setting.band === b.id ? 'sel' : ''}"
-                title="React to ${b.id}"
-                @click=${() => this.updateConfig(bandPath, setting.band === b.id ? 'none' : b.id)}>${b.label}</button>`,
-            )}
-          </div>
+      <div class="dev-els">
+        <span class="dev-els-label">ELEMENTS · ${def.name}</span>
+        <div class="dev-els-row">
+          ${def.elements.map((el) => {
+            const setting = this.config.shaders[def.id].elements[el.id];
+            const visPath = `shaders.${def.id}.elements.${el.id}.visible`;
+            const bandPath = `shaders.${def.id}.elements.${el.id}.band`;
+            return html`
+              <div class="el-chip ${setting.visible ? '' : 'off'}" title=${el.description}>
+                <span class="el-chip-name">${el.name}</span>
+                <div class="el-chip-btns">
+                  ${el.canHide
+                    ? html`<button class="dev-btn ${setting.visible ? 'pwr-on' : 'pwr-off'}" title="On / Off"
+                        @click=${() => this.updateConfig(visPath, !setting.visible)}>⏻</button>`
+                    : ''}
+                  ${bands.map(
+                    (b) => html`<button class="dev-btn ${setting.band === b.id ? 'sel' : ''}"
+                      title="React to ${b.id}"
+                      @click=${() => this.updateConfig(bandPath, setting.band === b.id ? 'none' : b.id)}>${b.label}</button>`,
+                  )}
+                  ${el.canHide
+                    ? html`<button class="midi-learn-btn ${this.learningParam === visPath ? 'active' : ''} ${this.isMapped(visPath) ? 'mapped' : ''}"
+                        title="MIDI-learn on/off" @click=${() => this.toggleMidiLearn(visPath)}>●</button>`
+                    : ''}
+                </div>
+              </div>
+            `;
+          })}
         </div>
-        <div class="ch-dots">
-          <button class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
-            title="MIDI-learn level" @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
-          ${el.canHide
-            ? html`<button class="midi-learn-btn ${this.learningParam === visiblePath ? 'active' : ''} ${this.isMapped(visiblePath) ? 'mapped' : ''}"
-                title="MIDI-learn on/off" @click=${() => this.toggleMidiLearn(visiblePath)}>●</button>`
-            : ''}
-        </div>
-        <span class="ch-name">${el.name}</span>
       </div>
     `;
   }
@@ -1335,85 +1389,44 @@ export class ShaderRitualApp extends LitElement {
   }
 
   private renderDeviceSurface() {
-    const slots = this.slots();
     return html`
       <div class="dev-surface">
-        <div class="dev-row">
-          ${slots.map((s) =>
-            s ? this.renderEncoder(s.id, s.el) : html`<div class="dev-slot"><div class="enc empty"></div></div>`,
-          )}
-        </div>
+        <div class="dev-cap-row">ENCODERS · camera / motion</div>
+        <div class="dev-row">${this.encSpecs.map((s) => this.renderKnob(s))}</div>
         <div class="dev-row dev-leds">
-          ${slots.map((_s, i) => html`<div class="dev-slot"><div class="led" data-led=${i}></div></div>`)}
+          ${this.encSpecs.map((_s, i) => html`<div class="dev-slot"><div class="led" data-led=${i}></div></div>`)}
         </div>
-        <div class="dev-row">
-          ${slots.map((s) =>
-            s
-              ? this.renderChannelStrip(s.id, s.el)
-              : html`<div class="dev-slot dim"><div class="fader-col"><div class="ch-fader-empty"></div><div class="btn-col"></div></div><span class="ch-name">—</span></div>`,
-          )}
-        </div>
+        <div class="dev-cap-row">FADERS · response / gates</div>
+        <div class="dev-row">${this.fadSpecs.map((s) => this.renderFader(s))}</div>
         ${this.renderTransport()}
+        ${this.renderElementsRow()}
       </div>
     `;
   }
 
-  private renderAdvancedPage() {
-    const def = getShader(this.config.activeShader);
+  private renderSetup() {
     return html`
       <div class="dev-advanced">
+        <div class="dev-cap-row">SETUP</div>
         <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
 
-        <!-- SHADER SELECT -->
-        <div class="setting-group">
-          <span class="group-title">Active Shader</span>
-          <select
-            class="shader-select"
-            .value=${this.config.activeShader}
-            @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
-            ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
+        <div class="control-row">
+          <label>Camera mode</label>
+          <select .value=${this.config.camera.mode}
+            @change=${(e: any) => this.updateConfig('camera.mode', e.target.value)}>
+            <option value="manual">Manual orbit</option>
+            <option value="bpm">BPM cuts</option>
+            <option value="audio">Audio reactive</option>
           </select>
-          <div class="element-desc" style="margin-top:8px;">${def.description}</div>
         </div>
-
-        <!-- CAMERA / MOTION (global) -->
-        ${this.renderCameraSection()}
-
-        <!-- AUDIO-GATED MOTION -->
-        <div class="setting-group">
-          <span class="group-title">Motion · Calm on silence</span>
-          <div class="element-desc" style="margin-bottom:10px;">
-            Animation speed follows the audio. With this on, the scene calms (or
-            freezes, at Idle 0) when no sound is coming in.
-          </div>
-          <div class="control-row">
-            <label>Audio-gated</label>
-            <input type="checkbox" .checked=${this.config.motion.audioGated}
-              @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
-          </div>
-          ${this.renderSlider('Idle drift', 'motion.idle', 0, 1, 0.01)}
-          ${this.renderSlider('Audio gain', 'motion.gain', 0, 3, 0.05)}
+        <div class="control-row">
+          <label>Calm on silence (audio-gated motion)</label>
+          <input type="checkbox" .checked=${this.config.motion.audioGated}
+            @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
         </div>
 
         <!-- OVERLAY LAYER (combine elements across shaders) -->
         ${this.renderOverlaySection()}
-
-        <!-- RESPONSE PROFILE -->
-        <div class="setting-group">
-          <span class="group-title">Response Profile</span>
-          ${this.renderSlider('FFT Smoothing', 'fftSmoothing', 0, 0.95, 0.05)}
-          ${this.renderSlider('Low Gain', 'sensitivity.low', 0, 5, 0.1)}
-          ${this.renderSlider('Mid Gain', 'sensitivity.mid', 0, 5, 0.1)}
-          ${this.renderSlider('High Gain', 'sensitivity.high', 0, 10, 0.1)}
-        </div>
-
-        <!-- NOISE GATES -->
-        <div class="setting-group">
-          <span class="group-title">Noise Gates</span>
-          ${this.renderSlider('Low Gate', 'thresholds.low', 0, 1, 0.01)}
-          ${this.renderSlider('Mid Gate', 'thresholds.mid', 0, 1, 0.01)}
-          ${this.renderSlider('High Gate', 'thresholds.high', 0, 1, 0.01)}
-        </div>
 
         <!-- MIDI -->
         <div class="setting-group">
