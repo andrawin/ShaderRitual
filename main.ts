@@ -63,6 +63,7 @@ export class ShaderRitualApp extends LitElement {
 
   // Live-coding code panel.
   @state() showCode = false;
+  @state() shiftPage = false;
   @state() codeTab: 'buffer' | 'image' = 'buffer';
   @state() editBuffer = '';
   @state() editImage = '';
@@ -107,21 +108,94 @@ export class ShaderRitualApp extends LitElement {
     .settings-btn:hover { background: rgba(255,255,255,0.2); color: white; }
     .settings-btn svg { width: 30px; height: 30px; fill: currentColor; }
 
+    /* Device-style panel docked along the bottom, like the hardware. */
     .settings-panel {
-      position: absolute; top: 0; right: 0; bottom: 0; width: 360px;
-      background: rgba(10,10,15,0.96); backdrop-filter: blur(35px); z-index: 30;
-      padding: 20px; transform: translateX(100%);
+      position: absolute; left: 0; right: 0; bottom: 0; width: 100%; box-sizing: border-box;
+      background: rgba(14,15,20,0.97); backdrop-filter: blur(28px); z-index: 30;
+      transform: translateY(100%);
       transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
-      overflow-y: auto; color: #ddd; border-left: 1px solid rgba(255,255,255,0.1);
+      color: #ddd; border-top: 1px solid rgba(255,255,255,0.12);
+      max-height: 90vh; overflow: hidden; display: flex; flex-direction: column;
     }
-    .settings-panel.open { transform: translateX(0); }
+    .settings-panel.open { transform: translateY(0); }
 
     /* Detached controller window: panel fills the whole tab. */
     :host(.controller-host) { display: block; }
     .settings-panel.controller {
-      position: static; width: auto; transform: none; height: 100vh;
-      border-left: none; box-sizing: border-box;
+      position: static; width: 100%; transform: none; height: 100vh; max-height: none;
+      border-top: none; box-sizing: border-box;
     }
+
+    /* ----- Device header (title + SHIFT / BT pills) ----- */
+    .dev-head {
+      display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.08); flex: 0 0 auto;
+    }
+    .dev-title { font-weight: 700; letter-spacing: 3px; font-size: 0.8rem; color: #fff; }
+    .dev-sub { font-size: 0.7rem; color: #a855f7; margin-right: auto; font-family: monospace; }
+    .dev-pills { display: flex; align-items: center; gap: 8px; }
+    .pill {
+      font-size: 0.62rem; letter-spacing: 1px; font-weight: 600; color: #cbd5e1;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 14px; padding: 5px 12px; cursor: pointer;
+    }
+    .pill:hover { background: rgba(255,255,255,0.14); }
+    .pill.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); box-shadow: 0 0 8px rgba(168,85,247,0.5); }
+
+    /* ----- Device performance surface ----- */
+    .dev-surface { padding: 16px 18px 18px; overflow-x: auto; flex: 1 1 auto; min-height: 0; }
+    .dev-row { display: flex; gap: 10px; justify-content: center; min-width: max-content; }
+    .dev-leds { margin: 9px 0; }
+    .dev-slot { width: 78px; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+    .dev-slot.dim { opacity: 0.5; }
+
+    .enc {
+      width: 46px; height: 46px; border-radius: 50%; position: relative; cursor: ns-resize;
+      background: radial-gradient(circle at 50% 32%, #41434f, #181a22 70%);
+      border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      touch-action: none;
+    }
+    .enc.empty { opacity: 0.18; cursor: default; box-shadow: none; }
+    .enc-ind {
+      position: absolute; left: 50%; top: 5px; width: 3px; height: 14px; margin-left: -1.5px;
+      background: #c4a7f7; border-radius: 2px; transform-origin: 50% 18px;
+    }
+
+    .led { width: 34px; height: 6px; border-radius: 3px; background: #15161c; border: 1px solid #000; opacity: 0.5; }
+
+    .fader-col { display: flex; gap: 7px; align-items: stretch; }
+    .ch-fader-empty { width: 22px; height: 104px; }
+    .btn-col { display: flex; flex-direction: column; gap: 5px; }
+    .dev-btn {
+      width: 22px; height: 22px; padding: 0; font-size: 0.6rem; line-height: 1; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
+      color: #9aa; border-radius: 4px;
+    }
+    .dev-btn.sel { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.4); }
+    .dev-btn.pwr-on { color: #10b981; border-color: #10b981; }
+    .dev-btn.pwr-off { color: #ef4444; border-color: #ef4444; }
+    .ch-dots { display: flex; gap: 5px; height: 18px; }
+    .ch-name {
+      font-size: 0.58rem; color: #ddd; text-align: center; max-width: 76px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .dev-transport {
+      display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
+      margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);
+      min-width: max-content;
+    }
+    .tbtn {
+      min-width: 38px; height: 26px; padding: 0 8px; cursor: pointer; font-size: 0.8rem;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
+      color: #cbd5e1; border-radius: 5px;
+    }
+    .tbtn:hover { background: rgba(255,255,255,0.14); }
+    .tbtn.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); }
+
+    /* ----- Advanced (SHIFT) page reuses the old controls ----- */
+    .dev-advanced { padding: 16px 18px 22px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+    .dev-advanced .setting-group { max-width: 460px; }
 
     .header-actions { display: flex; align-items: center; gap: 6px; }
     .live-dot {
@@ -731,6 +805,51 @@ export class ShaderRitualApp extends LitElement {
     return Object.values(this.midiMappings).some((m) => m.path === path);
   }
 
+  /* ------------------ Device-surface controls ---------------------- */
+
+  private stepShader = (dir: number) => {
+    const ids = SHADERS.map((s) => s.id);
+    const i = ids.indexOf(this.config.activeShader);
+    this.updateConfig('activeShader', ids[(i + dir + ids.length) % ids.length]);
+  };
+  private stepOverlayShader = (dir: number) => {
+    const ids = SHADERS.map((s) => s.id);
+    const i = ids.indexOf(this.config.overlay.shader);
+    this.updateConfig('overlay.shader', ids[(i + dir + ids.length) % ids.length]);
+  };
+  private cycleCamMode = (dir: number) => {
+    const modes = ['manual', 'bpm', 'audio'];
+    const i = modes.indexOf(this.config.camera.mode);
+    this.updateConfig('camera.mode', modes[(i + dir + modes.length) % modes.length]);
+  };
+  private bpmStep = (d: number) => {
+    const b = Math.max(40, Math.min(240, Math.round(this.config.camera.bpm + d)));
+    this.updateConfig('camera.bpm', b);
+  };
+
+  // Drag a rotary encoder vertically to change its value.
+  private knobDrag: { path: string; min: number; max: number; step: number; startY: number; startVal: number } | null = null;
+  private onKnobDown = (e: PointerEvent, path: string, min: number, max: number, step: number, val: number) => {
+    e.preventDefault();
+    this.knobDrag = { path, min, max, step, startY: e.clientY, startVal: val };
+    window.addEventListener('pointermove', this.onKnobMove);
+    window.addEventListener('pointerup', this.onKnobUp);
+  };
+  private onKnobMove = (e: PointerEvent) => {
+    const k = this.knobDrag;
+    if (!k) return;
+    const dy = k.startY - e.clientY;
+    let v = k.startVal + (dy / 160) * (k.max - k.min);
+    v = Math.max(k.min, Math.min(k.max, v));
+    v = Math.round(v / k.step) * k.step;
+    this.updateConfig(k.path, v);
+  };
+  private onKnobUp = () => {
+    this.knobDrag = null;
+    window.removeEventListener('pointermove', this.onKnobMove);
+    window.removeEventListener('pointerup', this.onKnobUp);
+  };
+
   /* --------------------------- Audio ----------------------------- */
 
   private startRecording = async () => {
@@ -803,6 +922,32 @@ export class ShaderRitualApp extends LitElement {
       }
 
       if (!this.showSettings) return;
+
+      // Drive the device LED row from the live per-channel react (no re-render).
+      if (!this.shiftPage) {
+        const bands = this.isController
+          ? this.remoteBands
+          : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
+        const def = getShader(this.config.activeShader);
+        const elemCfg = this.config.shaders[def.id]?.elements || {};
+        const leds = this.shadowRoot?.querySelectorAll('.led');
+        leds?.forEach((node, i) => {
+          const led = node as HTMLElement;
+          const el = def.elements[i];
+          const c = el ? elemCfg[el.id] : null;
+          if (!c || !c.visible) {
+            led.style.opacity = '0.12';
+            led.style.background = '#15161c';
+            return;
+          }
+          const bandVal = bands && c.band !== 'none' ? bands[c.band] || 0 : 0;
+          const react = Math.min(1, (c.level || 0) + bandVal * c.amount);
+          led.style.opacity = String(0.25 + 0.75 * react);
+          led.style.background = '#a855f7';
+          led.style.boxShadow = react > 0.4 ? '0 0 7px #a855f7' : 'none';
+        });
+      }
+
       const canvas = this.shadowRoot?.querySelector('#monitorCanvas') as HTMLCanvasElement;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -1085,20 +1230,138 @@ export class ShaderRitualApp extends LitElement {
   private renderSettings() {
     const def = getShader(this.config.activeShader);
     return html`
-      <div class="settings-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
-        <div class="panel-header">
-          <h2>Shader Ritual</h2>
-          <div class="header-actions">
+      <div class="settings-panel device-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
+        <div class="dev-head">
+          <span class="dev-title">SHADER RITUAL</span>
+          <span class="dev-sub">${def.name}${this.config.overlay.enabled ? ` + ${getShader(this.config.overlay.shader).name}` : ''}</span>
+          <div class="dev-pills">
+            <button class="pill ${this.shiftPage ? 'on' : ''}" title="Toggle setup page"
+              @click=${() => (this.shiftPage = !this.shiftPage)}>SHIFT</button>
             ${this.isController
-              ? html`<span class="live-dot">Live control</span>`
+              ? html`<span class="live-dot">Live</span>`
               : html`
-                  <button class="icon-btn" title="Pop controls out to a separate window"
-                    @click=${this.detachControls}>⧉</button>
+                  <button class="pill" title="Pop controls out to a separate window"
+                    @click=${this.detachControls}>BT&nbsp;⧉</button>
                   <button class="icon-btn" @click=${() => (this.showSettings = false)}>&times;</button>
                 `}
           </div>
         </div>
+        ${this.shiftPage ? this.renderAdvancedPage() : this.renderDeviceSurface()}
+      </div>
+    `;
+  }
 
+  /** Map the active shader's elements onto 8 hardware channel slots. */
+  private slots() {
+    const def = getShader(this.config.activeShader);
+    const out: ({ id: string; el: any } | null)[] = [];
+    for (let i = 0; i < 8; i++) out.push(def.elements[i] ? { id: def.id, el: def.elements[i] } : null);
+    return out;
+  }
+
+  private renderEncoder(shaderId: string, el: any) {
+    const path = `shaders.${shaderId}.elements.${el.id}.amount`;
+    const setting = this.config.shaders[shaderId].elements[el.id];
+    const ang = -135 + (setting.amount / 3) * 270;
+    return html`
+      <div class="dev-slot">
+        <div class="enc" title="${el.name} · reactive amount (drag)"
+          @pointerdown=${(e: PointerEvent) => this.onKnobDown(e, path, 0, 3, 0.05, setting.amount)}>
+          <div class="enc-ind" style="transform:rotate(${ang}deg)"></div>
+        </div>
+        <button class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
+          title="MIDI-learn amount" @click=${() => this.toggleMidiLearn(path)}>●</button>
+      </div>
+    `;
+  }
+
+  private renderChannelStrip(shaderId: string, el: any) {
+    const setting = this.config.shaders[shaderId].elements[el.id];
+    const bandPath = `shaders.${shaderId}.elements.${el.id}.band`;
+    const levelPath = `shaders.${shaderId}.elements.${el.id}.level`;
+    const visiblePath = `shaders.${shaderId}.elements.${el.id}.visible`;
+    const bands: { id: Band; label: string }[] = [
+      { id: 'low', label: 'L' },
+      { id: 'mid', label: 'M' },
+      { id: 'high', label: 'H' },
+    ];
+    return html`
+      <div class="dev-slot ${setting.visible ? '' : 'dim'}" title=${el.description}>
+        <div class="fader-col">
+          <input class="ch-fader" orient="vertical" type="range" min="0" max="2" step="0.02" .value=${setting.level}
+            @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
+          <div class="btn-col">
+            <button class="dev-btn ${setting.visible ? 'pwr-on' : 'pwr-off'}"
+              title=${el.canHide ? 'On / Off' : 'Always on'}
+              @click=${() => el.canHide && this.updateConfig(visiblePath, !setting.visible)}>⏻</button>
+            ${bands.map(
+              (b) => html`<button class="dev-btn ${setting.band === b.id ? 'sel' : ''}"
+                title="React to ${b.id}"
+                @click=${() => this.updateConfig(bandPath, setting.band === b.id ? 'none' : b.id)}>${b.label}</button>`,
+            )}
+          </div>
+        </div>
+        <div class="ch-dots">
+          <button class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
+            title="MIDI-learn level" @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
+          ${el.canHide
+            ? html`<button class="midi-learn-btn ${this.learningParam === visiblePath ? 'active' : ''} ${this.isMapped(visiblePath) ? 'mapped' : ''}"
+                title="MIDI-learn on/off" @click=${() => this.toggleMidiLearn(visiblePath)}>●</button>`
+            : ''}
+        </div>
+        <span class="ch-name">${el.name}</span>
+      </div>
+    `;
+  }
+
+  private renderTransport() {
+    const tb = (glyph: string, title: string, on: boolean, fn: () => void) => html`
+      <button class="tbtn ${on ? 'on' : ''}" title=${title} @click=${fn}>${glyph}</button>`;
+    return html`
+      <div class="dev-transport">
+        ${tb('▶', 'Ignite audio', this.isRecording, () => { if (!this.isRecording) this.toggleAudio(); })}
+        ${tb('⏸', 'Kill audio', false, () => { if (this.isRecording) this.toggleAudio(); })}
+        ${tb('⏺', 'Toggle overlay layer', this.config.overlay.enabled, () => this.updateConfig('overlay.enabled', !this.config.overlay.enabled))}
+        ${tb('⏪', 'BPM −5', false, () => this.bpmStep(-5))}
+        ${tb('⏩', 'BPM +5', false, () => this.bpmStep(5))}
+        ${tb('«', 'Previous shader', false, () => this.stepShader(-1))}
+        ${tb('»', 'Next shader', false, () => this.stepShader(1))}
+        ${tb('△', 'Camera mode +', false, () => this.cycleCamMode(1))}
+        ${tb('▽', 'Camera mode −', false, () => this.cycleCamMode(-1))}
+        ${tb('◁', 'Previous overlay shader', false, () => this.stepOverlayShader(-1))}
+        ${tb('▷', 'Next overlay shader', false, () => this.stepOverlayShader(1))}
+      </div>
+    `;
+  }
+
+  private renderDeviceSurface() {
+    const slots = this.slots();
+    return html`
+      <div class="dev-surface">
+        <div class="dev-row">
+          ${slots.map((s) =>
+            s ? this.renderEncoder(s.id, s.el) : html`<div class="dev-slot"><div class="enc empty"></div></div>`,
+          )}
+        </div>
+        <div class="dev-row dev-leds">
+          ${slots.map((_s, i) => html`<div class="dev-slot"><div class="led" data-led=${i}></div></div>`)}
+        </div>
+        <div class="dev-row">
+          ${slots.map((s) =>
+            s
+              ? this.renderChannelStrip(s.id, s.el)
+              : html`<div class="dev-slot dim"><div class="fader-col"><div class="ch-fader-empty"></div><div class="btn-col"></div></div><span class="ch-name">—</span></div>`,
+          )}
+        </div>
+        ${this.renderTransport()}
+      </div>
+    `;
+  }
+
+  private renderAdvancedPage() {
+    const def = getShader(this.config.activeShader);
+    return html`
+      <div class="dev-advanced">
         <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
 
         <!-- SHADER SELECT -->
@@ -1130,12 +1393,6 @@ export class ShaderRitualApp extends LitElement {
           </div>
           ${this.renderSlider('Idle drift', 'motion.idle', 0, 1, 0.01)}
           ${this.renderSlider('Audio gain', 'motion.gain', 0, 3, 0.05)}
-        </div>
-
-        <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
-        <div class="setting-group">
-          <span class="group-title">${def.name} · Channels</span>
-          <div class="channels">${def.elements.map((el) => this.renderElement(def.id, el.id))}</div>
         </div>
 
         <!-- OVERLAY LAYER (combine elements across shaders) -->

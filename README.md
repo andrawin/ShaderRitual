@@ -11,11 +11,19 @@ Every shader is broken into named **elements**. For each element you can:
 - **Set a reactive amount** — how strongly that band drives the element.
 - **Hide it** — toggle each element on/off independently.
 
-Each shader's elements are laid out as **mixer-style channel strips** (an
-encoder for reactive amount, L/M/H band-routing buttons, a fader for the manual
-level, and an on/off button) to mirror a hardware MIDI controller. **MIDI-learn
-(the ● dot) is available on the amount, level *and* on/off** of every channel —
-map a hardware button to an element's on/off and a knob/fader to its amount/level.
+The control panel is laid out as a **hardware-style device surface** docked
+along the bottom, mirroring a MIDI controller: a row of **8 rotary encoders**
+(drag to set each element's reactive amount), an **LED row** that lights with the
+live per-channel react, **8 channel strips** (a vertical fader for manual level
+plus a ⏻ on/off button and L/M/H band-routing buttons), and a **transport row**
+(ignite/kill audio, toggle overlay, BPM ±, prev/next shader, camera mode, prev/
+next overlay). A **SHIFT** pill flips to a setup page with everything else
+(shader picker, camera/motion/overlay, response profile, gates, MIDI bridge).
+
+The active shader's elements map onto the 8 channels in order. **MIDI-learn (the
+● dot) is available on each encoder (amount), fader (level) and the on/off
+button** — map a hardware button to an element's on/off (a note press toggles it)
+and knobs/faders to amount/level.
 
 Every element also has a **Manual level** — a baseline added on top of the
 band-driven value. Set an element's band to **None** and ride the Manual level
