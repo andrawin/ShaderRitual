@@ -303,12 +303,12 @@ export class ShaderRitualApp extends LitElement {
     }
     .code-ok { flex: 1; font-family: monospace; font-size: 0.66rem; color: #b6f0a8; }
 
-    /* Hairline scrollbars so the editor melts into the layer. */
-    .code-values, .code-textarea { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent; }
-    .code-values::-webkit-scrollbar, .code-textarea::-webkit-scrollbar { width: 4px; height: 4px; }
+    /* Near-invisible hairline scrollbars so the editor melts into the layer. */
+    .code-values, .code-textarea { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.06) transparent; }
+    .code-values::-webkit-scrollbar, .code-textarea::-webkit-scrollbar { width: 3px; height: 3px; }
     .code-values::-webkit-scrollbar-track, .code-textarea::-webkit-scrollbar-track { background: transparent; }
     .code-values::-webkit-scrollbar-thumb, .code-textarea::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.25); border-radius: 3px;
+      background: rgba(255,255,255,0.06); border-radius: 3px;
     }
   `;
 
