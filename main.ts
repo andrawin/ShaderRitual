@@ -107,119 +107,21 @@ export class ShaderRitualApp extends LitElement {
     .settings-btn:hover { background: rgba(255,255,255,0.2); color: white; }
     .settings-btn svg { width: 30px; height: 30px; fill: currentColor; }
 
-    /* Device-style panel docked along the bottom, like the hardware. */
     .settings-panel {
-      position: absolute; left: 0; right: 0; bottom: 0; width: 100%; box-sizing: border-box;
-      background: rgba(14,15,20,0.97); backdrop-filter: blur(28px); z-index: 30;
-      transform: translateY(100%);
+      position: absolute; top: 0; right: 0; bottom: 0; width: 360px;
+      background: rgba(10,10,15,0.96); backdrop-filter: blur(35px); z-index: 30;
+      padding: 20px; transform: translateX(100%);
       transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
-      color: #ddd; border-top: 1px solid rgba(255,255,255,0.12);
-      max-height: 90vh; overflow: hidden; display: flex; flex-direction: column;
+      overflow-y: auto; color: #ddd; border-left: 1px solid rgba(255,255,255,0.1);
     }
-    .settings-panel.open { transform: translateY(0); }
+    .settings-panel.open { transform: translateX(0); }
 
     /* Detached controller window: panel fills the whole tab. */
     :host(.controller-host) { display: block; }
     .settings-panel.controller {
-      position: static; width: 100%; transform: none; height: 100vh; max-height: none;
-      border-top: none; box-sizing: border-box;
+      position: static; width: auto; transform: none; height: 100vh;
+      border-left: none; box-sizing: border-box;
     }
-
-    /* ----- Device header (title + SHIFT / BT pills) ----- */
-    .dev-head {
-      display: flex; align-items: center; gap: 12px; padding: 10px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.08); flex: 0 0 auto;
-    }
-    .dev-title { font-weight: 700; letter-spacing: 3px; font-size: 0.8rem; color: #fff; }
-    .dev-sub { font-size: 0.7rem; color: #a855f7; margin-right: auto; font-family: monospace; }
-    .dev-pills { display: flex; align-items: center; gap: 8px; }
-    .pill {
-      font-size: 0.62rem; letter-spacing: 1px; font-weight: 600; color: #cbd5e1;
-      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 14px; padding: 5px 12px; cursor: pointer;
-    }
-    .pill:hover { background: rgba(255,255,255,0.14); }
-    .pill.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); box-shadow: 0 0 8px rgba(168,85,247,0.5); }
-
-    /* ----- Device performance surface ----- */
-    .dev-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-    .dev-surface { padding: 16px 18px 18px; overflow-x: auto; }
-    .dev-row { display: flex; gap: 10px; justify-content: center; min-width: max-content; }
-    .dev-leds { margin: 9px 0; }
-    .dev-slot { width: 78px; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 5px; }
-    .dev-slot.dim { opacity: 0.5; }
-
-    .enc {
-      width: 46px; height: 46px; border-radius: 50%; position: relative; cursor: ns-resize;
-      background: radial-gradient(circle at 50% 32%, #41434f, #181a22 70%);
-      border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 2px 5px rgba(0,0,0,0.5);
-      touch-action: none;
-    }
-    .enc.empty { opacity: 0.18; cursor: default; box-shadow: none; }
-    .enc-ind {
-      position: absolute; left: 50%; top: 5px; width: 3px; height: 14px; margin-left: -1.5px;
-      background: #c4a7f7; border-radius: 2px; transform-origin: 50% 18px;
-    }
-
-    .led { width: 34px; height: 6px; border-radius: 3px; background: #a855f7; border: 1px solid #000; opacity: 0.18; }
-
-    .dev-shaderpick { display: flex; align-items: center; gap: 6px; margin-right: auto; }
-    .dev-shaderpick select {
-      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
-      color: #fff; padding: 4px 8px; border-radius: 5px; font-size: 0.8rem; min-width: 130px;
-    }
-    .dev-cap-row {
-      font-size: 0.55rem; letter-spacing: 2px; color: #888; text-transform: uppercase;
-      text-align: center; margin: 4px 0 8px;
-    }
-    .dev-row + .dev-cap-row { margin-top: 16px; }
-
-    /* Compact, lower-priority per-shader element chips. */
-    .dev-els { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
-    .dev-els-label { font-size: 0.55rem; letter-spacing: 2px; color: #888; text-transform: uppercase; }
-    .dev-els-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-    .el-chip {
-      display: flex; flex-direction: column; align-items: center; gap: 5px;
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 6px 8px;
-      background: rgba(255,255,255,0.03);
-    }
-    .el-chip.off { opacity: 0.5; }
-    .el-chip-name { font-size: 0.58rem; color: #ddd; }
-    .el-chip-btns { display: flex; align-items: center; gap: 4px; }
-
-    .fader-col { display: flex; gap: 7px; align-items: stretch; }
-    .ch-fader-empty { width: 22px; height: 104px; }
-    .btn-col { display: flex; flex-direction: column; gap: 5px; }
-    .dev-btn {
-      width: 22px; height: 22px; padding: 0; font-size: 0.6rem; line-height: 1; cursor: pointer;
-      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
-      color: #9aa; border-radius: 4px;
-    }
-    .dev-btn.sel { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.4); }
-    .dev-btn.pwr-on { color: #10b981; border-color: #10b981; }
-    .dev-btn.pwr-off { color: #ef4444; border-color: #ef4444; }
-    .ch-dots { display: flex; gap: 5px; height: 18px; }
-    .ch-name {
-      font-size: 0.58rem; color: #ddd; text-align: center; max-width: 76px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-
-    .dev-transport {
-      display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;
-      margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);
-      min-width: max-content;
-    }
-    .tbtn {
-      min-width: 38px; height: 26px; padding: 0 8px; cursor: pointer; font-size: 0.8rem;
-      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
-      color: #cbd5e1; border-radius: 5px;
-    }
-    .tbtn:hover { background: rgba(255,255,255,0.14); }
-    .tbtn.on { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); }
-
-    /* ----- Setup section (below the surface) reuses the old controls ----- */
-    .dev-advanced { padding: 6px 18px 22px; border-top: 1px solid rgba(255,255,255,0.08); }
-    .dev-advanced .setting-group { max-width: 460px; }
 
     .header-actions { display: flex; align-items: center; gap: 6px; }
     .live-dot {
@@ -316,47 +218,6 @@ export class ShaderRitualApp extends LitElement {
     .action-btn:hover { background: rgba(255,255,255,0.15); }
     .action-btn.active { border-color: #a855f7; color: #a855f7; }
     .action-btn.small { padding: 4px 8px; font-size: 0.65rem; }
-
-    /* ----- Mixer-style channel strips (mirror the MIDI controller) ----- */
-    .channels {
-      display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 10px;
-      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.25) transparent;
-    }
-    .channels::-webkit-scrollbar { height: 5px; }
-    .channels::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
-    .channel {
-      flex: 0 0 auto; width: 74px; box-sizing: border-box;
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-      padding: 8px 4px; background: rgba(255,255,255,0.03);
-      display: flex; flex-direction: column; align-items: center; gap: 7px;
-    }
-    .channel.ch-off { opacity: 0.45; }
-    .ch-name {
-      font-size: 0.6rem; color: #eee; font-weight: 600; text-align: center;
-      line-height: 1.15; min-height: 2.3em; display: flex; align-items: center;
-    }
-    .ch-cap { font-size: 0.5rem; letter-spacing: 1px; color: #888; }
-    .ch-knob-wrap, .ch-fader-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-    .ch-knob { width: 56px; accent-color: #a855f7; }
-    .ch-band { display: flex; gap: 3px; }
-    .ch-band button {
-      width: 15px; height: 16px; padding: 0; font-size: 0.55rem; line-height: 1;
-      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
-      color: #aaa; border-radius: 3px; cursor: pointer;
-    }
-    .ch-band button.sel { color: #fff; border-color: #a855f7; background: rgba(168,85,247,0.35); }
-    .ch-fader {
-      -webkit-appearance: slider-vertical; appearance: slider-vertical;
-      writing-mode: vertical-lr; direction: rtl;
-      width: 22px; height: 96px; accent-color: #a855f7;
-    }
-    .ch-onoff-wrap { display: flex; align-items: center; gap: 5px; min-height: 22px; }
-    .ch-onoff {
-      font-size: 0.55rem; padding: 3px 7px; border-radius: 4px; cursor: pointer;
-      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
-    }
-    .ch-onoff.on { color: #10b981; border-color: #10b981; }
-    .ch-onoff.off { color: #ef4444; border-color: #ef4444; }
 
     .element-card {
       border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
@@ -631,7 +492,7 @@ export class ShaderRitualApp extends LitElement {
     window.open(
       `${location.pathname}?control`,
       'shader-ritual-control',
-      'width=820,height=720',
+      'width=440,height=920',
     );
   };
 
@@ -724,16 +585,8 @@ export class ShaderRitualApp extends LitElement {
       const mapping = this.midiMappings[id];
       if (mapping) {
         const normalized = type === 'pb' ? value / 16383 : value / 127;
-        if (mapping.path.endsWith('.visible')) {
-          // Boolean toggle: a note/button press flips it; a knob/fader sets it.
-          const cur = !!this.getConfigValue(mapping.path);
-          const on = type === 'note' ? !cur : normalized > 0.5;
-          this.lastMidiMsg = `${id.toUpperCase()} ${on ? 'ON' : 'OFF'}`;
-          this.applyBooleanValue(mapping.path, on);
-        } else {
-          this.lastMidiMsg = `${id.toUpperCase()} [${Math.round(normalized * 100)}%]`;
-          this.applyNormalizedValue(mapping.path, normalized);
-        }
+        this.lastMidiMsg = `${id.toUpperCase()} [${Math.round(normalized * 100)}%]`;
+        this.applyNormalizedValue(mapping.path, normalized);
       } else {
         this.lastMidiMsg = `${id.toUpperCase()} value: ${value} (Unmapped)`;
       }
@@ -763,25 +616,6 @@ export class ShaderRitualApp extends LitElement {
     if (path.endsWith('.level')) return { min: 0, max: 2 };
     if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
     return { min: 0, max: 1 };
-  };
-
-  private getConfigValue = (path: string) =>
-    path.split('.').reduce((o: any, k) => (o == null ? undefined : o[k]), this.config as any);
-
-  /** Set a boolean config value (used by MIDI-mapped on/off buttons). */
-  private applyBooleanValue = (path: string, on: boolean) => {
-    const keys = path.split('.');
-    let ref: any = this.config;
-    for (let i = 0; i < keys.length - 1; i++) {
-      if (!ref[keys[i]]) ref[keys[i]] = {};
-      ref = ref[keys[i]];
-    }
-    if (ref[keys[keys.length - 1]] !== on) {
-      ref[keys[keys.length - 1]] = on;
-      this.config = { ...this.config };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
-      this.broadcastConfig();
-    }
   };
 
   private applyNormalizedValue = (path: string, norm: number) => {
@@ -828,51 +662,6 @@ export class ShaderRitualApp extends LitElement {
   private isMapped(path: string) {
     return Object.values(this.midiMappings).some((m) => m.path === path);
   }
-
-  /* ------------------ Device-surface controls ---------------------- */
-
-  private stepShader = (dir: number) => {
-    const ids = SHADERS.map((s) => s.id);
-    const i = ids.indexOf(this.config.activeShader);
-    this.updateConfig('activeShader', ids[(i + dir + ids.length) % ids.length]);
-  };
-  private stepOverlayShader = (dir: number) => {
-    const ids = SHADERS.map((s) => s.id);
-    const i = ids.indexOf(this.config.overlay.shader);
-    this.updateConfig('overlay.shader', ids[(i + dir + ids.length) % ids.length]);
-  };
-  private cycleCamMode = (dir: number) => {
-    const modes = ['manual', 'bpm', 'audio'];
-    const i = modes.indexOf(this.config.camera.mode);
-    this.updateConfig('camera.mode', modes[(i + dir + modes.length) % modes.length]);
-  };
-  private bpmStep = (d: number) => {
-    const b = Math.max(40, Math.min(240, Math.round(this.config.camera.bpm + d)));
-    this.updateConfig('camera.bpm', b);
-  };
-
-  // Drag a rotary encoder vertically to change its value.
-  private knobDrag: { path: string; min: number; max: number; step: number; startY: number; startVal: number } | null = null;
-  private onKnobDown = (e: PointerEvent, path: string, min: number, max: number, step: number, val: number) => {
-    e.preventDefault();
-    this.knobDrag = { path, min, max, step, startY: e.clientY, startVal: val };
-    window.addEventListener('pointermove', this.onKnobMove);
-    window.addEventListener('pointerup', this.onKnobUp);
-  };
-  private onKnobMove = (e: PointerEvent) => {
-    const k = this.knobDrag;
-    if (!k) return;
-    const dy = k.startY - e.clientY;
-    let v = k.startVal + (dy / 160) * (k.max - k.min);
-    v = Math.max(k.min, Math.min(k.max, v));
-    v = Math.round(v / k.step) * k.step;
-    this.updateConfig(k.path, v);
-  };
-  private onKnobUp = () => {
-    this.knobDrag = null;
-    window.removeEventListener('pointermove', this.onKnobMove);
-    window.removeEventListener('pointerup', this.onKnobUp);
-  };
 
   /* --------------------------- Audio ----------------------------- */
 
@@ -946,23 +735,6 @@ export class ShaderRitualApp extends LitElement {
       }
 
       if (!this.showSettings) return;
-
-      // Drive the device LED row from the live band meter (no Lit re-render).
-      const ledData = this.isController
-        ? this.remoteBands
-        : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
-      if (ledData) {
-        const ledBand = ['low', 'mid', 'high', 'vol', 'low', 'mid', 'high', 'vol'];
-        const vol = (ledData.low + ledData.mid + ledData.high) / 3;
-        const leds = this.shadowRoot?.querySelectorAll('.led');
-        leds?.forEach((node, i) => {
-          const lvl = Math.min(1, ledBand[i] === 'vol' ? vol : ledData[ledBand[i]] || 0);
-          const led = node as HTMLElement;
-          led.style.opacity = String(0.18 + 0.82 * lvl);
-          led.style.boxShadow = lvl > 0.4 ? '0 0 7px #a855f7' : 'none';
-        });
-      }
-
       const canvas = this.shadowRoot?.querySelector('#monitorCanvas') as HTMLCanvasElement;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -1029,8 +801,6 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
-  /** A mixer-style channel strip (encoder + band + fader + on/off) per element,
-   *  laid out to mirror the MIDI controller's per-channel hardware. */
   private renderElement = (shaderId: string, elementId: string) => {
     const def = getShader(shaderId);
     const meta = def.elements.find((e) => e.id === elementId)!;
@@ -1039,47 +809,46 @@ export class ShaderRitualApp extends LitElement {
     const amountPath = `shaders.${shaderId}.elements.${elementId}.amount`;
     const levelPath = `shaders.${shaderId}.elements.${elementId}.level`;
     const visiblePath = `shaders.${shaderId}.elements.${elementId}.visible`;
-    const bands: { id: Band; label: string }[] = [
-      { id: 'none', label: '–' },
-      { id: 'low', label: 'L' },
-      { id: 'mid', label: 'M' },
-      { id: 'high', label: 'H' },
-    ];
-    const dot = (path: string) => html`<button
-      class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
-      title="MIDI-learn" @click=${() => this.toggleMidiLearn(path)}>●</button>`;
     return html`
-      <div class="channel ${setting.visible ? '' : 'ch-off'}" title=${meta.description}>
-        <div class="ch-name">${meta.name}</div>
-        <!-- assignable encoder = reactive amount -->
-        <div class="ch-knob-wrap">${dot(amountPath)}
-          <input class="ch-knob" type="range" min="0" max="3" step="0.05" .value=${setting.amount}
-            @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
-          <span class="ch-cap">AMT</span>
-        </div>
-        <!-- audio-band routing -->
-        <div class="ch-band">
-          ${bands.map(
-            (b) => html`<button class=${setting.band === b.id ? 'sel' : ''}
-              title="React to ${b.id}" @click=${() => this.updateConfig(bandPath, b.id)}>${b.label}</button>`,
-          )}
-        </div>
-        <!-- fader = manual level -->
-        <div class="ch-fader-wrap">${dot(levelPath)}
-          <input class="ch-fader" orient="vertical" type="range" min="0" max="2" step="0.02" .value=${setting.level}
-            @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
-          <span class="ch-cap">LVL</span>
-        </div>
-        <!-- on/off (assignable to a controller button) -->
-        ${meta.canHide
-          ? html`<div class="ch-onoff-wrap">
-              <button class="ch-onoff ${setting.visible ? 'on' : 'off'}"
+      <div class="element-card ${setting.visible ? '' : 'hidden-el'}">
+        <div class="element-head">
+          <span class="element-name">${meta.name}</span>
+          ${meta.canHide
+            ? html`<button
+                class="vis-toggle ${setting.visible ? 'on' : 'off'}"
                 @click=${() => this.updateConfig(visiblePath, !setting.visible)}>
-                ${setting.visible ? 'ON' : 'OFF'}
-              </button>
-              ${dot(visiblePath)}
-            </div>`
-          : html`<div class="ch-onoff-wrap"><span class="ch-cap">ALWAYS</span></div>`}
+                ${setting.visible ? 'SHOWN' : 'HIDDEN'}
+              </button>`
+            : ''}
+        </div>
+        <div class="element-desc">${meta.description}</div>
+        <div class="control-row">
+          <label>Audio band</label>
+          <select
+            .value=${setting.band}
+            @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
+            <option value="none">None</option>
+            <option value="low">Low</option>
+            <option value="mid">Mid</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label>Reactive amount</label>
+          <button
+            class="midi-learn-btn ${this.learningParam === amountPath ? 'active' : ''} ${this.isMapped(amountPath) ? 'mapped' : ''}"
+            @click=${() => this.toggleMidiLearn(amountPath)}>●</button>
+          <input type="range" min="0" max="3" step="0.05" .value=${setting.amount}
+            @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
+        </div>
+        <div class="control-row">
+          <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">Manual level</label>
+          <button
+            class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
+            @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
+          <input type="range" min="0" max="2" step="0.02" .value=${setting.level}
+            @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
+        </div>
       </div>
     `;
   };
@@ -1233,9 +1002,9 @@ export class ShaderRitualApp extends LitElement {
               </div>
               ${this.renderSlider('Opacity', 'overlay.opacity', 0, 1, 0.02)}
               <div class="element-desc" style="margin:12px 0 6px;">
-                ${ovDef.name} channels — hide what you don't want:
+                ${ovDef.name} elements — hide what you don't want:
               </div>
-              <div class="channels">${ovDef.elements.map((el) => this.renderElement(ovDef.id, el.id))}</div>
+              ${ovDef.elements.map((el) => this.renderElement(ovDef.id, el.id))}
             `
           : ''}
       </div>
@@ -1243,190 +1012,80 @@ export class ShaderRitualApp extends LitElement {
   }
 
   private renderSettings() {
+    const def = getShader(this.config.activeShader);
     return html`
-      <div class="settings-panel device-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
-        <div class="dev-head">
-          <span class="dev-title">SHADER&nbsp;RITUAL</span>
-          <div class="dev-shaderpick">
-            <button class="tbtn" title="Previous shader" @click=${() => this.stepShader(-1)}>‹</button>
-            <select .value=${this.config.activeShader}
-              @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
-              ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
-            </select>
-            <button class="tbtn" title="Next shader" @click=${() => this.stepShader(1)}>›</button>
-          </div>
-          <div class="dev-pills">
+      <div class="settings-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
+        <div class="panel-header">
+          <h2>Shader Ritual</h2>
+          <div class="header-actions">
             ${this.isController
-              ? html`<span class="live-dot">Live</span>`
+              ? html`<span class="live-dot">Live control</span>`
               : html`
-                  <button class="pill" title="Pop controls out to a separate window"
-                    @click=${this.detachControls}>BT&nbsp;⧉</button>
+                  <button class="icon-btn" title="Pop controls out to a separate window"
+                    @click=${this.detachControls}>⧉</button>
                   <button class="icon-btn" @click=${() => (this.showSettings = false)}>&times;</button>
                 `}
           </div>
         </div>
-        <div class="dev-scroll">
-          ${this.renderDeviceSurface()}
-          ${this.renderSetup()}
-        </div>
-      </div>
-    `;
-  }
 
-  // Eight encoders -> camera / motion shaping; eight faders -> response / gates.
-  private encSpecs = [
-    { path: 'camera.bpm', label: 'BPM', min: 40, max: 240 },
-    { path: 'camera.fov', label: 'FOV', min: 20, max: 120 },
-    { path: 'camera.distance', label: 'DIST', min: 0.3, max: 2.5 },
-    { path: 'camera.height', label: 'HGT', min: -1, max: 1 },
-    { path: 'camera.orbitSpeed', label: 'ORB', min: 0, max: 3 },
-    { path: 'camera.reactAmount', label: 'RCT', min: 0, max: 3 },
-    { path: 'camera.cutChance', label: 'CUT', min: 0, max: 1 },
-    { path: 'motion.gain', label: 'GAIN', min: 0, max: 3 },
-  ];
-  private fadSpecs = [
-    { path: 'sensitivity.low', label: 'LOW', min: 0, max: 5 },
-    { path: 'sensitivity.mid', label: 'MID', min: 0, max: 5 },
-    { path: 'sensitivity.high', label: 'HIGH', min: 0, max: 10 },
-    { path: 'fftSmoothing', label: 'SMTH', min: 0, max: 0.95 },
-    { path: 'thresholds.low', label: 'L·GT', min: 0, max: 1 },
-    { path: 'thresholds.mid', label: 'M·GT', min: 0, max: 1 },
-    { path: 'thresholds.high', label: 'H·GT', min: 0, max: 1 },
-    { path: 'motion.idle', label: 'IDLE', min: 0, max: 1 },
-  ];
-
-  private renderKnob(spec: { path: string; label: string; min: number; max: number }) {
-    const val = Number(this.getConfigValue(spec.path) ?? spec.min);
-    const ang = -135 + ((val - spec.min) / (spec.max - spec.min)) * 270;
-    const step = (spec.max - spec.min) / 200;
-    return html`
-      <div class="dev-slot">
-        <div class="enc" title="${spec.label} (drag up/down)"
-          @pointerdown=${(e: PointerEvent) => this.onKnobDown(e, spec.path, spec.min, spec.max, step, val)}>
-          <div class="enc-ind" style="transform:rotate(${ang}deg)"></div>
-        </div>
-        <button class="midi-learn-btn ${this.learningParam === spec.path ? 'active' : ''} ${this.isMapped(spec.path) ? 'mapped' : ''}"
-          title="MIDI-learn ${spec.label}" @click=${() => this.toggleMidiLearn(spec.path)}>●</button>
-        <span class="ch-cap">${spec.label}</span>
-      </div>
-    `;
-  }
-
-  private renderFader(spec: { path: string; label: string; min: number; max: number }) {
-    const val = Number(this.getConfigValue(spec.path) ?? spec.min);
-    const step = (spec.max - spec.min) / 200;
-    return html`
-      <div class="dev-slot">
-        <input class="ch-fader" orient="vertical" type="range" min=${spec.min} max=${spec.max} step=${step} .value=${val}
-          @input=${(e: any) => this.updateConfig(spec.path, parseFloat(e.target.value))} />
-        <button class="midi-learn-btn ${this.learningParam === spec.path ? 'active' : ''} ${this.isMapped(spec.path) ? 'mapped' : ''}"
-          title="MIDI-learn ${spec.label}" @click=${() => this.toggleMidiLearn(spec.path)}>●</button>
-        <span class="ch-cap">${spec.label}</span>
-      </div>
-    `;
-  }
-
-  // Lower-priority: per-shader element on/off + band routing, as compact chips.
-  private renderElementsRow() {
-    const def = getShader(this.config.activeShader);
-    const bands: { id: Band; label: string }[] = [
-      { id: 'low', label: 'L' },
-      { id: 'mid', label: 'M' },
-      { id: 'high', label: 'H' },
-    ];
-    return html`
-      <div class="dev-els">
-        <span class="dev-els-label">ELEMENTS · ${def.name}</span>
-        <div class="dev-els-row">
-          ${def.elements.map((el) => {
-            const setting = this.config.shaders[def.id].elements[el.id];
-            const visPath = `shaders.${def.id}.elements.${el.id}.visible`;
-            const bandPath = `shaders.${def.id}.elements.${el.id}.band`;
-            return html`
-              <div class="el-chip ${setting.visible ? '' : 'off'}" title=${el.description}>
-                <span class="el-chip-name">${el.name}</span>
-                <div class="el-chip-btns">
-                  ${el.canHide
-                    ? html`<button class="dev-btn ${setting.visible ? 'pwr-on' : 'pwr-off'}" title="On / Off"
-                        @click=${() => this.updateConfig(visPath, !setting.visible)}>⏻</button>`
-                    : ''}
-                  ${bands.map(
-                    (b) => html`<button class="dev-btn ${setting.band === b.id ? 'sel' : ''}"
-                      title="React to ${b.id}"
-                      @click=${() => this.updateConfig(bandPath, setting.band === b.id ? 'none' : b.id)}>${b.label}</button>`,
-                  )}
-                  ${el.canHide
-                    ? html`<button class="midi-learn-btn ${this.learningParam === visPath ? 'active' : ''} ${this.isMapped(visPath) ? 'mapped' : ''}"
-                        title="MIDI-learn on/off" @click=${() => this.toggleMidiLearn(visPath)}>●</button>`
-                    : ''}
-                </div>
-              </div>
-            `;
-          })}
-        </div>
-      </div>
-    `;
-  }
-
-  private renderTransport() {
-    const tb = (glyph: string, title: string, on: boolean, fn: () => void) => html`
-      <button class="tbtn ${on ? 'on' : ''}" title=${title} @click=${fn}>${glyph}</button>`;
-    return html`
-      <div class="dev-transport">
-        ${tb('▶', 'Ignite audio', this.isRecording, () => { if (!this.isRecording) this.toggleAudio(); })}
-        ${tb('⏸', 'Kill audio', false, () => { if (this.isRecording) this.toggleAudio(); })}
-        ${tb('⏺', 'Toggle overlay layer', this.config.overlay.enabled, () => this.updateConfig('overlay.enabled', !this.config.overlay.enabled))}
-        ${tb('⏪', 'BPM −5', false, () => this.bpmStep(-5))}
-        ${tb('⏩', 'BPM +5', false, () => this.bpmStep(5))}
-        ${tb('«', 'Previous shader', false, () => this.stepShader(-1))}
-        ${tb('»', 'Next shader', false, () => this.stepShader(1))}
-        ${tb('△', 'Camera mode +', false, () => this.cycleCamMode(1))}
-        ${tb('▽', 'Camera mode −', false, () => this.cycleCamMode(-1))}
-        ${tb('◁', 'Previous overlay shader', false, () => this.stepOverlayShader(-1))}
-        ${tb('▷', 'Next overlay shader', false, () => this.stepOverlayShader(1))}
-      </div>
-    `;
-  }
-
-  private renderDeviceSurface() {
-    return html`
-      <div class="dev-surface">
-        <div class="dev-cap-row">ENCODERS · camera / motion</div>
-        <div class="dev-row">${this.encSpecs.map((s) => this.renderKnob(s))}</div>
-        <div class="dev-row dev-leds">
-          ${this.encSpecs.map((_s, i) => html`<div class="dev-slot"><div class="led" data-led=${i}></div></div>`)}
-        </div>
-        <div class="dev-cap-row">FADERS · response / gates</div>
-        <div class="dev-row">${this.fadSpecs.map((s) => this.renderFader(s))}</div>
-        ${this.renderTransport()}
-        ${this.renderElementsRow()}
-      </div>
-    `;
-  }
-
-  private renderSetup() {
-    return html`
-      <div class="dev-advanced">
-        <div class="dev-cap-row">SETUP</div>
         <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
 
-        <div class="control-row">
-          <label>Camera mode</label>
-          <select .value=${this.config.camera.mode}
-            @change=${(e: any) => this.updateConfig('camera.mode', e.target.value)}>
-            <option value="manual">Manual orbit</option>
-            <option value="bpm">BPM cuts</option>
-            <option value="audio">Audio reactive</option>
+        <!-- SHADER SELECT -->
+        <div class="setting-group">
+          <span class="group-title">Active Shader</span>
+          <select
+            class="shader-select"
+            .value=${this.config.activeShader}
+            @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
+            ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
           </select>
+          <div class="element-desc" style="margin-top:8px;">${def.description}</div>
         </div>
-        <div class="control-row">
-          <label>Calm on silence (audio-gated motion)</label>
-          <input type="checkbox" .checked=${this.config.motion.audioGated}
-            @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
+
+        <!-- CAMERA / MOTION (global) -->
+        ${this.renderCameraSection()}
+
+        <!-- AUDIO-GATED MOTION -->
+        <div class="setting-group">
+          <span class="group-title">Motion · Calm on silence</span>
+          <div class="element-desc" style="margin-bottom:10px;">
+            Animation speed follows the audio. With this on, the scene calms (or
+            freezes, at Idle 0) when no sound is coming in.
+          </div>
+          <div class="control-row">
+            <label>Audio-gated</label>
+            <input type="checkbox" .checked=${this.config.motion.audioGated}
+              @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
+          </div>
+          ${this.renderSlider('Idle drift', 'motion.idle', 0, 1, 0.01)}
+          ${this.renderSlider('Audio gain', 'motion.gain', 0, 3, 0.05)}
+        </div>
+
+        <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
+        <div class="setting-group">
+          <span class="group-title">${def.name} · Element Allocation</span>
+          ${def.elements.map((el) => this.renderElement(def.id, el.id))}
         </div>
 
         <!-- OVERLAY LAYER (combine elements across shaders) -->
         ${this.renderOverlaySection()}
+
+        <!-- RESPONSE PROFILE -->
+        <div class="setting-group">
+          <span class="group-title">Response Profile</span>
+          ${this.renderSlider('FFT Smoothing', 'fftSmoothing', 0, 0.95, 0.05)}
+          ${this.renderSlider('Low Gain', 'sensitivity.low', 0, 5, 0.1)}
+          ${this.renderSlider('Mid Gain', 'sensitivity.mid', 0, 5, 0.1)}
+          ${this.renderSlider('High Gain', 'sensitivity.high', 0, 10, 0.1)}
+        </div>
+
+        <!-- NOISE GATES -->
+        <div class="setting-group">
+          <span class="group-title">Noise Gates</span>
+          ${this.renderSlider('Low Gate', 'thresholds.low', 0, 1, 0.01)}
+          ${this.renderSlider('Mid Gate', 'thresholds.mid', 0, 1, 0.01)}
+          ${this.renderSlider('High Gate', 'thresholds.high', 0, 1, 0.01)}
+        </div>
 
         <!-- MIDI -->
         <div class="setting-group">
