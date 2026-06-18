@@ -177,6 +177,7 @@ precision highp float;
 varying vec2 vUv;
 uniform vec3 iResolution;
 uniform float iTime;
+uniform float iCamOrbit;
 uniform sampler2D iChannel0;
 uniform float bloom_react;
 uniform float bloom_visible;
@@ -217,12 +218,13 @@ float ebolt(vec2 p, float seed){
   float fade = smoothstep(0.62, 0.06, p.x) * smoothstep(0.04, 0.12, p.x);
   return (core + glow) * fade;
 }
-// several bolts radiating from the centre, rotating + crackling
+// several bolts radiating from the centre, locked to the camera orbit so they
+// stick to the object as the view rotates
 float sparks(vec2 q){
   float s = 0.;
   for(int i = 0; i < 7; i++){
     float fi = float(i);
-    float a = fi / 7. * 6.2831853 + iTime * 0.25;
+    float a = fi / 7. * 6.2831853 - iCamOrbit + iTime * 0.05; // co-rotate with camera
     float fl = step(0.4, ernd(fi * 13.1 + floor(iTime * 11.))); // flicker on/off
     s += ebolt(erot(a) * q, fi * 7. + 1.) * fl;
   }
