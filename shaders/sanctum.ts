@@ -144,17 +144,17 @@ float sparks3d(vec3 ro, vec3 rd){
     float fl = step(0.45, ernd(fi * 13.1 + floor(iTime * 10.))); // crackle on/off
     vec3 prev = cc;                                   // bolt starts at the core
     for(int j = 1; j <= 8; j++){
-      float h = float(j) / 8.0 * 2.2;                 // reach outward
-      float jx = ewob(h * 4. + iTime * 9. + fi * 7.) * 0.13 * h;
-      float jy = ewob(h * 4. + iTime * 9. + fi * 7. + 50.) * 0.13 * h;
+      float h = float(j) / 8.0 * 4.2;                 // reach outward (longer)
+      float jx = ewob(h * 3. + iTime * 9. + fi * 7.) * 0.12 * h;
+      float jy = ewob(h * 3. + iTime * 9. + fi * 7. + 50.) * 0.12 * h;
       vec3 cur = cc + u * h + pa * jx + pb * jy;       // next jagged vertex
       float dist = raySegDist(ro, rd, prev, cur);      // continuous along segment
-      float fade = smoothstep(2.2, 0.0, h) * smoothstep(0.0, 0.12, h);
-      g += (exp(-90. * dist) + exp(-18. * dist) * 0.3) * fade * fl;
+      float fade = smoothstep(4.2, 0.0, h) * smoothstep(0.0, 0.12, h);
+      g += (exp(-45. * dist) + exp(-10. * dist) * 0.4) * fade * fl; // thicker core + halo
       prev = cur;
     }
   }
-  return g * 0.7;
+  return g * 0.8;
 }
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
