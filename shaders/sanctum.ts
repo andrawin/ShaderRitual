@@ -39,6 +39,8 @@ uniform float beams_react;
 uniform float beams_visible;
 uniform float walls_react;
 uniform float walls_visible;
+uniform float sparks_react;
+uniform float sparks_visible;
 
 vec3 ov(vec3 a, vec3 b){
     return mix(2.*a*b,1.-2.*(1.-a)*(1.-b),step(a,vec3(0.5)));}
@@ -105,6 +107,39 @@ float map(vec3 p) {
   return min(sf,c6);
 }
 vec3 nor (vec3 p) { vec2 e = vec2 (0.01,0.); return normalize(map(p)-vec3(map(p-e.xyy),map(p-e.yxy),map(p-e.yyx)));}
+
+// --- 3D electric bolts in world space, emanating from the core ---
+// Because they live in 3D, they stay locked to the object under any camera move.
+float ernd(float x){ return fract(sin(x * 78.233) * 43758.5453); }
+float ewob(float x){
+  float i = floor(x);
+  return mix(ernd(i) * 2. - 1., ernd(i + 1.) * 2. - 1., smoothstep(0., 1., fract(x)));
+}
+float sparks3d(vec3 ro, vec3 rd){
+  vec3 cc = vec3(0.0, -0.5, 0.0); // core centre (world)
+  float g = 0.;
+  for(int i = 0; i < 6; i++){
+    float fi = float(i);
+    float a = fi / 6. * 6.2831853 + iTime * 0.5;     // azimuth, slowly spinning
+    float el = (ernd(fi * 4.1) - 0.5) * 1.6;          // elevation per bolt
+    vec3 u = normalize(vec3(cos(a) * cos(el), sin(el), sin(a) * cos(el)));
+    vec3 pa = normalize(cross(u, vec3(0.0, 1.0, 0.001)));
+    vec3 pb = cross(u, pa);
+    float fl = step(0.45, ernd(fi * 13.1 + floor(iTime * 10.))); // crackle on/off
+    for(int j = 1; j <= 8; j++){
+      float h = float(j) / 8.0 * 2.2;                 // reach outward
+      float jx = ewob(h * 4. + iTime * 9. + fi * 7.) * 0.13 * h;
+      float jy = ewob(h * 4. + iTime * 9. + fi * 7. + 50.) * 0.13 * h;
+      vec3 bp = cc + u * h + pa * jx + pb * jy;        // jagged bolt point
+      vec3 d = bp - ro;
+      float tproj = max(dot(d, rd), 0.0);
+      float dist = length(d - rd * tproj);             // ray-to-point distance
+      float fade = smoothstep(2.2, 0.0, h) * smoothstep(0.0, 0.18, h);
+      g += exp(-35. * dist) * fade * fl;
+    }
+  }
+  return g * 0.6;
+}
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec2 uv = fragCoord/iResolution.xy;
@@ -166,6 +201,13 @@ vec3 col = vec3(0.);
     p += r*d;
     dd +=d;
   }
+
+  // Electric bolts arcing off the core (world-space, locked to the object).
+  if(sparks_visible > 0.5){
+    float sp = sparks3d(e, r) * (0.5 + sparks_react*2.0);
+    col += vec3(0.5, 0.75, 1.0) * sp + vec3(sp*sp) * 0.5;
+  }
+
  	vec3 colf = ov(col,mix(vec3(hs(uv),hs(uv),hs(uv)),vec3(0.5),0.97));
     fragColor = vec4(colf,1.);
 }
@@ -176,13 +218,9 @@ const imageShader = `
 precision highp float;
 varying vec2 vUv;
 uniform vec3 iResolution;
-uniform float iTime;
-uniform float iCamOrbit;
 uniform sampler2D iChannel0;
 uniform float bloom_react;
 uniform float bloom_visible;
-uniform float sparks_react;
-uniform float sparks_visible;
 
 vec3 bl(vec2 uv){
  vec2 r  = iResolution.xy;
@@ -199,48 +237,11 @@ vec3 bl(vec2 uv){
     col /= 64.;
     return col;
 }
-
-// --- electric bolts (Thunder-style jagged arcs firing outward from the core) ---
-mat2 erot(float r){ return mat2(cos(r), sin(r), -sin(r), cos(r)); }
-float ernd(float x){ return fract(sin(x * 78.233) * 43758.5453); }
-// jagged per-segment offset along the bolt
-float ewob(float x){
-  float i = floor(x);
-  return mix(ernd(i) * 2. - 1., ernd(i + 1.) * 2. - 1., smoothstep(0., 1., fract(x)));
-}
-// a single bolt firing along +x, from just outside the core out to the edge
-float ebolt(vec2 p, float seed){
-  if(p.x < 0.04) return 0.;
-  float off = ewob(p.x * 3.5 + iTime * 9. + seed) * 0.16 * p.x; // wiggle grows with reach
-  float d = abs(p.y - off);
-  float core = exp(-120. * d);        // thin white-hot core
-  float glow = exp(-16. * d) * 0.35;  // soft halo
-  float fade = smoothstep(0.62, 0.06, p.x) * smoothstep(0.04, 0.12, p.x);
-  return (core + glow) * fade;
-}
-// several bolts radiating from the centre, locked to the camera orbit so they
-// stick to the object as the view rotates
-float sparks(vec2 q){
-  float s = 0.;
-  for(int i = 0; i < 7; i++){
-    float fi = float(i);
-    float a = fi / 7. * 6.2831853 - iCamOrbit + iTime * 0.05; // co-rotate with camera
-    float fl = step(0.4, ernd(fi * 13.1 + floor(iTime * 11.))); // flicker on/off
-    s += ebolt(erot(a) * q, fi * 7. + 1.) * fl;
-  }
-  return s;
-}
-
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec2 uv = fragCoord/iResolution.xy;
     vec3 src = (bloom_visible > 0.5) ? bl(uv) : texture2D(iChannel0,uv).xyz;
     vec3 t = smoothstep(vec3(-0.05,-0.1,-0.05),vec3(1.,1.,0.95),src);
-    if(sparks_visible > 0.5){
-        vec2 q = (fragCoord - 0.5*iResolution.xy)/iResolution.y;
-        float sp = sparks(q) * (0.6 + sparks_react*2.0);
-        t += vec3(0.5, 0.75, 1.0) * sp + vec3(sp*sp) * 0.6;
-    }
     fragColor = vec4(t,1.);
 }
 void main(){ vec4 c; mainImage(c, vUv*iResolution.xy); gl_FragColor = c; }
