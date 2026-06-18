@@ -199,28 +199,33 @@ vec3 bl(vec2 uv){
     return col;
 }
 
-// --- electric arc field (adapted from a Shadertoy lightning shader) ---
+// --- electric bolts (Thunder-style jagged arcs firing outward from the core) ---
 mat2 erot(float r){ return mat2(cos(r), sin(r), -sin(r), cos(r)); }
-vec2 enoise(vec2 p){
-  vec2 res = vec2(0.); float f = 2.;
-  for(int i = 0; i < 5; i++){ p *= erot(f); f *= 1.4; res += sin(p + sin(2.*p.yx)); }
-  return res / 3.;
+float ernd(float x){ return fract(sin(x * 78.233) * 43758.5453); }
+// jagged per-segment offset along the bolt
+float ewob(float x){
+  float i = floor(x);
+  return mix(ernd(i) * 2. - 1., ernd(i + 1.) * 2. - 1., smoothstep(0., 1., fract(x)));
 }
-float eseg(vec2 ba, vec2 pa){ float h = clamp(dot(pa,ba)/dot(ba,ba), 0., 2.); return length(pa - ba*h); }
-float earc(vec2 x, vec2 p, vec2 dir){
-  vec2 r = p; float d = 10.;
-  for(int i = 0; i < 12; i++){ vec2 s = enoise(r + iTime) + dir; d = min(d, eseg(s, x - r)); r += s; }
-  return d * 3.;
+// a single bolt firing along +x, from just outside the core out to the edge
+float ebolt(vec2 p, float seed){
+  if(p.x < 0.04) return 0.;
+  float off = ewob(p.x * 3.5 + iTime * 9. + seed) * 0.16 * p.x; // wiggle grows with reach
+  float d = abs(p.y - off);
+  float core = exp(-120. * d);        // thin white-hot core
+  float glow = exp(-16. * d) * 0.35;  // soft halo
+  float fade = smoothstep(0.62, 0.06, p.x) * smoothstep(0.04, 0.12, p.x);
+  return (core + glow) * fade;
 }
-// sparks crawling outward from the centre (the core), flickering
-float sparks(vec2 x){
+// several bolts radiating from the centre, rotating + crackling
+float sparks(vec2 q){
   float s = 0.;
-  for(int i = 0; i < 3; i++){
-    float a = float(i) * 2.0944 + iTime * 0.6; // 120 deg apart, rotating
-    vec2 dir = vec2(cos(a), sin(a)) * 0.45;
-    s += exp(-9. * earc(x, vec2(0.), dir));
+  for(int i = 0; i < 7; i++){
+    float fi = float(i);
+    float a = fi / 7. * 6.2831853 + iTime * 0.25;
+    float fl = step(0.4, ernd(fi * 13.1 + floor(iTime * 11.))); // flicker on/off
+    s += ebolt(erot(a) * q, fi * 7. + 1.) * fl;
   }
-  s *= 0.45 + 0.55 * step(0.5, fract(iTime * 9.)); // sparkle flicker
   return s;
 }
 
@@ -230,9 +235,9 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec3 src = (bloom_visible > 0.5) ? bl(uv) : texture2D(iChannel0,uv).xyz;
     vec3 t = smoothstep(vec3(-0.05,-0.1,-0.05),vec3(1.,1.,0.95),src);
     if(sparks_visible > 0.5){
-        vec2 ex = (fragCoord - 0.5*iResolution.xy)/iResolution.y * 16.0;
-        float sp = sparks(ex);
-        t += vec3(0.45, 0.7, 1.0) * sp * (0.5 + sparks_react*2.5);
+        vec2 q = (fragCoord - 0.5*iResolution.xy)/iResolution.y;
+        float sp = sparks(q) * (0.6 + sparks_react*2.0);
+        t += vec3(0.5, 0.75, 1.0) * sp + vec3(sp*sp) * 0.6;
     }
     fragColor = vec4(t,1.);
 }

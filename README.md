@@ -96,6 +96,7 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/cosa.ts` | Grid-lattice + radial-beam **feedback** shader |
 | `shaders/thunder.ts` | Single-pass procedural lightning bolt |
 | `shaders/pulsar.ts` | Spiky body + warped tunnel ringed by kaleidoscopic **laser** beams |
+| `shaders/glassmatrix.ts` | Refractive glass-lattice tunnel + marble with chromatic aberration & DoF |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
 | `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |
