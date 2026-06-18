@@ -115,6 +115,22 @@ float ewob(float x){
   float i = floor(x);
   return mix(ernd(i) * 2. - 1., ernd(i + 1.) * 2. - 1., smoothstep(0., 1., fract(x)));
 }
+// closest distance between the camera ray (ro+s*rd, s>=0) and a segment A->B
+float raySegDist(vec3 ro, vec3 rd, vec3 A, vec3 B){
+  vec3 v = B - A;
+  vec3 w = ro - A;
+  float b = dot(rd, v);
+  float c = dot(v, v);
+  float d = dot(rd, w);
+  float e = dot(v, w);
+  float D = c - b * b; // a = dot(rd,rd) = 1
+  float s, t;
+  if(D < 1e-5){ s = 0.; t = clamp(e / max(c, 1e-5), 0., 1.); }
+  else { s = (b * e - c * d) / D; t = (e - b * d) / D; }
+  s = max(s, 0.);
+  t = clamp(t, 0., 1.);
+  return length((ro + s * rd) - (A + t * v));
+}
 float sparks3d(vec3 ro, vec3 rd){
   vec3 cc = vec3(0.0, -0.5, 0.0); // core centre (world)
   float g = 0.;
@@ -126,19 +142,19 @@ float sparks3d(vec3 ro, vec3 rd){
     vec3 pa = normalize(cross(u, vec3(0.0, 1.0, 0.001)));
     vec3 pb = cross(u, pa);
     float fl = step(0.45, ernd(fi * 13.1 + floor(iTime * 10.))); // crackle on/off
+    vec3 prev = cc;                                   // bolt starts at the core
     for(int j = 1; j <= 8; j++){
       float h = float(j) / 8.0 * 2.2;                 // reach outward
       float jx = ewob(h * 4. + iTime * 9. + fi * 7.) * 0.13 * h;
       float jy = ewob(h * 4. + iTime * 9. + fi * 7. + 50.) * 0.13 * h;
-      vec3 bp = cc + u * h + pa * jx + pb * jy;        // jagged bolt point
-      vec3 d = bp - ro;
-      float tproj = max(dot(d, rd), 0.0);
-      float dist = length(d - rd * tproj);             // ray-to-point distance
-      float fade = smoothstep(2.2, 0.0, h) * smoothstep(0.0, 0.18, h);
-      g += exp(-35. * dist) * fade * fl;
+      vec3 cur = cc + u * h + pa * jx + pb * jy;       // next jagged vertex
+      float dist = raySegDist(ro, rd, prev, cur);      // continuous along segment
+      float fade = smoothstep(2.2, 0.0, h) * smoothstep(0.0, 0.12, h);
+      g += (exp(-90. * dist) + exp(-18. * dist) * 0.3) * fade * fl;
+      prev = cur;
     }
   }
-  return g * 0.6;
+  return g * 0.7;
 }
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
