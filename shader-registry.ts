@@ -5,6 +5,7 @@
 import type {
   CameraConfig,
   MotionConfig,
+  PostFXConfig,
   ShaderDef,
   ShaderRitualConfig,
   ShaderSetting,
@@ -56,6 +57,27 @@ export function defaultMotion(): MotionConfig {
   return { audioGated: true, idle: 0.12, gain: 1.2 };
 }
 
+/** Merge a saved post-FX config over the defaults, per filter. */
+function mergePostFX(base: PostFXConfig, saved: any): PostFXConfig {
+  if (!saved || typeof saved !== 'object') return base;
+  const out = { ...base } as PostFXConfig;
+  (Object.keys(base) as (keyof PostFXConfig)[]).forEach((k) => {
+    if (saved[k]) out[k] = { ...base[k], ...saved[k] };
+  });
+  return out;
+}
+
+/** Fresh global post-FX defaults (all off). */
+export function defaultPostFX(): PostFXConfig {
+  return {
+    pixelate: { on: false, amount: 0.4, band: 'none' },
+    edge: { on: false, amount: 0.6, band: 'none' },
+    posterize: { on: false, amount: 0.5, band: 'none' },
+    rgbShift: { on: false, amount: 0.4, band: 'none' },
+    scanlines: { on: false, amount: 0.5, band: 'none' },
+  };
+}
+
 /** Build the per-shader element settings from a shader's declared defaults. */
 function defaultShaderSetting(def: ShaderDef): ShaderSetting {
   const elements: ShaderSetting['elements'] = {};
@@ -82,6 +104,7 @@ export function defaultConfig(): ShaderRitualConfig {
     camera: defaultCamera(),
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
+    postfx: defaultPostFX(),
     shaders,
   };
 }
@@ -102,6 +125,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     camera: { ...base.camera, ...(saved.camera || {}) },
     motion: { ...base.motion, ...(saved.motion || {}) },
     overlay: { ...base.overlay, ...(saved.overlay || {}) },
+    postfx: mergePostFX(base.postfx, saved.postfx),
     shaders: { ...base.shaders },
   };
 

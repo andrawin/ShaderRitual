@@ -35,6 +35,53 @@ void main(){
 }
 `;
 
+// Global post-FX: each u* is a 0..1 strength (0 = off). Applied to the final
+// composited image. FrameRitual-style filters for extra nuance.
+const postShader = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tScene;
+uniform vec3 iResolution;
+uniform float uPixelate;
+uniform float uEdge;
+uniform float uPosterize;
+uniform float uRgb;
+uniform float uScan;
+void main(){
+  vec2 uv = vUv;
+  if(uPixelate > 0.001){
+    float blk = max(mix(1.0, 90.0, clamp(uPixelate, 0., 1.)), 1.0);
+    vec2 bs = vec2(blk) / iResolution.xy;
+    uv = (floor(uv / bs) + 0.5) * bs;
+  }
+  vec3 col;
+  if(uRgb > 0.001){
+    vec2 o = vec2(uRgb * 18.0, 0.0) / iResolution.xy;
+    col.r = texture2D(tScene, uv + o).r;
+    col.g = texture2D(tScene, uv).g;
+    col.b = texture2D(tScene, uv - o).b;
+  } else {
+    col = texture2D(tScene, uv).rgb;
+  }
+  if(uEdge > 0.001){
+    vec2 t = 1.0 / iResolution.xy;
+    vec3 dx = abs(texture2D(tScene, uv + vec2(t.x, 0.)).rgb - texture2D(tScene, uv - vec2(t.x, 0.)).rgb);
+    vec3 dy = abs(texture2D(tScene, uv + vec2(0., t.y)).rgb - texture2D(tScene, uv - vec2(0., t.y)).rgb);
+    float edge = clamp(length(dx + dy) * 6.0, 0., 1.);
+    col = mix(col, vec3(edge), clamp(uEdge, 0., 1.));
+  }
+  if(uPosterize > 0.001){
+    float lv = mix(16.0, 2.0, clamp(uPosterize, 0., 1.));
+    col = floor(col * lv + 0.5) / lv;
+  }
+  if(uScan > 0.001){
+    float sl = 0.5 + 0.5 * sin(vUv.y * iResolution.y * 3.14159);
+    col *= 1.0 - clamp(uScan, 0., 1.) * (1.0 - sl);
+  }
+  gl_FragColor = vec4(clamp(col, 0., 1.), 1.);
+}
+`;
+
 /**
  * Renders the active shader (and an optional overlay shader composited on top)
  * via {@link ShaderLayer}. Per-element + camera uniforms are refreshed every
@@ -55,6 +102,11 @@ export class ShaderRitualView extends LitElement {
   private compositeScene!: THREE.Scene;
   private compositeUniforms!: Record<string, { value: any }>;
   private overlayShaderId = '';
+
+  // Global post-FX pass (composite -> sceneTarget -> post -> screen).
+  private sceneTarget!: THREE.WebGLRenderTarget;
+  private postScene!: THREE.Scene;
+  private postUniforms!: Record<string, { value: any }>;
 
   private lastFrame = performance.now();
   private animTime = 0;
@@ -127,6 +179,7 @@ export class ShaderRitualView extends LitElement {
     };
     this.baseTarget = new THREE.WebGLRenderTarget(1, 1, opts);
     this.overlayTarget = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, opts);
 
     this.baseLayer = new ShaderLayer(this.renderer, this.errorSink);
     this.overlayLayer = new ShaderLayer(this.renderer, this.errorSink);
@@ -152,6 +205,28 @@ export class ShaderRitualView extends LitElement {
       ),
     );
 
+    // Global post-FX pass.
+    this.postUniforms = {
+      tScene: { value: this.sceneTarget.texture },
+      iResolution: { value: new THREE.Vector3(1, 1, 1) },
+      uPixelate: { value: 0 },
+      uEdge: { value: 0 },
+      uPosterize: { value: 0 },
+      uRgb: { value: 0 },
+      uScan: { value: 0 },
+    };
+    this.postScene = new THREE.Scene();
+    this.postScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.postUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: postShader,
+        }),
+      ),
+    );
+
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
@@ -169,8 +244,18 @@ export class ShaderRitualView extends LitElement {
     const ph = Math.floor(h * dpr);
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
+    this.sceneTarget.setSize(pw, ph);
     this.baseLayer.resize(pw, ph);
     this.overlayLayer.resize(pw, ph);
+    (this.postUniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
+  }
+
+  /** 0..1 effective strength of a post-FX filter (band pushes the amount). */
+  private fxAmount(name: keyof ShaderRitualConfig['postfx']) {
+    const s = this.config.postfx?.[name];
+    if (!s || !s.on) return 0;
+    const bv = s.band === 'none' ? 0 : (this.lastBands as any)[s.band] || 0;
+    return Math.min(1.2, s.amount + bv);
   }
 
   private ensureOverlay() {
@@ -227,9 +312,18 @@ export class ShaderRitualView extends LitElement {
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
     }
 
-    // Composite -> screen.
-    this.renderer.setRenderTarget(null);
+    // Composite (base + overlay) -> sceneTarget.
+    this.renderer.setRenderTarget(this.sceneTarget);
     this.renderer.render(this.compositeScene, this.camera);
+
+    // Global post-FX -> screen.
+    this.postUniforms.uPixelate.value = this.fxAmount('pixelate');
+    this.postUniforms.uEdge.value = this.fxAmount('edge');
+    this.postUniforms.uPosterize.value = this.fxAmount('posterize');
+    this.postUniforms.uRgb.value = this.fxAmount('rgbShift');
+    this.postUniforms.uScan.value = this.fxAmount('scanlines');
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.postScene, this.camera);
   };
 
   protected render() {

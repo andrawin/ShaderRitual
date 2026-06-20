@@ -77,6 +77,19 @@ export interface LayerConfig {
   opacity: number;
 }
 
+/** A single global post-process filter. The assigned band pushes the amount. */
+export interface FxSetting {
+  on: boolean;
+  /** 0..1 strength; the shader maps it to the filter's real parameter. */
+  amount: number;
+  band: Band;
+}
+
+/** The available global post-process filters (applied to the final image). */
+export type FxName = 'pixelate' | 'edge' | 'posterize' | 'rgbShift' | 'scanlines';
+
+export type PostFXConfig = Record<FxName, FxSetting>;
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -86,6 +99,7 @@ export interface ShaderRitualConfig {
   camera: CameraConfig;
   motion: MotionConfig;
   overlay: LayerConfig;
+  postfx: PostFXConfig;
   shaders: Record<string, ShaderSetting>;
 }
 

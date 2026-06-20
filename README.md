@@ -59,6 +59,11 @@ Two newer manipulation layers sit on top of the element system:
   overlay's dark areas drop out, so only the kept element shows through. Both
   layers run their own full pipeline (feedback + elements), so it's ~2× the GPU.
 
+- **Global post-FX** — image-wide filters layered over *every* shader (and the
+  overlay): **Pixelate, Edge Detect, Posterize, RGB Shift, Scanlines**. Each has
+  an on/off, a strength, and an optional **react band** so the filter's strength
+  pulses with the audio. Runs as a final pass after compositing.
+
 - **Calm on silence (Motion)** — animation time advances at `idle + level × gain`
   where `level` is the live audio energy. So the whole scene (and the camera)
   **calms when no sound is coming in**, and at `idle = 0` it freezes entirely.
@@ -97,6 +102,7 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/thunder.ts` | Single-pass procedural lightning bolt |
 | `shaders/pulsar.ts` | Spiky body + warped tunnel ringed by kaleidoscopic **laser** beams |
 | `shaders/alive.ts` | Pulsing organic PBR blob with satellites over a voronoi aura (two-pass) |
+| `shaders/chrome.ts` | Twisting reflective chrome ribbon with motion blur |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
 | `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |

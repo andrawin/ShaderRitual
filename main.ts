@@ -612,6 +612,7 @@ export class ShaderRitualApp extends LitElement {
       'overlay.opacity': { min: 0, max: 1 },
     };
     if (rangeMap[path]) return rangeMap[path];
+    if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
     if (path.endsWith('.level')) return { min: 0, max: 2 };
     if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
@@ -797,6 +798,40 @@ export class ShaderRitualApp extends LitElement {
           @click=${() => this.toggleMidiLearn(path)}>●</button>
         <input type="range" min=${min} max=${max} step=${step} .value=${value}
           @input=${(e: any) => this.updateConfig(path, parseFloat(e.target.value))} />
+      </div>
+    `;
+  };
+
+  private renderFx = (name: string, label: string) => {
+    const fx = (this.config.postfx as any)[name];
+    const onPath = `postfx.${name}.on`;
+    const amtPath = `postfx.${name}.amount`;
+    const bandPath = `postfx.${name}.band`;
+    return html`
+      <div class="element-card ${fx.on ? '' : 'hidden-el'}">
+        <div class="element-head">
+          <span class="element-name">${label}</span>
+          <button class="vis-toggle ${fx.on ? 'on' : 'off'}"
+            @click=${() => this.updateConfig(onPath, !fx.on)}>${fx.on ? 'ON' : 'OFF'}</button>
+        </div>
+        <div class="control-row">
+          <label>Amount</label>
+          <button
+            class="midi-learn-btn ${this.learningParam === amtPath ? 'active' : ''} ${this.isMapped(amtPath) ? 'mapped' : ''}"
+            @click=${() => this.toggleMidiLearn(amtPath)}>●</button>
+          <input type="range" min="0" max="1" step="0.02" .value=${fx.amount}
+            @input=${(e: any) => this.updateConfig(amtPath, parseFloat(e.target.value))} />
+        </div>
+        <div class="control-row">
+          <label>React band</label>
+          <select .value=${fx.band}
+            @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
+            <option value="none">None</option>
+            <option value="low">Low</option>
+            <option value="mid">Mid</option>
+            <option value="high">High</option>
+          </select>
+        </div>
       </div>
     `;
   };
@@ -1085,6 +1120,20 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderSlider('Low Gate', 'thresholds.low', 0, 1, 0.01)}
           ${this.renderSlider('Mid Gate', 'thresholds.mid', 0, 1, 0.01)}
           ${this.renderSlider('High Gate', 'thresholds.high', 0, 1, 0.01)}
+        </div>
+
+        <!-- POST FX (global, all shaders) -->
+        <div class="setting-group">
+          <span class="group-title">Post FX · global filters</span>
+          <div class="element-desc" style="margin-bottom:10px;">
+            Image-wide filters layered over every shader. Assign a band to a
+            filter to make its strength pulse with the audio.
+          </div>
+          ${this.renderFx('pixelate', 'Pixelate')}
+          ${this.renderFx('edge', 'Edge Detect')}
+          ${this.renderFx('posterize', 'Posterize')}
+          ${this.renderFx('rgbShift', 'RGB Shift')}
+          ${this.renderFx('scanlines', 'Scanlines')}
         </div>
 
         <!-- MIDI -->
