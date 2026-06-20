@@ -17,6 +17,7 @@ import { cosa } from './shaders/cosa';
 import { thunder } from './shaders/thunder';
 import { pulsar } from './shaders/pulsar';
 import { alive } from './shaders/alive';
+import { chrome } from './shaders/chrome';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -28,6 +29,7 @@ export const SHADERS: ShaderDef[] = [
   thunder,
   pulsar,
   alive,
+  chrome,
 ];
 
 /** Fresh camera / motion rig defaults. */
