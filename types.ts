@@ -18,6 +18,28 @@ export interface ShaderSetting {
   elements: Record<string, ElementSetting>;
 }
 
+/** Global post-processing filter applied to every shader's final frame. */
+export type FilterType =
+  | 'none'
+  | 'pixelate'
+  | 'edge'
+  | 'chroma'
+  | 'posterize'
+  | 'scanlines'
+  | 'mirror';
+
+/** Settings for the global, audio-reactive post-FX pass. */
+export interface FilterSetting {
+  /** Which effect is active. */
+  type: FilterType;
+  /** Base intensity (0..1) applied regardless of audio. */
+  amount: number;
+  /** Audio band that modulates the intensity. */
+  band: Band;
+  /** How strongly the band drives the intensity on top of `amount`. */
+  react: number;
+}
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -25,6 +47,8 @@ export interface ShaderRitualConfig {
   sensitivity: { low: number; mid: number; high: number };
   thresholds: { low: number; mid: number; high: number };
   shaders: Record<string, ShaderSetting>;
+  /** Global audio-reactive post-processing filter. */
+  filter: FilterSetting;
 }
 
 /**

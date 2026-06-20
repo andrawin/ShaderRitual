@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { commonVertex } from './shaders/common';
+import { postShader, filterIndex } from './shaders/post';
 import { getShader } from './shader-registry';
 import type { Bands, ShaderDef, ShaderRitualConfig } from './types';
 
@@ -23,8 +24,11 @@ export class ShaderRitualView extends LitElement {
   private camera!: THREE.OrthographicCamera;
   private bufferScene!: THREE.Scene;
   private imageScene!: THREE.Scene;
+  private postScene!: THREE.Scene;
   private bufferTarget!: THREE.WebGLRenderTarget;
+  private imageTarget!: THREE.WebGLRenderTarget;
   private uniforms: Record<string, { value: any }> = {};
+  private postUniforms: Record<string, { value: any }> = {};
   private currentShaderId = '';
   private startTime = performance.now();
   private lastBands: Bands = { low: 0, mid: 0, high: 0, rawLow: 0, rawMid: 0, rawHigh: 0 };
@@ -74,7 +78,14 @@ export class ShaderRitualView extends LitElement {
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
     });
+    // Image pass renders here so the global post-FX pass can sample it.
+    this.imageTarget = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      format: THREE.RGBAFormat,
+    });
 
+    this.buildPost();
     this.buildShader();
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -119,6 +130,23 @@ export class ShaderRitualView extends LitElement {
     this.resize();
   }
 
+  /** Build the shader-independent global post-FX quad (created once). */
+  private buildPost() {
+    this.postUniforms = {
+      iResolution: { value: new THREE.Vector3(1, 1, 1) },
+      iChannel0: { value: this.imageTarget.texture },
+      uFilter: { value: 0 },
+      uAmount: { value: 0 },
+    };
+    const postMat = new THREE.RawShaderMaterial({
+      uniforms: this.postUniforms,
+      vertexShader: commonVertex,
+      fragmentShader: postShader,
+    });
+    this.postScene = new THREE.Scene();
+    this.postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMat));
+  }
+
   private disposeScene(scene: THREE.Scene | undefined) {
     if (!scene) return;
     for (const child of [...scene.children]) {
@@ -135,8 +163,12 @@ export class ShaderRitualView extends LitElement {
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
     const dpr = this.renderer.getPixelRatio();
-    this.bufferTarget.setSize(Math.floor(w * dpr), Math.floor(h * dpr));
-    (this.uniforms.iResolution.value as THREE.Vector3).set(w * dpr, h * dpr, 1);
+    const pw = Math.floor(w * dpr);
+    const ph = Math.floor(h * dpr);
+    this.bufferTarget.setSize(pw, ph);
+    this.imageTarget.setSize(pw, ph);
+    (this.uniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
+    (this.postUniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
   }
 
   private renderLoop = () => {
@@ -163,10 +195,20 @@ export class ShaderRitualView extends LitElement {
 
     this.uniforms.iTime.value = (performance.now() - this.startTime) / 1000;
 
+    // Global post-FX: intensity = base amount + audio band * react (clamped).
+    const f = this.config.filter;
+    this.postUniforms.uFilter.value = filterIndex(f.type);
+    const fBand = !f || f.band === 'none' ? 0 : (this.lastBands as any)[f.band];
+    const amt = (f?.amount || 0) + (fBand || 0) * (f?.react || 0);
+    this.postUniforms.uAmount.value = Math.max(0, Math.min(1, amt));
+
+    // Buffer A -> Image (offscreen) -> Post-FX -> screen.
     this.renderer.setRenderTarget(this.bufferTarget);
     this.renderer.render(this.bufferScene, this.camera);
-    this.renderer.setRenderTarget(null);
+    this.renderer.setRenderTarget(this.imageTarget);
     this.renderer.render(this.imageScene, this.camera);
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.postScene, this.camera);
   };
 
   protected render() {

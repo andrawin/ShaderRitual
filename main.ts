@@ -7,7 +7,8 @@ import { LitElement, css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { Band, ShaderRitualConfig } from './types';
+import { POST_FILTERS } from './shaders/post';
+import type { Band, FilterType, ShaderRitualConfig } from './types';
 
 const STORAGE_KEY = 'shader-ritual-settings-v1';
 const MIDI_MAP_KEY = 'shader-ritual-midi-map-v1';
@@ -286,6 +287,8 @@ export class ShaderRitualApp extends LitElement {
       'sensitivity.mid': { min: 0, max: 5 },
       'sensitivity.high': { min: 0, max: 10 },
       fftSmoothing: { min: 0, max: 0.95 },
+      'filter.amount': { min: 0, max: 1 },
+      'filter.react': { min: 0, max: 3 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
@@ -483,6 +486,57 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
+  private renderPostFx() {
+    const f = this.config.filter;
+    const active = f.type !== 'none';
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Post FX · Global</span>
+        <div class="element-card ${active ? '' : 'hidden-el'}">
+          <div class="element-desc">
+            A single audio-reactive filter applied to the final frame of every
+            shader. Wire it to a band to make the whole image pump with the mix.
+          </div>
+          <div class="control-row">
+            <label>Filter</label>
+            <select
+              .value=${f.type}
+              @change=${(e: any) => this.updateConfig('filter.type', e.target.value as FilterType)}>
+              ${POST_FILTERS.map((p) => html`<option value=${p.id}>${p.name}</option>`)}
+            </select>
+          </div>
+          <div class="control-row">
+            <label>Base amount</label>
+            <button
+              class="midi-learn-btn ${this.learningParam === 'filter.amount' ? 'active' : ''} ${this.isMapped('filter.amount') ? 'mapped' : ''}"
+              @click=${() => this.toggleMidiLearn('filter.amount')}>●</button>
+            <input type="range" min="0" max="1" step="0.01" .value=${f.amount}
+              @input=${(e: any) => this.updateConfig('filter.amount', parseFloat(e.target.value))} />
+          </div>
+          <div class="control-row">
+            <label>Audio band</label>
+            <select
+              .value=${f.band}
+              @change=${(e: any) => this.updateConfig('filter.band', e.target.value as Band)}>
+              <option value="none">None</option>
+              <option value="low">Low</option>
+              <option value="mid">Mid</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div class="control-row">
+            <label>Reactive amount</label>
+            <button
+              class="midi-learn-btn ${this.learningParam === 'filter.react' ? 'active' : ''} ${this.isMapped('filter.react') ? 'mapped' : ''}"
+              @click=${() => this.toggleMidiLearn('filter.react')}>●</button>
+            <input type="range" min="0" max="3" step="0.05" .value=${f.react}
+              @input=${(e: any) => this.updateConfig('filter.react', parseFloat(e.target.value))} />
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderSettings() {
     const def = getShader(this.config.activeShader);
     return html`
@@ -511,6 +565,9 @@ export class ShaderRitualApp extends LitElement {
           <span class="group-title">${def.name} · Element Allocation</span>
           ${def.elements.map((el) => this.renderElement(def.id, el.id))}
         </div>
+
+        <!-- GLOBAL POST-FX (applies to every shader) -->
+        ${this.renderPostFx()}
 
         <!-- RESPONSE PROFILE -->
         <div class="setting-group">

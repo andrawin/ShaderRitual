@@ -2,11 +2,17 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
+import type { ShaderDef, ShaderRitualConfig, ShaderSetting, FilterSetting } from './types';
 import { sanctum } from './shaders/sanctum';
+import { effigy } from './shaders/effigy';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum];
+export const SHADERS: ShaderDef[] = [sanctum, effigy];
+
+/** Fresh defaults for the global post-FX pass. */
+function defaultFilter(): FilterSetting {
+  return { type: 'none', amount: 0.5, band: 'none', react: 1.0 };
+}
 
 export function getShader(id: string): ShaderDef {
   return SHADERS.find((s) => s.id === id) || SHADERS[0];
@@ -35,6 +41,7 @@ export function defaultConfig(): ShaderRitualConfig {
     sensitivity: { low: 1.5, mid: 1.5, high: 2.5 },
     thresholds: { low: 0.15, mid: 0.15, high: 0.15 },
     shaders,
+    filter: defaultFilter(),
   };
 }
 
@@ -51,6 +58,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     ...saved,
     sensitivity: { ...base.sensitivity, ...(saved.sensitivity || {}) },
     thresholds: { ...base.thresholds, ...(saved.thresholds || {}) },
+    filter: { ...base.filter, ...(saved.filter || {}) },
     shaders: { ...base.shaders },
   };
 
