@@ -5,6 +5,7 @@
 import { LitElement, css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
@@ -107,6 +108,15 @@ export class ShaderRitualView extends LitElement {
   private sceneTarget!: THREE.WebGLRenderTarget;
   private postScene!: THREE.Scene;
   private postUniforms!: Record<string, { value: any }>;
+
+  // User-uploaded GLB model overlay (rendered on top with a perspective camera).
+  private modelScene!: THREE.Scene;
+  private modelCamera!: THREE.PerspectiveCamera;
+  private modelHolder: THREE.Group | null = null;
+  private modelMats: THREE.Material[] = [];
+  private modelBaseScale = 1;
+  private modelRot = 0;
+  private gltfLoader = new GLTFLoader();
 
   private lastFrame = performance.now();
   private animTime = 0;
@@ -227,6 +237,17 @@ export class ShaderRitualView extends LitElement {
       ),
     );
 
+    // 3D model overlay (perspective camera + lights).
+    this.modelScene = new THREE.Scene();
+    this.modelCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    this.modelCamera.position.set(0, 0, 3.2);
+    const amb = new THREE.AmbientLight(0xffffff, 0.9);
+    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    key.position.set(2, 3, 4);
+    const rim = new THREE.DirectionalLight(0x88aaff, 0.5);
+    rim.position.set(-3, -1, -2);
+    this.modelScene.add(amb, key, rim);
+
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
@@ -248,6 +269,58 @@ export class ShaderRitualView extends LitElement {
     this.baseLayer.resize(pw, ph);
     this.overlayLayer.resize(pw, ph);
     (this.postUniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
+    if (this.modelCamera) {
+      this.modelCamera.aspect = w / h;
+      this.modelCamera.updateProjectionMatrix();
+    }
+  }
+
+  /** Load a GLB/GLTF from an ArrayBuffer; centres + normalises it. */
+  loadModel(buffer: ArrayBuffer): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.gltfLoader.parse(
+        buffer,
+        '',
+        (gltf) => {
+          this.disposeModel();
+          const root = gltf.scene;
+          // Centre at origin and record a normalising base scale (fit ~1.6 units).
+          const box = new THREE.Box3().setFromObject(root);
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          root.position.sub(center);
+          this.modelBaseScale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
+          this.modelMats = [];
+          root.traverse((o) => {
+            const m = (o as THREE.Mesh).material;
+            if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
+          });
+          const holder = new THREE.Group();
+          holder.add(root);
+          this.modelHolder = holder;
+          this.modelScene.add(holder);
+          resolve(true);
+        },
+        () => resolve(false),
+      );
+    });
+  }
+
+  removeModel() {
+    this.disposeModel();
+  }
+
+  private disposeModel() {
+    if (!this.modelHolder) return;
+    this.modelScene.remove(this.modelHolder);
+    this.modelHolder.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      mesh.geometry?.dispose?.();
+      const m = mesh.material;
+      if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => mm.dispose());
+    });
+    this.modelHolder = null;
+    this.modelMats = [];
   }
 
   /** 0..1 effective strength of a post-FX filter (band pushes the amount). */
@@ -324,6 +397,27 @@ export class ShaderRitualView extends LitElement {
     this.postUniforms.uScan.value = this.fxAmount('scanlines');
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.postScene, this.camera);
+
+    // 3D model overlay, drawn on top of the post-processed image.
+    const md = this.config.model;
+    if (this.modelHolder && md) {
+      this.modelHolder.visible = md.visible;
+      this.modelHolder.position.set(md.posX, md.posY, md.posZ);
+      this.modelHolder.scale.setScalar(md.scale * this.modelBaseScale);
+      if (md.bpm > 0) this.modelRot += motionDt * (md.bpm / 60) * (Math.PI / 2); // quarter-turn/beat
+      this.modelHolder.rotation.y = this.modelRot;
+      for (const mat of this.modelMats) {
+        (mat as any).transparent = true;
+        (mat as any).opacity = md.opacity;
+        (mat as any).depthWrite = md.opacity > 0.99;
+      }
+      if (md.visible) {
+        this.renderer.autoClear = false;
+        this.renderer.clearDepth();
+        this.renderer.render(this.modelScene, this.modelCamera);
+        this.renderer.autoClear = true;
+      }
+    }
   };
 
   protected render() {

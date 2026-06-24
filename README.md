@@ -59,6 +59,12 @@ Two newer manipulation layers sit on top of the element system:
   overlay's dark areas drop out, so only the kept element shows through. Both
   layers run their own full pipeline (feedback + elements), so it's ~2× the GPU.
 
+- **3D model overlay** — upload a **`.glb` / `.gltf`** model and composite it on
+  top of the shader with a perspective camera + lighting. Controls for Visible,
+  Scale, Opacity, Position X/Y/Z, and a BPM auto-rotate (0 = off). The model is
+  centred/normalised on load; the transforms persist (the model data itself
+  lives only in memory, so re-upload after a reload).
+
 - **Global post-FX** — image-wide filters layered over *every* shader (and the
   overlay): **Pixelate, Edge Detect, Posterize, RGB Shift, Scanlines**. Each has
   an on/off, a strength, and an optional **react band** so the filter's strength

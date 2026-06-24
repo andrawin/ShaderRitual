@@ -105,6 +105,7 @@ export function defaultConfig(): ShaderRitualConfig {
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
     postfx: defaultPostFX(),
+    model: { visible: true, scale: 1, opacity: 1, posX: 0, posY: 0, posZ: 0, bpm: 0 },
     shaders,
   };
 }
@@ -126,6 +127,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     motion: { ...base.motion, ...(saved.motion || {}) },
     overlay: { ...base.overlay, ...(saved.overlay || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
+    model: { ...base.model, ...(saved.model || {}) },
     shaders: { ...base.shaders },
   };
 

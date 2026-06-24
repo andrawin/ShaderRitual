@@ -90,6 +90,19 @@ export type FxName = 'pixelate' | 'edge' | 'posterize' | 'rgbShift' | 'scanlines
 
 export type PostFXConfig = Record<FxName, FxSetting>;
 
+/** A user-uploaded GLB model rendered as a 3D overlay (transforms persist; the
+ *  model data itself lives only in memory). */
+export interface ModelConfig {
+  visible: boolean;
+  scale: number;
+  opacity: number;
+  posX: number;
+  posY: number;
+  posZ: number;
+  /** Auto-rotate tempo; 0 = off. */
+  bpm: number;
+}
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -100,6 +113,7 @@ export interface ShaderRitualConfig {
   motion: MotionConfig;
   overlay: LayerConfig;
   postfx: PostFXConfig;
+  model: ModelConfig;
   shaders: Record<string, ShaderSetting>;
 }
 

@@ -44,6 +44,24 @@ export class ShaderRitualApp extends LitElement {
     localStorage.getItem(MIDI_MAP_KEY) || '{}',
   );
   @state() midiPulse = false;
+  @state() modelName = '';
+
+  private onModelFile = async (e: any) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    this.modelName = 'Loading…';
+    try {
+      const buf = await file.arrayBuffer();
+      const ok = await this.viewEl?.loadModel?.(buf);
+      this.modelName = ok ? file.name : 'Failed to load (not a valid GLB?)';
+    } catch {
+      this.modelName = 'Failed to load';
+    }
+  };
+  private clearModel = () => {
+    this.viewEl?.removeModel?.();
+    this.modelName = '';
+  };
 
   private pendingMidiUpdate = false;
   private saveTimeout: any = null;
@@ -610,6 +628,12 @@ export class ShaderRitualApp extends LitElement {
       'motion.idle': { min: 0, max: 1 },
       'motion.gain': { min: 0, max: 3 },
       'overlay.opacity': { min: 0, max: 1 },
+      'model.scale': { min: 0.1, max: 5 },
+      'model.opacity': { min: 0, max: 1 },
+      'model.posX': { min: -3, max: 3 },
+      'model.posY': { min: -3, max: 3 },
+      'model.posZ': { min: -3, max: 3 },
+      'model.bpm': { min: 0, max: 300 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
@@ -801,6 +825,43 @@ export class ShaderRitualApp extends LitElement {
       </div>
     `;
   };
+
+  private renderModelSection() {
+    const m = this.config.model;
+    return html`
+      <div class="setting-group">
+        <span class="group-title">3D Model</span>
+        ${this.isController
+          ? html`<div class="element-desc">Upload a model from the render window.</div>`
+          : html`
+              <div class="control-row">
+                <label>Upload GLB</label>
+                <input type="file" accept=".glb,.gltf" @change=${this.onModelFile} />
+              </div>`}
+        <div class="element-desc" style="margin-bottom:8px;">
+          ${this.modelName || 'No models loaded'}
+          ${this.modelName && !this.isController
+            ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.clearModel}>remove</a>`
+            : ''}
+        </div>
+        <div class="control-row">
+          <label>Visible</label>
+          <input type="checkbox" .checked=${m.visible}
+            @change=${(e: any) => this.updateConfig('model.visible', e.target.checked)} />
+        </div>
+        ${this.renderSlider('Scale', 'model.scale', 0.1, 5, 0.05)}
+        ${this.renderSlider('Opacity', 'model.opacity', 0, 1, 0.02)}
+        ${this.renderSlider('Position X', 'model.posX', -3, 3, 0.05)}
+        ${this.renderSlider('Position Y', 'model.posY', -3, 3, 0.05)}
+        ${this.renderSlider('Position Z', 'model.posZ', -3, 3, 0.05)}
+        <div class="control-row">
+          <label>BPM (0=off)</label>
+          <input class="bpm-num" type="number" min="0" max="300" step="1" .value=${String(Math.round(m.bpm))}
+            @input=${(e: any) => this.updateConfig('model.bpm', parseFloat(e.target.value) || 0)} />
+        </div>
+      </div>
+    `;
+  }
 
   private renderFx = (name: string, label: string) => {
     const fx = (this.config.postfx as any)[name];
@@ -1135,6 +1196,9 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderFx('rgbShift', 'RGB Shift')}
           ${this.renderFx('scanlines', 'Scanlines')}
         </div>
+
+        <!-- 3D MODEL -->
+        ${this.renderModelSection()}
 
         <!-- MIDI -->
         <div class="setting-group">
