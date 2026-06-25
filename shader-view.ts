@@ -6,6 +6,8 @@ import { LitElement, css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
@@ -248,6 +250,12 @@ export class ShaderRitualView extends LitElement {
     rim.position.set(-3, -1, -2);
     this.modelScene.add(amb, key, rim);
 
+    // Support Draco- and Meshopt-compressed GLBs (very common in exports).
+    const draco = new DRACOLoader();
+    draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/libs/draco/');
+    this.gltfLoader.setDRACOLoader(draco);
+    this.gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
@@ -275,34 +283,43 @@ export class ShaderRitualView extends LitElement {
     }
   }
 
-  /** Load a GLB/GLTF from an ArrayBuffer; centres + normalises it. */
-  loadModel(buffer: ArrayBuffer): Promise<boolean> {
+  /** Load a GLB/GLTF from an ArrayBuffer; centres + normalises it.
+   *  Resolves to '' on success or an error message on failure. */
+  loadModel(buffer: ArrayBuffer): Promise<string> {
     return new Promise((resolve) => {
-      this.gltfLoader.parse(
-        buffer,
-        '',
-        (gltf) => {
-          this.disposeModel();
-          const root = gltf.scene;
-          // Centre at origin and record a normalising base scale (fit ~1.6 units).
-          const box = new THREE.Box3().setFromObject(root);
-          const center = box.getCenter(new THREE.Vector3());
-          const size = box.getSize(new THREE.Vector3());
-          root.position.sub(center);
-          this.modelBaseScale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
-          this.modelMats = [];
-          root.traverse((o) => {
-            const m = (o as THREE.Mesh).material;
-            if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
-          });
-          const holder = new THREE.Group();
-          holder.add(root);
-          this.modelHolder = holder;
-          this.modelScene.add(holder);
-          resolve(true);
-        },
-        () => resolve(false),
-      );
+      try {
+        this.gltfLoader.parse(
+          buffer,
+          '',
+          (gltf) => {
+            try {
+              this.disposeModel();
+              const root = gltf.scene;
+              // Centre at origin and record a normalising base scale (fit ~1.6 units).
+              const box = new THREE.Box3().setFromObject(root);
+              const center = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              root.position.sub(center);
+              this.modelBaseScale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
+              this.modelMats = [];
+              root.traverse((o) => {
+                const m = (o as THREE.Mesh).material;
+                if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
+              });
+              const holder = new THREE.Group();
+              holder.add(root);
+              this.modelHolder = holder;
+              this.modelScene.add(holder);
+              resolve('');
+            } catch (e: any) {
+              resolve(e?.message || 'Error placing model');
+            }
+          },
+          (err: any) => resolve(err?.message || 'Could not parse (Draco/KTX2 textures unsupported?)'),
+        );
+      } catch (e: any) {
+        resolve(e?.message || 'Loader error');
+      }
     });
   }
 

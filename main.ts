@@ -52,10 +52,10 @@ export class ShaderRitualApp extends LitElement {
     this.modelName = 'Loading…';
     try {
       const buf = await file.arrayBuffer();
-      const ok = await this.viewEl?.loadModel?.(buf);
-      this.modelName = ok ? file.name : 'Failed to load (not a valid GLB?)';
-    } catch {
-      this.modelName = 'Failed to load';
+      const err = await this.viewEl?.loadModel?.(buf);
+      this.modelName = err ? `⚠ ${err}` : file.name;
+    } catch (e: any) {
+      this.modelName = `⚠ ${e?.message || 'Failed to load'}`;
     }
   };
   private clearModel = () => {
