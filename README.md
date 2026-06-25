@@ -112,6 +112,8 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/nebula.ts` | Volumetric Julia-fractal fog (srtuss) |
 | `shaders/oscilloscope.ts` | CRT vector-scope drawing a procedural waveform with feedback |
 | `shaders/siren.ts` | Neural-network SDF blob over a starfield (Blackle Mori, CC0) |
+| `shaders/plasma.ts` | Volumetric plasma globe (nimitz); procedural-noise port |
+| `shaders/tardigrade.ts` | Raymarched water-bear (nimitz / ArthurTent); procedural-noise port |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
 | `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |

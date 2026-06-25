@@ -22,6 +22,8 @@ import { chrome } from './shaders/chrome';
 import { nebula } from './shaders/nebula';
 import { oscilloscope } from './shaders/oscilloscope';
 import { siren } from './shaders/siren';
+import { plasma } from './shaders/plasma';
+import { tardigrade } from './shaders/tardigrade';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -37,6 +39,8 @@ export const SHADERS: ShaderDef[] = [
   nebula,
   oscilloscope,
   siren,
+  plasma,
+  tardigrade,
 ];
 
 /** Fresh camera / motion rig defaults. */
