@@ -62,7 +62,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   a /= float(STEPS);
   float v = a * 0.15;
   vec3 col = vec3(v);
-  col = pow(col, vec3(1.0, 0.6, 0.4) * 6.0) * 5.0;
+  col = pow(col, vec3(1.0, 0.6, 0.4) * 6.0) * 1.5;
   col = pow(col, vec3(1.0 / 2.2));
   col *= 0.1 + 0.9 * pow(16.0 * pos.x * pos.y * (1.0 - pos.x) * (1.0 - pos.y), 0.1);
   col *= fbm(iTime * 20.0) * 0.4 + 0.7;
