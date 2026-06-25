@@ -19,6 +19,9 @@ import { thunder } from './shaders/thunder';
 import { pulsar } from './shaders/pulsar';
 import { alive } from './shaders/alive';
 import { chrome } from './shaders/chrome';
+import { nebula } from './shaders/nebula';
+import { oscilloscope } from './shaders/oscilloscope';
+import { siren } from './shaders/siren';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -31,6 +34,9 @@ export const SHADERS: ShaderDef[] = [
   pulsar,
   alive,
   chrome,
+  nebula,
+  oscilloscope,
+  siren,
 ];
 
 /** Fresh camera / motion rig defaults. */

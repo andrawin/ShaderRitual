@@ -109,6 +109,9 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/pulsar.ts` | Spiky body + warped tunnel ringed by kaleidoscopic **laser** beams |
 | `shaders/alive.ts` | Pulsing organic PBR blob with satellites over a voronoi aura (two-pass) |
 | `shaders/chrome.ts` | Twisting reflective chrome ribbon with motion blur |
+| `shaders/nebula.ts` | Volumetric Julia-fractal fog (srtuss) |
+| `shaders/oscilloscope.ts` | CRT vector-scope drawing a procedural waveform with feedback |
+| `shaders/siren.ts` | Neural-network SDF blob over a starfield (Blackle Mori, CC0) |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
 | `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |
