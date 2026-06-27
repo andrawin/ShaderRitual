@@ -634,6 +634,10 @@ export class ShaderRitualApp extends LitElement {
       'model.posY': { min: -3, max: 3 },
       'model.posZ': { min: -3, max: 3 },
       'model.bpm': { min: 0, max: 300 },
+      'model.fragments': { min: 2, max: 250 },
+      'model.explode': { min: 0, max: 1 },
+      'model.spin': { min: 0, max: 3 },
+      'model.glow': { min: 0, max: 3 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
@@ -859,6 +863,51 @@ export class ShaderRitualApp extends LitElement {
           <input class="bpm-num" type="number" min="0" max="300" step="1" .value=${String(Math.round(m.bpm))}
             @input=${(e: any) => this.updateConfig('model.bpm', parseFloat(e.target.value) || 0)} />
         </div>
+
+        <div class="element-desc" style="margin:10px 0 6px;">Break it apart:</div>
+        <div class="control-row">
+          <label>Mode</label>
+          <select .value=${m.breakup}
+            @change=${(e: any) => this.updateConfig('model.breakup', e.target.value)}>
+            <option value="none">Whole</option>
+            <option value="parts">Parts (by mesh)</option>
+            <option value="shatter">Shatter (fragments)</option>
+          </select>
+        </div>
+        ${m.breakup === 'shatter'
+          ? html`<div class="control-row">
+              <label>Fragments</label>
+              <input class="bpm-num" type="number" min="2" max="250" step="1" .value=${String(Math.round(m.fragments))}
+                @input=${(e: any) => this.updateConfig('model.fragments', parseFloat(e.target.value) || 2)} />
+            </div>`
+          : ''}
+        ${m.breakup !== 'none'
+          ? html`
+              ${this.renderSlider('Explode', 'model.explode', 0, 1, 0.01)}
+              <div class="control-row">
+                <label>Explode band</label>
+                <select .value=${m.explodeBand}
+                  @change=${(e: any) => this.updateConfig('model.explodeBand', e.target.value as Band)}>
+                  <option value="none">None</option>
+                  <option value="low">Low</option>
+                  <option value="mid">Mid</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              ${this.renderSlider('Piece spin', 'model.spin', 0, 3, 0.02)}
+              ${this.renderSlider('Glow', 'model.glow', 0, 3, 0.02)}
+              <div class="control-row">
+                <label>Glow band</label>
+                <select .value=${m.glowBand}
+                  @change=${(e: any) => this.updateConfig('model.glowBand', e.target.value as Band)}>
+                  <option value="none">None</option>
+                  <option value="low">Low</option>
+                  <option value="mid">Mid</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+            `
+          : ''}
       </div>
     `;
   }

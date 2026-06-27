@@ -115,7 +115,11 @@ export function defaultConfig(): ShaderRitualConfig {
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
     postfx: defaultPostFX(),
-    model: { visible: true, scale: 1, opacity: 1, posX: 0, posY: 0, posZ: 0, bpm: 0 },
+    model: {
+      visible: true, scale: 1, opacity: 1, posX: 0, posY: 0, posZ: 0, bpm: 0,
+      breakup: 'none', fragments: 40, explode: 0, explodeBand: 'low',
+      spin: 0, glow: 0, glowBand: 'mid',
+    },
     shaders,
   };
 }

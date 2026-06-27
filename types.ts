@@ -101,6 +101,20 @@ export interface ModelConfig {
   posZ: number;
   /** Auto-rotate tempo; 0 = off. */
   bpm: number;
+  /** Break the model into addressable pieces. */
+  breakup: 'none' | 'parts' | 'shatter';
+  /** Number of shatter fragments (shatter mode). */
+  fragments: number;
+  /** Base outward explode amount (0..1). */
+  explode: number;
+  /** Band that adds to the explode amount. */
+  explodeBand: Band;
+  /** Per-piece spin speed. */
+  spin: number;
+  /** Emissive glow intensity for the pieces. */
+  glow: number;
+  /** Band that drives the glow. */
+  glowBand: Band;
 }
 
 /** Top-level persisted configuration. */

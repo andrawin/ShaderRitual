@@ -63,7 +63,14 @@ Two newer manipulation layers sit on top of the element system:
   top of the shader with a perspective camera + lighting. Controls for Visible,
   Scale, Opacity, Position X/Y/Z, and a BPM auto-rotate (0 = off). The model is
   centred/normalised on load; the transforms persist (the model data itself
-  lives only in memory, so re-upload after a reload).
+  lives only in memory, so re-upload after a reload). Draco/Meshopt-compressed
+  GLBs are supported.
+
+- **Model breakup (explode / shatter)** — break the loaded model into addressable
+  pieces and drive them with the audio: **Parts** (one piece per mesh) or
+  **Shatter** (k-means triangle clustering into N fragments). Each piece can
+  **explode** outward (with a band that pushes the amount), **spin**, and **glow**
+  (emissive, band-driven), so the model bursts apart on the beat and reassembles.
 
 - **Global post-FX** — image-wide filters layered over *every* shader (and the
   overlay): **Pixelate, Edge Detect, Posterize, RGB Shift, Scanlines**. Each has
@@ -115,6 +122,8 @@ Two newer manipulation layers sit on top of the element system:
 | `shaders/plasma.ts` | Volumetric plasma globe (nimitz); procedural-noise port |
 | `shaders/tardigrade.ts` | Raymarched water-bear (nimitz / ArthurTent); procedural-noise port |
 | `shader-registry.ts` | Shader list + default/sanitized config |
+| `decompose.ts` | Split a loaded model into addressable per-mesh Parts (cloned materials, explode dirs) |
+| `fracture.ts` | Shatter a model into fragments via k-means triangle clustering |
 | `shader-layer.ts` | One shader's full pipeline (feedback + Buffer B + elements) as a reusable layer |
 | `shader-view.ts` | Orchestrates base + optional overlay layer and the composite pass |
 | `main.ts` | Lit UI: shader selector, camera/motion, per-element menus, MIDI, detachable controls |

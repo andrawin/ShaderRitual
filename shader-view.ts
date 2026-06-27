@@ -8,6 +8,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { decompose, type Part } from './decompose';
+import { fracture, type Fragment } from './fracture';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
@@ -114,10 +116,15 @@ export class ShaderRitualView extends LitElement {
   // User-uploaded GLB model overlay (rendered on top with a perspective camera).
   private modelScene!: THREE.Scene;
   private modelCamera!: THREE.PerspectiveCamera;
-  private modelHolder: THREE.Group | null = null;
+  private modelHolder: THREE.Group | null = null; // transform group (scale/pos/rot)
+  private modelRootObj: THREE.Object3D | null = null; // the loaded gltf scene (centred)
   private modelMats: THREE.Material[] = [];
   private modelBaseScale = 1;
   private modelRot = 0;
+  // Breakup engine (decompose into parts / fracture into shards).
+  private modelParts: Part[] | null = null;
+  private modelFragments: Fragment[] | null = null;
+  private modelBreakKey = ''; // current "mode:count" so we rebuild on change
   private gltfLoader = new GLTFLoader();
 
   private lastFrame = performance.now();
@@ -301,15 +308,13 @@ export class ShaderRitualView extends LitElement {
               const size = box.getSize(new THREE.Vector3());
               root.position.sub(center);
               this.modelBaseScale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
-              this.modelMats = [];
-              root.traverse((o) => {
-                const m = (o as THREE.Mesh).material;
-                if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
-              });
+
               const holder = new THREE.Group();
-              holder.add(root);
               this.modelHolder = holder;
+              this.modelRootObj = root;
               this.modelScene.add(holder);
+              this.modelBreakKey = '';
+              this.rebuildBreakup(); // builds whole/parts/shatter per config
               resolve('');
             } catch (e: any) {
               resolve(e?.message || 'Error placing model');
@@ -337,7 +342,54 @@ export class ShaderRitualView extends LitElement {
       if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => mm.dispose());
     });
     this.modelHolder = null;
+    this.modelRootObj = null;
+    this.modelParts = null;
+    this.modelFragments = null;
     this.modelMats = [];
+  }
+
+  /**
+   * (Re)build the model's breakup form (whole / decomposed parts / shattered
+   * fragments) when the mode or fragment count changes. Built with the holder at
+   * identity so geometry is captured in model-local space; the render loop then
+   * re-applies the user transform.
+   */
+  private rebuildBreakup() {
+    const holder = this.modelHolder;
+    const root = this.modelRootObj;
+    if (!holder || !root) return;
+    const md = this.config.model;
+    const key = `${md.breakup}:${md.fragments}`;
+    if (key === this.modelBreakKey) return;
+    this.modelBreakKey = key;
+
+    // Capture geometry in model-local space.
+    holder.position.set(0, 0, 0);
+    holder.scale.setScalar(1);
+    holder.rotation.set(0, 0, 0);
+    while (holder.children.length) holder.remove(holder.children[0]);
+    this.modelParts = null;
+    this.modelFragments = null;
+    this.modelMats = [];
+    const ctr = new THREE.Vector3(0, 0, 0);
+
+    if (md.breakup === 'shatter') {
+      const { group, fragments, materials } = fracture(root, ctr, Math.max(2, Math.round(md.fragments)));
+      holder.add(group);
+      this.modelFragments = fragments;
+      this.modelMats = materials;
+    } else {
+      holder.add(root);
+      if (md.breakup === 'parts') {
+        this.modelParts = decompose(root, ctr);
+        for (const p of this.modelParts) for (const m of p.materials) this.modelMats.push(m);
+      } else {
+        root.traverse((o) => {
+          const m = (o as THREE.Mesh).material;
+          if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
+        });
+      }
+    }
   }
 
   /** 0..1 effective strength of a post-FX filter (band pushes the amount). */
@@ -418,16 +470,43 @@ export class ShaderRitualView extends LitElement {
     // 3D model overlay, drawn on top of the post-processed image.
     const md = this.config.model;
     if (this.modelHolder && md) {
+      if (`${md.breakup}:${md.fragments}` !== this.modelBreakKey) this.rebuildBreakup();
+
       this.modelHolder.visible = md.visible;
       this.modelHolder.position.set(md.posX, md.posY, md.posZ);
       this.modelHolder.scale.setScalar(md.scale * this.modelBaseScale);
       if (md.bpm > 0) this.modelRot += motionDt * (md.bpm / 60) * (Math.PI / 2); // quarter-turn/beat
       this.modelHolder.rotation.y = this.modelRot;
+
       for (const mat of this.modelMats) {
-        (mat as any).transparent = true;
+        (mat as any).transparent = md.opacity < 0.999;
         (mat as any).opacity = md.opacity;
         (mat as any).depthWrite = md.opacity > 0.99;
       }
+
+      // Drive explode / spin / glow from the audio bands.
+      const eb = md.explodeBand === 'none' ? 0 : (this.lastBands as any)[md.explodeBand] || 0;
+      const explodeAmt = Math.max(0, md.explode + eb * 0.8);
+      const gb = md.glowBand === 'none' ? 0 : (this.lastBands as any)[md.glowBand] || 0;
+      const glowAmt = md.glow * (0.25 + gb);
+
+      if (this.modelParts) {
+        for (const p of this.modelParts) {
+          p.mesh.position.copy(p.basePosition).addScaledVector(p.explodeDir, explodeAmt);
+          p.spin += motionDt * md.spin;
+          this._q.setFromAxisAngle(p.explodeDir, p.spin);
+          p.mesh.quaternion.copy(p.baseQuaternion).premultiply(this._q);
+          for (const m of p.materials) m.emissiveIntensity = glowAmt;
+        }
+      } else if (this.modelFragments) {
+        for (const f of this.modelFragments) {
+          f.mesh.position.copy(f.base).addScaledVector(f.dir, explodeAmt * (0.5 + f.phase));
+          f.spin += motionDt * md.spin * (0.5 + f.phase);
+          f.mesh.setRotationFromAxisAngle(f.axis, f.spin);
+        }
+        for (const m of this.modelMats) (m as any).emissiveIntensity = glowAmt;
+      }
+
       if (md.visible) {
         this.renderer.autoClear = false;
         this.renderer.clearDepth();
@@ -436,6 +515,8 @@ export class ShaderRitualView extends LitElement {
       }
     }
   };
+
+  private _q = new THREE.Quaternion();
 
   protected render() {
     return html`<canvas></canvas>`;
