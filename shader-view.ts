@@ -8,7 +8,6 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { decompose, type Part } from './decompose';
 import { fracture, type Fragment } from './fracture';
 import { Analyser } from './analyser';
@@ -202,6 +201,9 @@ export class ShaderRitualView extends LitElement {
         this.baseLayer.renderBufferB(this.camera);
       }
       if (this.analyser) this.analyser.smoothing = this.config.fftSmoothing;
+      // Refresh part / fracture visibility on config edits (mode, per-part
+      // hide, fracture toggle) instead of recomputing it every frame.
+      if (this.modelHolder) this.applyMode();
     }
   }
 
@@ -280,10 +282,6 @@ export class ShaderRitualView extends LitElement {
     const rim = new THREE.DirectionalLight(0x88aaff, 0.5);
     rim.position.set(-3, -1, -2);
     this.modelScene.add(amb, key, rim);
-
-    // Image-based lighting so PBR materials read correctly (MeshRitual look).
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.modelScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
     // Screen-capture plane (background = camera-attached rear wall, or floating).
     this.captureMesh = new THREE.Mesh(
@@ -555,9 +553,10 @@ export class ShaderRitualView extends LitElement {
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.postScene, this.camera);
 
-    // 3D model overlay, drawn on top of the post-processed image.
+    // 3D model overlay, drawn on top of the post-processed image. All per-frame
+    // model work is skipped entirely when there's no model or it's hidden.
     const md = this.config.model;
-    if (this.modelHolder && md) {
+    if (this.modelHolder && md && md.visible) {
       // Rebuild fracture shards if the mode / fragment count changed.
       const wantFrag = md.mode === 'fracture' ? Math.max(2, Math.round(md.fracture.fragments)) : 0;
       if (wantFrag !== this.fragmentCount) this.syncFracture();
@@ -568,7 +567,7 @@ export class ShaderRitualView extends LitElement {
       if (physicsActive && !this.physicsWasEnabled) this.reset();
       this.physicsWasEnabled = md.mode === 'fracture' && md.fracture.physics.enabled;
 
-      this.modelHolder.visible = md.visible;
+      this.modelHolder.visible = true;
       this.modelHolder.position.set(md.posX, md.posY, md.posZ);
       this.modelHolder.scale.setScalar(md.scale * this.modelBaseScale);
       // Physics needs a non-rotating frame so gravity stays "down".
@@ -585,7 +584,6 @@ export class ShaderRitualView extends LitElement {
         (mat as any).depthWrite = md.opacity > 0.99;
       }
 
-      this.applyMode();
       if (md.mode === 'parts') {
         this.animateParts(this.lastBands, motionDt);
       } else if (md.mode === 'fracture') {
@@ -603,12 +601,12 @@ export class ShaderRitualView extends LitElement {
 
       this.applyCapture(this.lastBands);
 
-      if (md.visible) {
-        this.renderer.autoClear = false;
-        this.renderer.clearDepth();
-        this.renderer.render(this.modelScene, this.modelCamera);
-        this.renderer.autoClear = true;
-      }
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+      this.renderer.render(this.modelScene, this.modelCamera);
+      this.renderer.autoClear = true;
+    } else if (this.modelHolder) {
+      this.modelHolder.visible = false;
     }
   };
 
