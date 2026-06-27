@@ -4,6 +4,7 @@
  */
 import type {
   CameraConfig,
+  ModelConfig,
   MotionConfig,
   PostFXConfig,
   ShaderDef,
@@ -77,6 +78,55 @@ function mergePostFX(base: PostFXConfig, saved: any): PostFXConfig {
   return out;
 }
 
+/**
+ * Fresh 3D-model overlay defaults, including the full MeshRitual engine
+ * (per-part allocation / fracture / physics / screen-capture).
+ */
+export function defaultModel(): ModelConfig {
+  return {
+    visible: true,
+    scale: 1,
+    opacity: 1,
+    posX: 0,
+    posY: 0,
+    posZ: 0,
+    bpm: 0,
+    mode: 'none',
+    parts: {},
+    fracture: {
+      fragments: 40,
+      explodeBand: 'low',
+      explodeAmount: 1.0,
+      spinBand: 'high',
+      spinAmount: 1.0,
+      scaleBand: 'mid',
+      scaleAmount: 0.5,
+      distribute: true,
+      visible: true,
+      physics: {
+        enabled: false,
+        gravity: 1.0,
+        burstStrength: 1.0,
+        spin: 2.0,
+        restitution: 0.4,
+        floor: true,
+        beatBand: 'low',
+        beatThreshold: 0.4,
+        beatAction: 'pulse',
+        implodeStrength: 6.0,
+      },
+    },
+    capture: {
+      opacity: 0.85,
+      scale: 1.0,
+      mode: 'background',
+      reactive: true,
+      reactiveBand: 'low',
+      visible: true,
+    },
+  };
+}
+
 /** Fresh global post-FX defaults (all off). */
 export function defaultPostFX(): PostFXConfig {
   return {
@@ -85,6 +135,26 @@ export function defaultPostFX(): PostFXConfig {
     posterize: { on: false, amount: 0.5, band: 'none' },
     rgbShift: { on: false, amount: 0.4, band: 'none' },
     scanlines: { on: false, amount: 0.5, band: 'none' },
+  };
+}
+
+/**
+ * Merge a saved model config over the defaults. The per-part map is always
+ * reset (parts are rebuilt when a model is decomposed), and the fracture /
+ * physics / capture sub-objects merge deeply so new fields get defaults.
+ */
+function mergeModel(base: ModelConfig, saved: any): ModelConfig {
+  if (!saved || typeof saved !== 'object') return base;
+  return {
+    ...base,
+    ...saved,
+    parts: {}, // rebuilt per loaded model
+    fracture: {
+      ...base.fracture,
+      ...(saved.fracture || {}),
+      physics: { ...base.fracture.physics, ...(saved.fracture?.physics || {}) },
+    },
+    capture: { ...base.capture, ...(saved.capture || {}) },
   };
 }
 
@@ -115,11 +185,7 @@ export function defaultConfig(): ShaderRitualConfig {
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
     postfx: defaultPostFX(),
-    model: {
-      visible: true, scale: 1, opacity: 1, posX: 0, posY: 0, posZ: 0, bpm: 0,
-      breakup: 'none', fragments: 40, explode: 0, explodeBand: 'low',
-      spin: 0, glow: 0, glowBand: 'mid',
-    },
+    model: defaultModel(),
     shaders,
   };
 }
@@ -141,7 +207,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     motion: { ...base.motion, ...(saved.motion || {}) },
     overlay: { ...base.overlay, ...(saved.overlay || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
-    model: { ...base.model, ...(saved.model || {}) },
+    model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },
   };
 

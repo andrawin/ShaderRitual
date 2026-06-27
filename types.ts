@@ -90,8 +90,62 @@ export type FxName = 'pixelate' | 'edge' | 'posterize' | 'rgbShift' | 'scanlines
 
 export type PostFXConfig = Record<FxName, FxSetting>;
 
-/** A user-uploaded GLB model rendered as a 3D overlay (transforms persist; the
- *  model data itself lives only in memory). */
+/** What a part reacts to when its band fires (MeshRitual engine). */
+export type ReactTarget = 'scale' | 'emissive' | 'explode' | 'rotate';
+/** Per-mesh part allocation. */
+export interface PartSetting {
+  band: Band;
+  amount: number;
+  target: ReactTarget;
+  visible: boolean;
+}
+/** Lightweight part descriptor surfaced to the UI. */
+export interface PartInfo {
+  id: string;
+  name: string;
+}
+export type BeatAction = 'burst' | 'implode' | 'pulse' | 'alternate';
+/** Fracture physics sub-config (burst / fall / tumble). */
+export interface PhysicsConfig {
+  enabled: boolean;
+  gravity: number;
+  burstStrength: number;
+  spin: number;
+  restitution: number;
+  floor: boolean;
+  beatBand: Band;
+  beatThreshold: number;
+  beatAction: BeatAction;
+  implodeStrength: number;
+}
+/** Fracture (shatter) sub-config. */
+export interface FractureConfig {
+  fragments: number;
+  explodeBand: Band;
+  explodeAmount: number;
+  spinBand: Band;
+  spinAmount: number;
+  scaleBand: Band;
+  scaleAmount: number;
+  distribute: boolean;
+  visible: boolean;
+  physics: PhysicsConfig;
+}
+/** Shared-window screen-capture projection. */
+export interface CaptureConfig {
+  opacity: number;
+  scale: number;
+  mode: 'background' | 'floating';
+  reactive: boolean;
+  reactiveBand: Band;
+  visible: boolean;
+}
+
+/**
+ * A user-uploaded GLB model rendered as a 3D overlay, with the MeshRitual
+ * engine (per-part allocation / fracture / physics / capture). The model data
+ * and the per-part map live only in memory; the rest persists.
+ */
 export interface ModelConfig {
   visible: boolean;
   scale: number;
@@ -101,20 +155,12 @@ export interface ModelConfig {
   posZ: number;
   /** Auto-rotate tempo; 0 = off. */
   bpm: number;
-  /** Break the model into addressable pieces. */
-  breakup: 'none' | 'parts' | 'shatter';
-  /** Number of shatter fragments (shatter mode). */
-  fragments: number;
-  /** Base outward explode amount (0..1). */
-  explode: number;
-  /** Band that adds to the explode amount. */
-  explodeBand: Band;
-  /** Per-piece spin speed. */
-  spin: number;
-  /** Emissive glow intensity for the pieces. */
-  glow: number;
-  /** Band that drives the glow. */
-  glowBand: Band;
+  /** Whole / per-mesh parts / shattered fracture. */
+  mode: 'none' | 'parts' | 'fracture';
+  /** Per-part settings keyed by part id (rebuilt per loaded model). */
+  parts: Record<string, PartSetting>;
+  fracture: FractureConfig;
+  capture: CaptureConfig;
 }
 
 /** Top-level persisted configuration. */

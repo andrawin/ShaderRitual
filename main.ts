@@ -8,7 +8,11 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { Band, CameraMode, ShaderRitualConfig } from './types';
+import type { Band, CameraMode, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+
+function defaultPart(): PartSetting {
+  return { band: 'none', amount: 1.0, target: 'scale', visible: true };
+}
 
 const STORAGE_KEY = 'shader-ritual-settings-v1';
 const MIDI_MAP_KEY = 'shader-ritual-midi-map-v1';
@@ -46,6 +50,11 @@ export class ShaderRitualApp extends LitElement {
   @state() midiPulse = false;
   @state() modelName = '';
 
+  // MeshRitual engine: parts surfaced from the loaded model + screen capture.
+  @state() partInfos: PartInfo[] = [];
+  @state() isCapturing = false;
+  private captureStream: MediaStream | null = null;
+
   private onModelFile = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -61,6 +70,83 @@ export class ShaderRitualApp extends LitElement {
   private clearModel = () => {
     this.viewEl?.removeModel?.();
     this.modelName = '';
+    this.partInfos = [];
+  };
+
+  /** Decomposed parts arrived from the render view — build per-part settings. */
+  private onPartsChanged = (e: CustomEvent<PartInfo[]>) => {
+    const infos = e.detail || [];
+    this.partInfos = infos;
+    const parts: Record<string, PartSetting> = {};
+    for (const info of infos) parts[info.id] = this.config.model.parts[info.id] || defaultPart();
+    this.config = { ...this.config, model: { ...this.config.model, parts } };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.broadcastConfig();
+    this.sync?.postMessage({ type: 'partInfos', partInfos: infos });
+  };
+
+  /** Distribute parts across the three bands / first three targets. */
+  private autoDistribute = () => {
+    const bands: Band[] = ['low', 'mid', 'high'];
+    const targets: ReactTarget[] = ['scale', 'emissive', 'explode'];
+    const parts = { ...this.config.model.parts };
+    this.partInfos.forEach((info, i) => {
+      parts[info.id] = {
+        ...(parts[info.id] || defaultPart()),
+        band: bands[i % 3],
+        target: targets[Math.floor(i / 3) % 3],
+        visible: true,
+      };
+    });
+    this.config = { ...this.config, model: { ...this.config.model, parts } };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.broadcastConfig();
+  };
+
+  /** Fire a physics action (works from either window). */
+  private triggerPhysics = (action: 'burst' | 'implode' | 'reset') => {
+    if (this.isController) {
+      this.sync?.postMessage({ type: 'command', name: action });
+    } else {
+      this.viewEl?.[action]?.();
+    }
+  };
+
+  /** Share-a-window screen capture, projected onto the model scene. */
+  private toggleCapture = async () => {
+    if (this.isController) {
+      this.sync?.postMessage({ type: 'command', name: this.isCapturing ? 'stopCapture' : 'startCapture' });
+      return;
+    }
+    if (this.isCapturing) {
+      this.captureStream?.getTracks().forEach((t) => t.stop());
+      this.captureStream = null;
+      this.isCapturing = false;
+      this.viewEl?.setCaptureStream?.(null);
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      this.error = 'Screen capture not supported in this browser.';
+      return;
+    }
+    try {
+      this.error = '';
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'window' } as any,
+        audio: false,
+      });
+      this.captureStream = stream;
+      this.isCapturing = true;
+      this.viewEl?.setCaptureStream?.(stream);
+      stream.getTracks()[0].addEventListener('ended', () => {
+        this.captureStream = null;
+        this.isCapturing = false;
+        this.viewEl?.setCaptureStream?.(null);
+      });
+    } catch (err: any) {
+      this.error = `Capture failed: ${err?.message || err}`;
+      this.isCapturing = false;
+    }
   };
 
   private pendingMidiUpdate = false;
@@ -443,8 +529,15 @@ export class ShaderRitualApp extends LitElement {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.type) {
       case 'request':
-        // Render window answers a controller with the full current config.
-        if (this.isMain) this.broadcastConfig();
+        // Render window answers a controller with the full current config + parts.
+        if (this.isMain) {
+          this.broadcastConfig();
+          this.sync?.postMessage({ type: 'partInfos', partInfos: this.partInfos });
+        }
+        break;
+      case 'partInfos':
+        // Controller mirrors the render window's decomposed part list.
+        if (this.isController) this.partInfos = msg.partInfos || [];
         break;
       case 'config':
         this.config = sanitizeConfig(msg.config);
@@ -457,6 +550,7 @@ export class ShaderRitualApp extends LitElement {
           this.isRecording = msg.isRecording;
           this.status = msg.status;
           this.error = msg.error || '';
+          this.isCapturing = !!msg.isCapturing;
         }
         break;
       case 'command':
@@ -503,6 +597,8 @@ export class ShaderRitualApp extends LitElement {
     if (name === 'startAudio') this.startRecording();
     else if (name === 'stopAudio') this.stopRecording();
     else if (name === 'scanMidi') this.initMidi();
+    else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
+    else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
   }
 
   /** Open the control panel in its own window, kept in sync via BroadcastChannel. */
@@ -634,10 +730,15 @@ export class ShaderRitualApp extends LitElement {
       'model.posY': { min: -3, max: 3 },
       'model.posZ': { min: -3, max: 3 },
       'model.bpm': { min: 0, max: 300 },
-      'model.fragments': { min: 2, max: 250 },
-      'model.explode': { min: 0, max: 1 },
-      'model.spin': { min: 0, max: 3 },
-      'model.glow': { min: 0, max: 3 },
+      'model.fracture.fragments': { min: 2, max: 250 },
+      'model.capture.opacity': { min: 0, max: 1 },
+      'model.capture.scale': { min: 0.1, max: 4 },
+      'model.fracture.physics.gravity': { min: 0, max: 4 },
+      'model.fracture.physics.burstStrength': { min: 0, max: 4 },
+      'model.fracture.physics.spin': { min: 0, max: 5 },
+      'model.fracture.physics.restitution': { min: 0, max: 0.95 },
+      'model.fracture.physics.implodeStrength': { min: 1, max: 20 },
+      'model.fracture.physics.beatThreshold': { min: 0.05, max: 1 },
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
@@ -745,6 +846,7 @@ export class ShaderRitualApp extends LitElement {
             isRecording: this.isRecording,
             status: this.status,
             error: this.error,
+            isCapturing: this.isCapturing,
           });
         }
       }
@@ -867,47 +969,182 @@ export class ShaderRitualApp extends LitElement {
         <div class="element-desc" style="margin:10px 0 6px;">Break it apart:</div>
         <div class="control-row">
           <label>Mode</label>
-          <select .value=${m.breakup}
-            @change=${(e: any) => this.updateConfig('model.breakup', e.target.value)}>
+          <select .value=${m.mode}
+            @change=${(e: any) => this.updateConfig('model.mode', e.target.value)}>
             <option value="none">Whole</option>
             <option value="parts">Parts (by mesh)</option>
-            <option value="shatter">Shatter (fragments)</option>
+            <option value="fracture">Fracture (shatter)</option>
           </select>
         </div>
-        ${m.breakup === 'shatter'
-          ? html`<div class="control-row">
-              <label>Fragments</label>
-              <input class="bpm-num" type="number" min="2" max="250" step="1" .value=${String(Math.round(m.fragments))}
-                @input=${(e: any) => this.updateConfig('model.fragments', parseFloat(e.target.value) || 2)} />
-            </div>`
-          : ''}
-        ${m.breakup !== 'none'
-          ? html`
-              ${this.renderSlider('Explode', 'model.explode', 0, 1, 0.01)}
+
+        ${m.mode === 'parts' ? this.renderPartsMenu() : ''}
+        ${m.mode === 'fracture' ? this.renderFractureControls() : ''}
+
+        ${this.renderCaptureSection()}
+      </div>
+    `;
+  }
+
+  private renderBandSelect(path: string, value: Band) {
+    return html`
+      <select .value=${value} @change=${(e: any) => this.updateConfig(path, e.target.value)}>
+        <option value="none">None</option>
+        <option value="low">Low</option>
+        <option value="mid">Mid</option>
+        <option value="high">High</option>
+      </select>
+    `;
+  }
+
+  private renderPartsMenu() {
+    if (this.partInfos.length === 0) {
+      return html`<div class="element-desc">Upload a model to list its parts. Each mesh becomes
+        an element you can wire to Low / Mid / High, choose a reaction, and hide.</div>`;
+    }
+    return html`
+      <div class="control-row" style="margin:6px 0;">
+        <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;"
+          @click=${this.autoDistribute}>Auto-distribute bands</button>
+      </div>
+      ${this.partInfos.map((info) => this.renderPart(info))}
+    `;
+  }
+
+  private renderPart(info: PartInfo) {
+    const s = this.config.model.parts[info.id] || defaultPart();
+    const base = `model.parts.${info.id}`;
+    return html`
+      <div class="element-card" style="opacity:${s.visible ? '1' : '0.5'};">
+        <div class="element-head" style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">
+          <span class="element-name" title=${info.name}
+            style="font-size:0.8rem;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${info.name}</span>
+          <button class="vis-toggle ${s.visible ? 'on' : 'off'}"
+            @click=${() => this.updateConfig(`${base}.visible`, !s.visible)}>${s.visible ? 'SHOWN' : 'HIDDEN'}</button>
+        </div>
+        <div class="control-row">
+          <label>Band / React</label>
+          ${this.renderBandSelect(`${base}.band`, s.band)}
+          <select .value=${s.target}
+            @change=${(e: any) => this.updateConfig(`${base}.target`, e.target.value)}>
+            <option value="scale">Scale</option>
+            <option value="emissive">Glow</option>
+            <option value="explode">Explode</option>
+            <option value="rotate">Rotate</option>
+          </select>
+        </div>
+        ${this.renderSlider('Amount', `${base}.amount`, 0, 3, 0.05)}
+      </div>
+    `;
+  }
+
+  private renderFractureControls() {
+    const f = this.config.model.fracture;
+    if (this.partInfos.length === 0) {
+      return html`<div class="element-desc">Upload a model, then it shatters into reactive
+        fragments — works even on a single fused mesh.</div>`;
+    }
+    return html`
+      <div class="control-row">
+        <label>Fragments visible</label>
+        <button class="vis-toggle ${f.visible ? 'on' : 'off'}"
+          @click=${() => this.updateConfig('model.fracture.visible', !f.visible)}>${f.visible ? 'SHOWN' : 'HIDDEN'}</button>
+      </div>
+      <div class="control-row">
+        <label>Fragments</label>
+        <input class="bpm-num" type="number" min="2" max="250" step="1" .value=${String(Math.round(f.fragments))}
+          @input=${(e: any) => this.updateConfig('model.fracture.fragments', parseFloat(e.target.value) || 2)} />
+      </div>
+      <div class="control-row">
+        <label>Distribute across bands</label>
+        <input type="checkbox" .checked=${f.distribute}
+          @change=${(e: any) => this.updateConfig('model.fracture.distribute', e.target.checked)} />
+      </div>
+      ${f.distribute
+        ? ''
+        : html`<div class="control-row"><label>Explode band</label>${this.renderBandSelect('model.fracture.explodeBand', f.explodeBand)}</div>`}
+      ${this.renderSlider('Explode amt', 'model.fracture.explodeAmount', 0, 3, 0.05)}
+      ${f.distribute
+        ? ''
+        : html`<div class="control-row"><label>Scale band</label>${this.renderBandSelect('model.fracture.scaleBand', f.scaleBand)}</div>`}
+      ${this.renderSlider('Scale amt', 'model.fracture.scaleAmount', 0, 3, 0.05)}
+      <div class="control-row"><label>Spin band</label>${this.renderBandSelect('model.fracture.spinBand', f.spinBand)}</div>
+      ${this.renderSlider('Spin amt', 'model.fracture.spinAmount', 0, 3, 0.05)}
+      ${this.renderPhysics()}
+    `;
+  }
+
+  private renderPhysics() {
+    const p = this.config.model.fracture.physics;
+    return html`
+      <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
+        <div class="control-row">
+          <label><strong>Physics</strong> (burst · fall · tumble)</label>
+          <input type="checkbox" .checked=${p.enabled}
+            @change=${(e: any) => this.updateConfig('model.fracture.physics.enabled', e.target.checked)} />
+        </div>
+        ${!p.enabled
+          ? html`<div class="element-desc">When on, fragments fly apart and fall under gravity.
+              Trigger a burst / implode by hand or on a beat.</div>`
+          : html`
+              <div class="control-row" style="gap:6px;justify-content:flex-start;flex-wrap:wrap;margin-bottom:8px;">
+                <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('burst')}>💥 Burst</button>
+                <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('implode')}>🧲 Implode</button>
+                <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('reset')}>↺ Reset</button>
+              </div>
+              ${this.renderSlider('Gravity', 'model.fracture.physics.gravity', 0, 4, 0.05)}
+              ${this.renderSlider('Burst force', 'model.fracture.physics.burstStrength', 0, 4, 0.05)}
+              ${this.renderSlider('Tumble spin', 'model.fracture.physics.spin', 0, 5, 0.05)}
+              ${this.renderSlider('Implode pull', 'model.fracture.physics.implodeStrength', 1, 20, 0.5)}
               <div class="control-row">
-                <label>Explode band</label>
-                <select .value=${m.explodeBand}
-                  @change=${(e: any) => this.updateConfig('model.explodeBand', e.target.value as Band)}>
-                  <option value="none">None</option>
-                  <option value="low">Low</option>
-                  <option value="mid">Mid</option>
-                  <option value="high">High</option>
+                <label>Floor collision</label>
+                <input type="checkbox" .checked=${p.floor}
+                  @change=${(e: any) => this.updateConfig('model.fracture.physics.floor', e.target.checked)} />
+              </div>
+              ${this.renderSlider('Bounce', 'model.fracture.physics.restitution', 0, 0.95, 0.05)}
+              <div class="control-row">
+                <label>Beat trigger</label>
+                ${this.renderBandSelect('model.fracture.physics.beatBand', p.beatBand)}
+                <select .value=${p.beatAction}
+                  @change=${(e: any) => this.updateConfig('model.fracture.physics.beatAction', e.target.value)}>
+                  <option value="burst">Burst</option>
+                  <option value="implode">Implode</option>
+                  <option value="pulse">Pulse</option>
+                  <option value="alternate">Alternate</option>
                 </select>
               </div>
-              ${this.renderSlider('Piece spin', 'model.spin', 0, 3, 0.02)}
-              ${this.renderSlider('Glow', 'model.glow', 0, 3, 0.02)}
-              <div class="control-row">
-                <label>Glow band</label>
-                <select .value=${m.glowBand}
-                  @change=${(e: any) => this.updateConfig('model.glowBand', e.target.value as Band)}>
-                  <option value="none">None</option>
-                  <option value="low">Low</option>
-                  <option value="mid">Mid</option>
-                  <option value="high">High</option>
-                </select>
-              </div>
-            `
-          : ''}
+              ${this.renderSlider('Beat sensitivity', 'model.fracture.physics.beatThreshold', 0.05, 1, 0.01)}
+            `}
+      </div>
+    `;
+  }
+
+  private renderCaptureSection() {
+    const c = this.config.model.capture;
+    return html`
+      <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
+        <div class="element-desc" style="margin-bottom:6px;">Screen capture (share a window onto the scene):</div>
+        <div class="control-row" style="gap:8px;justify-content:flex-start;">
+          <button class="action-btn ${this.isCapturing ? 'active' : ''}" style="font-size:0.72rem;padding:6px 10px;"
+            @click=${this.toggleCapture}>${this.isCapturing ? 'Stop Capture' : 'Share a Window'}</button>
+          <button class="vis-toggle ${c.visible ? 'on' : 'off'}"
+            @click=${() => this.updateConfig('model.capture.visible', !c.visible)}>${c.visible ? 'SHOWN' : 'HIDDEN'}</button>
+        </div>
+        ${this.renderSlider('Capture opacity', 'model.capture.opacity', 0, 1, 0.05)}
+        ${this.renderSlider('Capture scale', 'model.capture.scale', 0.1, 4, 0.1)}
+        <div class="control-row">
+          <label>Projection</label>
+          <select .value=${c.mode}
+            @change=${(e: any) => this.updateConfig('model.capture.mode', e.target.value)}>
+            <option value="background">Rear Wall</option>
+            <option value="floating">Floating Plane</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label>Audio reactive</label>
+          <input type="checkbox" .checked=${c.reactive}
+            @change=${(e: any) => this.updateConfig('model.capture.reactive', e.target.checked)} />
+          ${this.renderBandSelect('model.capture.reactiveBand', c.reactiveBand)}
+        </div>
       </div>
     `;
   }
@@ -1332,7 +1569,8 @@ export class ShaderRitualApp extends LitElement {
         ${this.renderCodePanel()}
         ${this.renderSettings()}
         <div id="status">${this.error || this.status}</div>
-        <shader-ritual-view .config=${this.config} .inputNode=${this.audioNode}></shader-ritual-view>
+        <shader-ritual-view .config=${this.config} .inputNode=${this.audioNode}
+          @parts-changed=${this.onPartsChanged}></shader-ritual-view>
       </div>
     `;
   }

@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { decompose, type Part } from './decompose';
 import { fracture, type Fragment } from './fracture';
 import { Analyser } from './analyser';
@@ -16,7 +17,7 @@ import { CameraRig } from './camera';
 import { ShaderLayer } from './shader-layer';
 import { commonVertex } from './shaders/common';
 import { getShader } from './shader-registry';
-import type { Bands, ShaderRitualConfig } from './types';
+import type { Bands, PartInfo, ShaderRitualConfig } from './types';
 
 const BLEND_INDEX: Record<string, number> = { add: 0, screen: 1, mix: 2 };
 
@@ -121,11 +122,32 @@ export class ShaderRitualView extends LitElement {
   private modelMats: THREE.Material[] = [];
   private modelBaseScale = 1;
   private modelRot = 0;
-  // Breakup engine (decompose into parts / fracture into shards).
-  private modelParts: Part[] | null = null;
-  private modelFragments: Fragment[] | null = null;
-  private modelBreakKey = ''; // current "mode:count" so we rebuild on change
+  private modelRadius = 1; // model-local bounding radius (physics + capture scaling)
+
+  // MeshRitual engine: per-mesh parts + fracture shards + physics.
+  private modelParts: Part[] = [];
+  private partMap = new Map<string, Part>();
+  private fractureGroup: THREE.Group | null = null;
+  private modelFragments: Fragment[] = [];
+  private fractureMaterials: THREE.MeshStandardMaterial[] = [];
+  private fragmentCount = 0;
   private gltfLoader = new GLTFLoader();
+
+  // Physics simulation state.
+  private prevBeatVal = 0;
+  private lastBeat = 0;
+  private imploding = false;
+  private beatToggle = false;
+  private pulseImplodeAt = 0;
+  private physicsWasEnabled = false;
+  private readonly IDENTITY = new THREE.Quaternion();
+  private tmpVec = new THREE.Vector3();
+
+  // Screen-capture projection (shared window -> textured plane).
+  private captureMesh!: THREE.Mesh;
+  private captureTexture: THREE.VideoTexture | null = null;
+  private captureVideo: HTMLVideoElement | null = null;
+  private _captureStream: MediaStream | null = null;
 
   private lastFrame = performance.now();
   private animTime = 0;
@@ -250,12 +272,31 @@ export class ShaderRitualView extends LitElement {
     this.modelScene = new THREE.Scene();
     this.modelCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
     this.modelCamera.position.set(0, 0, 3.2);
+    // Camera lives in the scene graph so a camera-attached capture plane renders.
+    this.modelScene.add(this.modelCamera);
     const amb = new THREE.AmbientLight(0xffffff, 0.9);
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(2, 3, 4);
     const rim = new THREE.DirectionalLight(0x88aaff, 0.5);
     rim.position.set(-3, -1, -2);
     this.modelScene.add(amb, key, rim);
+
+    // Image-based lighting so PBR materials read correctly (MeshRitual look).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.modelScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    // Screen-capture plane (background = camera-attached rear wall, or floating).
+    this.captureMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    this.captureMesh.visible = false;
+    this.modelScene.add(this.captureMesh);
 
     // Support Draco- and Meshopt-compressed GLBs (very common in exports).
     const draco = new DRACOLoader();
@@ -290,7 +331,8 @@ export class ShaderRitualView extends LitElement {
     }
   }
 
-  /** Load a GLB/GLTF from an ArrayBuffer; centres + normalises it.
+  /** Load a GLB/GLTF from an ArrayBuffer; centres + normalises it, decomposes
+   *  it into parts, and dispatches `parts-changed` for the host UI.
    *  Resolves to '' on success or an error message on failure. */
   loadModel(buffer: ArrayBuffer): Promise<string> {
     return new Promise((resolve) => {
@@ -306,15 +348,37 @@ export class ShaderRitualView extends LitElement {
               const box = new THREE.Box3().setFromObject(root);
               const center = box.getCenter(new THREE.Vector3());
               const size = box.getSize(new THREE.Vector3());
+              const sphere = box.getBoundingSphere(new THREE.Sphere());
+              this.modelRadius = Math.max(sphere.radius, 1e-3);
               root.position.sub(center);
               this.modelBaseScale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
 
               const holder = new THREE.Group();
               this.modelHolder = holder;
               this.modelRootObj = root;
+              holder.add(root);
               this.modelScene.add(holder);
-              this.modelBreakKey = '';
-              this.rebuildBreakup(); // builds whole/parts/shatter per config
+
+              // Decompose into addressable parts (model already centred at origin).
+              this.modelParts = decompose(root, new THREE.Vector3(0, 0, 0));
+              this.partMap.clear();
+              this.modelMats = [];
+              for (const p of this.modelParts) {
+                this.partMap.set(p.id, p);
+                for (const m of p.materials) this.modelMats.push(m);
+              }
+
+              this.dispatchEvent(
+                new CustomEvent<PartInfo[]>('parts-changed', {
+                  detail: this.modelParts.map((p) => ({ id: p.id, name: p.name })),
+                  bubbles: true,
+                  composed: true,
+                }),
+              );
+
+              this.fragmentCount = 0;
+              this.syncFracture();
+              this.applyMode();
               resolve('');
             } catch (e: any) {
               resolve(e?.message || 'Error placing model');
@@ -333,63 +397,87 @@ export class ShaderRitualView extends LitElement {
   }
 
   private disposeModel() {
-    if (!this.modelHolder) return;
-    this.modelScene.remove(this.modelHolder);
-    this.modelHolder.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      mesh.geometry?.dispose?.();
-      const m = mesh.material;
-      if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => mm.dispose());
-    });
+    if (this.modelHolder) {
+      this.modelScene.remove(this.modelHolder);
+      this.modelHolder.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        mesh.geometry?.dispose?.();
+        const m = mesh.material;
+        if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => mm.dispose());
+      });
+    }
+    for (const m of this.fractureMaterials) m.dispose();
     this.modelHolder = null;
     this.modelRootObj = null;
-    this.modelParts = null;
-    this.modelFragments = null;
+    this.modelParts = [];
+    this.partMap.clear();
+    this.fractureGroup = null;
+    this.modelFragments = [];
+    this.fractureMaterials = [];
+    this.fragmentCount = 0;
     this.modelMats = [];
+    this.dispatchEvent(
+      new CustomEvent<PartInfo[]>('parts-changed', { detail: [], bubbles: true, composed: true }),
+    );
   }
 
-  /**
-   * (Re)build the model's breakup form (whole / decomposed parts / shattered
-   * fragments) when the mode or fragment count changes. Built with the holder at
-   * identity so geometry is captured in model-local space; the render loop then
-   * re-applies the user transform.
-   */
-  private rebuildBreakup() {
+  /** Rebuild fracture fragments when the requested count (or mode) changes. */
+  private syncFracture() {
     const holder = this.modelHolder;
     const root = this.modelRootObj;
-    if (!holder || !root) return;
-    const md = this.config.model;
-    const key = `${md.breakup}:${md.fragments}`;
-    if (key === this.modelBreakKey) return;
-    this.modelBreakKey = key;
-
-    // Capture geometry in model-local space.
-    holder.position.set(0, 0, 0);
-    holder.scale.setScalar(1);
-    holder.rotation.set(0, 0, 0);
-    while (holder.children.length) holder.remove(holder.children[0]);
-    this.modelParts = null;
-    this.modelFragments = null;
-    this.modelMats = [];
-    const ctr = new THREE.Vector3(0, 0, 0);
-
-    if (md.breakup === 'shatter') {
-      const { group, fragments, materials } = fracture(root, ctr, Math.max(2, Math.round(md.fragments)));
-      holder.add(group);
-      this.modelFragments = fragments;
-      this.modelMats = materials;
-    } else {
-      holder.add(root);
-      if (md.breakup === 'parts') {
-        this.modelParts = decompose(root, ctr);
-        for (const p of this.modelParts) for (const m of p.materials) this.modelMats.push(m);
-      } else {
-        root.traverse((o) => {
-          const m = (o as THREE.Mesh).material;
-          if (m) (Array.isArray(m) ? m : [m]).forEach((mm) => this.modelMats.push(mm));
-        });
-      }
+    if (!holder || !root || !this.modelParts.length) return;
+    const want = this.config.model.mode === 'fracture'
+      ? Math.max(2, Math.round(this.config.model.fracture.fragments))
+      : 0;
+    if (want === this.fragmentCount && (want === 0 || this.fractureGroup)) {
+      this.applyMode();
+      return;
     }
+    // Tear down old fracture group.
+    if (this.fractureGroup) {
+      holder.remove(this.fractureGroup);
+      this.fractureGroup.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+      this.fractureGroup = null;
+      this.modelFragments = [];
+      for (const m of this.fractureMaterials) m.dispose();
+      this.fractureMaterials = [];
+    }
+    if (want > 0) {
+      // Reset parts to rest so fracture reads the model at rest, then build in
+      // the holder's identity frame (so fragments are captured model-local).
+      for (const p of this.modelParts) {
+        p.mesh.position.copy(p.basePosition);
+        p.mesh.scale.copy(p.baseScale);
+        p.mesh.quaternion.copy(p.baseQuaternion);
+      }
+      const savedPos = holder.position.clone();
+      const savedScale = holder.scale.clone();
+      const savedRot = holder.rotation.clone();
+      holder.position.set(0, 0, 0);
+      holder.scale.setScalar(1);
+      holder.rotation.set(0, 0, 0);
+      holder.updateWorldMatrix(true, true);
+      const built = fracture(root, new THREE.Vector3(), want);
+      holder.position.copy(savedPos);
+      holder.scale.copy(savedScale);
+      holder.rotation.copy(savedRot);
+      this.fractureGroup = built.group;
+      this.modelFragments = built.fragments;
+      this.fractureMaterials = built.materials;
+      holder.add(this.fractureGroup);
+    }
+    this.fragmentCount = want;
+    this.applyMode();
+  }
+
+  /** Show the decomposed parts or the fracture group depending on mode. */
+  private applyMode() {
+    const md = this.config.model;
+    const showParts = md.mode !== 'fracture';
+    for (const p of this.modelParts) {
+      p.mesh.visible = showParts && (md.mode === 'none' || (md.parts[p.id]?.visible ?? true));
+    }
+    if (this.fractureGroup) this.fractureGroup.visible = !showParts && md.fracture.visible;
   }
 
   /** 0..1 effective strength of a post-FX filter (band pushes the amount). */
@@ -470,42 +558,50 @@ export class ShaderRitualView extends LitElement {
     // 3D model overlay, drawn on top of the post-processed image.
     const md = this.config.model;
     if (this.modelHolder && md) {
-      if (`${md.breakup}:${md.fragments}` !== this.modelBreakKey) this.rebuildBreakup();
+      // Rebuild fracture shards if the mode / fragment count changed.
+      const wantFrag = md.mode === 'fracture' ? Math.max(2, Math.round(md.fracture.fragments)) : 0;
+      if (wantFrag !== this.fragmentCount) this.syncFracture();
+
+      const physicsActive =
+        md.mode === 'fracture' && md.fracture.physics.enabled && !!this.fractureGroup;
+      // Reset shards to rest the first frame physics is switched on.
+      if (physicsActive && !this.physicsWasEnabled) this.reset();
+      this.physicsWasEnabled = md.mode === 'fracture' && md.fracture.physics.enabled;
 
       this.modelHolder.visible = md.visible;
       this.modelHolder.position.set(md.posX, md.posY, md.posZ);
       this.modelHolder.scale.setScalar(md.scale * this.modelBaseScale);
-      if (md.bpm > 0) this.modelRot += motionDt * (md.bpm / 60) * (Math.PI / 2); // quarter-turn/beat
-      this.modelHolder.rotation.y = this.modelRot;
+      // Physics needs a non-rotating frame so gravity stays "down".
+      if (!physicsActive && md.bpm > 0) {
+        this.modelRot += motionDt * (md.bpm / 60) * (Math.PI / 2); // quarter-turn/beat
+      }
+      this.modelHolder.rotation.y = physicsActive ? 0 : this.modelRot;
 
-      for (const mat of this.modelMats) {
+      // Opacity applies to every part / fragment material.
+      const allMats = this.fractureGroup && md.mode === 'fracture' ? this.fractureMaterials : this.modelMats;
+      for (const mat of allMats) {
         (mat as any).transparent = md.opacity < 0.999;
         (mat as any).opacity = md.opacity;
         (mat as any).depthWrite = md.opacity > 0.99;
       }
 
-      // Drive explode / spin / glow from the audio bands.
-      const eb = md.explodeBand === 'none' ? 0 : (this.lastBands as any)[md.explodeBand] || 0;
-      const explodeAmt = Math.max(0, md.explode + eb * 0.8);
-      const gb = md.glowBand === 'none' ? 0 : (this.lastBands as any)[md.glowBand] || 0;
-      const glowAmt = md.glow * (0.25 + gb);
-
-      if (this.modelParts) {
-        for (const p of this.modelParts) {
-          p.mesh.position.copy(p.basePosition).addScaledVector(p.explodeDir, explodeAmt);
-          p.spin += motionDt * md.spin;
-          this._q.setFromAxisAngle(p.explodeDir, p.spin);
-          p.mesh.quaternion.copy(p.baseQuaternion).premultiply(this._q);
-          for (const m of p.materials) m.emissiveIntensity = glowAmt;
+      this.applyMode();
+      if (md.mode === 'parts') {
+        this.animateParts(this.lastBands, motionDt);
+      } else if (md.mode === 'fracture') {
+        if (physicsActive) {
+          this.detectBeat(this.lastBands);
+          if (this.pulseImplodeAt && now >= this.pulseImplodeAt) {
+            this.implode();
+            this.pulseImplodeAt = 0;
+          }
+          this.animateFracturePhysics(this.lastBands, dt);
+        } else {
+          this.animateFracture(this.lastBands, motionDt);
         }
-      } else if (this.modelFragments) {
-        for (const f of this.modelFragments) {
-          f.mesh.position.copy(f.base).addScaledVector(f.dir, explodeAmt * (0.5 + f.phase));
-          f.spin += motionDt * md.spin * (0.5 + f.phase);
-          f.mesh.setRotationFromAxisAngle(f.axis, f.spin);
-        }
-        for (const m of this.modelMats) (m as any).emissiveIntensity = glowAmt;
       }
+
+      this.applyCapture(this.lastBands);
 
       if (md.visible) {
         this.renderer.autoClear = false;
@@ -516,7 +612,277 @@ export class ShaderRitualView extends LitElement {
     }
   };
 
-  private _q = new THREE.Quaternion();
+  /* ----------------------- Model animation ----------------------- */
+
+  private animateParts(bands: Bands, dt: number) {
+    const k = this.modelRadius;
+    for (const part of this.modelParts) {
+      const s = this.config.model.parts[part.id];
+      if (!part.mesh.visible) continue;
+
+      part.mesh.position.copy(part.basePosition);
+      part.mesh.scale.copy(part.baseScale);
+      part.mesh.quaternion.copy(part.baseQuaternion);
+      for (const m of part.materials) m.emissiveIntensity = 0;
+
+      const v = !s || s.band === 'none' ? 0 : (bands as any)[s.band] * s.amount;
+      if (v <= 0 && s?.target !== 'rotate') continue;
+
+      switch (s?.target) {
+        case 'scale':
+          part.mesh.scale.copy(part.baseScale).multiplyScalar(1 + v);
+          break;
+        case 'explode':
+          part.mesh.position.copy(part.basePosition).addScaledVector(part.explodeDir, v * k * 0.6);
+          break;
+        case 'emissive':
+          for (const m of part.materials) m.emissiveIntensity = v * 2.5;
+          break;
+        case 'rotate':
+          part.spin += v * dt * 4;
+          part.mesh.quaternion.copy(part.baseQuaternion);
+          part.mesh.rotateY(part.spin);
+          break;
+      }
+    }
+  }
+
+  private animateFracture(bands: Bands, dt: number) {
+    if (!this.fractureGroup) return;
+    const f = this.config.model.fracture;
+    const k = this.modelRadius;
+    const val = (b: string, amt: number) => (b === 'none' ? 0 : (bands as any)[b] * amt);
+
+    let emissive = 0;
+    for (const frag of this.modelFragments) {
+      const explodeBand = f.distribute ? frag.band : f.explodeBand;
+      const scaleBand = f.distribute ? frag.band : f.scaleBand;
+
+      const ex = val(explodeBand, f.explodeAmount);
+      const sc = val(scaleBand, f.scaleAmount);
+      const sp = val(f.spinBand, f.spinAmount);
+
+      frag.mesh.position.copy(frag.base).addScaledVector(frag.dir, ex * k * (0.6 + frag.phase * 0.8));
+      frag.mesh.scale.setScalar(1 + sc);
+      frag.spin += sp * dt * (2 + frag.phase * 3);
+      frag.mesh.quaternion.setFromAxisAngle(frag.axis, frag.spin);
+      emissive = Math.max(emissive, ex, sc);
+    }
+    for (const m of this.fractureMaterials) m.emissiveIntensity = emissive * 2.0;
+  }
+
+  /* --------------------------- Physics --------------------------- */
+
+  /** Fire an action on the rising edge of the trigger band past its threshold. */
+  private detectBeat(bands: Bands) {
+    const p = this.config.model.fracture.physics;
+    const v = (bands as any)[p.beatBand] ?? 0;
+    const now = performance.now();
+    if (v > p.beatThreshold && this.prevBeatVal <= p.beatThreshold && now - this.lastBeat > 120) {
+      this.lastBeat = now;
+      switch (p.beatAction) {
+        case 'burst':
+          this.burst();
+          break;
+        case 'implode':
+          this.implode();
+          break;
+        case 'pulse':
+          this.burst();
+          this.pulseImplodeAt = now + 350;
+          break;
+        case 'alternate':
+          this.beatToggle = !this.beatToggle;
+          this.beatToggle ? this.burst() : this.implode();
+          break;
+      }
+    }
+    this.prevBeatVal = v;
+  }
+
+  /** Launch every fragment outward + upward with random tumble. */
+  burst() {
+    if (!this.modelFragments.length) return;
+    const p = this.config.model.fracture.physics;
+    const r = this.modelRadius;
+    this.imploding = false;
+    for (const f of this.modelFragments) {
+      f.resting = false;
+      const lateral = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.3, Math.random() - 0.5).multiplyScalar(0.5 * r);
+      f.vel.copy(f.dir).multiplyScalar(p.burstStrength * r * (1.2 + f.phase)).add(lateral);
+      f.vel.y += p.burstStrength * r * 0.8;
+      f.angVel.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(p.spin * (1 + f.phase) * 3);
+    }
+  }
+
+  /** Spring every fragment back toward its rest position. */
+  implode() {
+    if (!this.modelFragments.length) return;
+    this.imploding = true;
+    for (const f of this.modelFragments) f.resting = false;
+  }
+
+  /** Instantly snap all fragments back to rest. */
+  reset() {
+    this.imploding = false;
+    this.pulseImplodeAt = 0;
+    for (const f of this.modelFragments) {
+      f.mesh.position.copy(f.base);
+      f.mesh.quaternion.copy(this.IDENTITY);
+      f.mesh.scale.setScalar(1);
+      f.vel.set(0, 0, 0);
+      f.angVel.set(0, 0, 0);
+      f.resting = true;
+    }
+  }
+
+  private animateFracturePhysics(bands: Bands, dt: number) {
+    if (!this.fractureGroup) return;
+    const f2 = this.config.model.fracture;
+    const p = f2.physics;
+    const r = this.modelRadius;
+    const g = p.gravity * r * 3.0;
+    const floorY = -r;
+    const val = (b: string, amt: number) => (b === 'none' ? 0 : (bands as any)[b] * amt);
+
+    let maxSc = 0;
+    let active = 0;
+
+    for (const f of this.modelFragments) {
+      // Scale stays audio-reactive even while the body simulates.
+      const scaleBand = f2.distribute ? f.band : f2.scaleBand;
+      const sc = val(scaleBand, f2.scaleAmount);
+      f.mesh.scale.setScalar(1 + sc);
+      maxSc = Math.max(maxSc, sc);
+
+      if (f.resting && !this.imploding) continue;
+      active++;
+
+      if (this.imploding) {
+        this.tmpVec.copy(f.base).sub(f.mesh.position);
+        f.vel.addScaledVector(this.tmpVec, p.implodeStrength * dt);
+        f.vel.multiplyScalar(Math.max(0, 1 - 4 * dt));
+        f.mesh.position.addScaledVector(f.vel, dt);
+        f.mesh.quaternion.slerp(this.IDENTITY, Math.min(1, 6 * dt));
+        f.angVel.multiplyScalar(Math.max(0, 1 - 6 * dt));
+        if (this.tmpVec.length() < 0.02 * r && f.vel.length() < 0.05 * r) {
+          f.mesh.position.copy(f.base);
+          f.mesh.quaternion.copy(this.IDENTITY);
+          f.vel.set(0, 0, 0);
+          f.angVel.set(0, 0, 0);
+          f.resting = true;
+        }
+      } else {
+        f.vel.y -= g * dt;
+        f.vel.multiplyScalar(Math.max(0, 1 - 0.2 * dt)); // mild air drag
+        f.mesh.position.addScaledVector(f.vel, dt);
+
+        const sp = f.angVel.length();
+        if (sp > 1e-5) {
+          const dq = new THREE.Quaternion().setFromAxisAngle(this.tmpVec.copy(f.angVel).normalize(), sp * dt);
+          f.mesh.quaternion.premultiply(dq);
+        }
+
+        if (p.floor && f.mesh.position.y < floorY) {
+          f.mesh.position.y = floorY;
+          f.vel.y *= -p.restitution;
+          f.vel.x *= 0.78;
+          f.vel.z *= 0.78;
+          f.angVel.multiplyScalar(0.78);
+          if (Math.abs(f.vel.y) < 0.05 * r) f.vel.y = 0;
+          if (f.vel.lengthSq() < (0.01 * r) * (0.01 * r)) {
+            f.vel.set(0, 0, 0);
+            f.angVel.multiplyScalar(0.5);
+            f.resting = true;
+          }
+        }
+      }
+    }
+
+    if (this.imploding && active === 0) this.imploding = false;
+    for (const m of this.fractureMaterials) m.emissiveIntensity = maxSc * 2.0;
+  }
+
+  /* ----------------------- Screen capture ------------------------ */
+
+  /** Wire a getDisplayMedia stream (or null) into the capture plane. */
+  setCaptureStream(stream: MediaStream | null) {
+    if (this._captureStream === stream) return;
+    this._captureStream = stream;
+    if (this.renderer) this.initCapture();
+  }
+
+  private async initCapture() {
+    if (!this.captureMesh) return;
+    const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
+    if (this.captureVideo) {
+      this.captureVideo.pause();
+      this.captureVideo.srcObject = null;
+      this.captureVideo = null;
+    }
+    if (this.captureTexture) {
+      this.captureTexture.dispose();
+      this.captureTexture = null;
+    }
+    if (this._captureStream) {
+      const video = document.createElement('video');
+      video.srcObject = this._captureStream;
+      video.muted = true;
+      video.playsInline = true;
+      video.autoplay = true;
+      this.captureVideo = video;
+      try {
+        await video.play();
+      } catch (e) {}
+      this.captureTexture = new THREE.VideoTexture(video);
+      this.captureTexture.colorSpace = THREE.SRGBColorSpace;
+      this.captureTexture.minFilter = THREE.LinearFilter;
+      this.captureTexture.magFilter = THREE.LinearFilter;
+      mat.map = this.captureTexture;
+      mat.needsUpdate = true;
+    } else {
+      mat.map = null;
+      mat.needsUpdate = true;
+      this.captureMesh.visible = false;
+    }
+  }
+
+  private captureAspect(): number {
+    const w = this.captureVideo?.videoWidth || 16;
+    const h = this.captureVideo?.videoHeight || 9;
+    return h > 0 ? w / h : 16 / 9;
+  }
+
+  private applyCapture(bands: Bands) {
+    if (!this.captureMesh) return;
+    const c = this.config.model.capture;
+    if (!c) return;
+    const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
+    this.captureMesh.visible =
+      !!this.captureTexture && c.visible && this.config.model.visible && c.opacity > 0;
+    if (!this.captureMesh.visible) return;
+
+    mat.opacity = c.opacity;
+    const react = c.reactive ? 1 + ((bands as any)[c.reactiveBand] || 0) * 0.2 : 1;
+
+    if (c.mode === 'background') {
+      if (this.captureMesh.parent !== this.modelCamera) this.modelCamera.add(this.captureMesh);
+      const dist = this.modelCamera.far * 0.5;
+      const h = 2 * Math.tan((this.modelCamera.fov * Math.PI) / 360) * dist;
+      const w = h * this.modelCamera.aspect;
+      this.captureMesh.position.set(0, 0, -dist);
+      this.captureMesh.quaternion.identity();
+      this.captureMesh.scale.set(w * c.scale * react, h * c.scale * react, 1);
+    } else {
+      if (this.captureMesh.parent !== this.modelScene) this.modelScene.add(this.captureMesh);
+      // Use the on-screen (normalised) radius so the plane is a sane size.
+      const dr = Math.max(0.4, this.modelRadius * this.modelBaseScale);
+      const base = dr * 2.2 * c.scale * react;
+      this.captureMesh.position.set(0, 0, 0);
+      this.captureMesh.quaternion.copy(this.modelCamera.quaternion); // billboard
+      this.captureMesh.scale.set(base, base / this.captureAspect(), 1);
+    }
+  }
 
   protected render() {
     return html`<canvas></canvas>`;
