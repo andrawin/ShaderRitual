@@ -141,6 +141,9 @@ export class ShaderRitualView extends LitElement {
   private physicsWasEnabled = false;
   private readonly IDENTITY = new THREE.Quaternion();
   private tmpVec = new THREE.Vector3();
+  private tmpQuat = new THREE.Quaternion(); // scratch (avoids per-frame allocation)
+  private lastAppliedOpacity = -1; // skip the material opacity loop when unchanged
+  private opacityMatCount = -1;
 
   // Screen-capture projection (shared window -> textured plane).
   private captureMesh!: THREE.Mesh;
@@ -576,12 +579,17 @@ export class ShaderRitualView extends LitElement {
       }
       this.modelHolder.rotation.y = physicsActive ? 0 : this.modelRot;
 
-      // Opacity applies to every part / fragment material.
+      // Opacity applies to every part / fragment material — only re-applied when
+      // it (or the active material set) actually changes, not every frame.
       const allMats = this.fractureGroup && md.mode === 'fracture' ? this.fractureMaterials : this.modelMats;
-      for (const mat of allMats) {
-        (mat as any).transparent = md.opacity < 0.999;
-        (mat as any).opacity = md.opacity;
-        (mat as any).depthWrite = md.opacity > 0.99;
+      if (md.opacity !== this.lastAppliedOpacity || allMats.length !== this.opacityMatCount) {
+        for (const mat of allMats) {
+          (mat as any).transparent = md.opacity < 0.999;
+          (mat as any).opacity = md.opacity;
+          (mat as any).depthWrite = md.opacity > 0.99;
+        }
+        this.lastAppliedOpacity = md.opacity;
+        this.opacityMatCount = allMats.length;
       }
 
       if (md.mode === 'parts') {
@@ -773,8 +781,8 @@ export class ShaderRitualView extends LitElement {
 
         const sp = f.angVel.length();
         if (sp > 1e-5) {
-          const dq = new THREE.Quaternion().setFromAxisAngle(this.tmpVec.copy(f.angVel).normalize(), sp * dt);
-          f.mesh.quaternion.premultiply(dq);
+          this.tmpQuat.setFromAxisAngle(this.tmpVec.copy(f.angVel).normalize(), sp * dt);
+          f.mesh.quaternion.premultiply(this.tmpQuat);
         }
 
         if (p.floor && f.mesh.position.y < floorY) {
