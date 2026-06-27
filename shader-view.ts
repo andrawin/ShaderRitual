@@ -651,7 +651,6 @@ export class ShaderRitualView extends LitElement {
     const k = this.modelRadius;
     const val = (b: string, amt: number) => (b === 'none' ? 0 : (bands as any)[b] * amt);
 
-    let emissive = 0;
     for (const frag of this.modelFragments) {
       const explodeBand = f.distribute ? frag.band : f.explodeBand;
       const scaleBand = f.distribute ? frag.band : f.scaleBand;
@@ -664,9 +663,8 @@ export class ShaderRitualView extends LitElement {
       frag.mesh.scale.setScalar(1 + sc);
       frag.spin += sp * dt * (2 + frag.phase * 3);
       frag.mesh.quaternion.setFromAxisAngle(frag.axis, frag.spin);
-      emissive = Math.max(emissive, ex, sc);
     }
-    for (const m of this.fractureMaterials) m.emissiveIntensity = emissive * 2.0;
+    // Fragments keep their original colour — no audio-reactive emissive glow.
   }
 
   /* --------------------------- Physics --------------------------- */
@@ -743,7 +741,6 @@ export class ShaderRitualView extends LitElement {
     const floorY = -r;
     const val = (b: string, amt: number) => (b === 'none' ? 0 : (bands as any)[b] * amt);
 
-    let maxSc = 0;
     let active = 0;
 
     for (const f of this.modelFragments) {
@@ -751,7 +748,6 @@ export class ShaderRitualView extends LitElement {
       const scaleBand = f2.distribute ? f.band : f2.scaleBand;
       const sc = val(scaleBand, f2.scaleAmount);
       f.mesh.scale.setScalar(1 + sc);
-      maxSc = Math.max(maxSc, sc);
 
       if (f.resting && !this.imploding) continue;
       active++;
@@ -798,7 +794,6 @@ export class ShaderRitualView extends LitElement {
     }
 
     if (this.imploding && active === 0) this.imploding = false;
-    for (const m of this.fractureMaterials) m.emissiveIntensity = maxSc * 2.0;
   }
 
   /* ----------------------- Screen capture ------------------------ */

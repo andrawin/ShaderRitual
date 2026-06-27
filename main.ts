@@ -61,14 +61,26 @@ export class ShaderRitualApp extends LitElement {
     this.modelName = 'Loading…';
     try {
       const buf = await file.arrayBuffer();
+      if (this.isController) {
+        // No WebGL in the detached window — ship the bytes to the render window.
+        this.sync?.postMessage({ type: 'modelUpload', buffer: buf, name: file.name });
+        return;
+      }
       const err = await this.viewEl?.loadModel?.(buf);
       this.modelName = err ? `⚠ ${err}` : file.name;
+      this.sync?.postMessage({ type: 'modelStatus', name: this.modelName });
     } catch (e: any) {
       this.modelName = `⚠ ${e?.message || 'Failed to load'}`;
+      this.sync?.postMessage({ type: 'modelStatus', name: this.modelName });
     }
   };
   private clearModel = () => {
-    this.viewEl?.removeModel?.();
+    if (this.isController) {
+      this.sync?.postMessage({ type: 'command', name: 'removeModel' });
+    } else {
+      this.viewEl?.removeModel?.();
+      this.sync?.postMessage({ type: 'modelStatus', name: '' });
+    }
     this.modelName = '';
     this.partInfos = [];
   };
@@ -539,6 +551,27 @@ export class ShaderRitualApp extends LitElement {
         // Controller mirrors the render window's decomposed part list.
         if (this.isController) this.partInfos = msg.partInfos || [];
         break;
+      case 'modelUpload':
+        // Render window loads a model uploaded from the detached controller.
+        if (this.isMain) {
+          this.modelName = 'Loading…';
+          (async () => {
+            let name = msg.name || 'model';
+            try {
+              const err = await this.viewEl?.loadModel?.(msg.buffer);
+              name = err ? `⚠ ${err}` : name;
+            } catch (e: any) {
+              name = `⚠ ${e?.message || 'Failed to load'}`;
+            }
+            this.modelName = name;
+            this.sync?.postMessage({ type: 'modelStatus', name });
+          })();
+        }
+        break;
+      case 'modelStatus':
+        // Controller mirrors the render window's load result.
+        if (!this.isMain) this.modelName = msg.name || '';
+        break;
       case 'config':
         this.config = sanitizeConfig(msg.config);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
@@ -599,6 +632,11 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'scanMidi') this.initMidi();
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
+    else if (name === 'removeModel') {
+      this.viewEl?.removeModel?.();
+      this.modelName = '';
+      this.sync?.postMessage({ type: 'modelStatus', name: '' });
+    }
   }
 
   /** Open the control panel in its own window, kept in sync via BroadcastChannel. */
@@ -937,16 +975,13 @@ export class ShaderRitualApp extends LitElement {
     return html`
       <div class="setting-group">
         <span class="group-title">3D Model</span>
-        ${this.isController
-          ? html`<div class="element-desc">Upload a model from the render window.</div>`
-          : html`
-              <div class="control-row">
-                <label>Upload GLB</label>
-                <input type="file" accept=".glb,.gltf" @change=${this.onModelFile} />
-              </div>`}
+        <div class="control-row">
+          <label>Upload GLB</label>
+          <input type="file" accept=".glb,.gltf" @change=${this.onModelFile} />
+        </div>
         <div class="element-desc" style="margin-bottom:8px;">
           ${this.modelName || 'No models loaded'}
-          ${this.modelName && !this.isController
+          ${this.modelName
             ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.clearModel}>remove</a>`
             : ''}
         </div>
