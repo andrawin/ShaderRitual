@@ -178,6 +178,7 @@ export function defaultConfig(): ShaderRitualConfig {
   for (const def of SHADERS) shaders[def.id] = defaultShaderSetting(def);
   return {
     activeShader: SHADERS[0].id,
+    renderScale: 1,
     fftSmoothing: 0.7,
     sensitivity: { low: 1.5, mid: 1.5, high: 2.5 },
     thresholds: { low: 0.15, mid: 0.15, high: 0.15 },
@@ -210,6 +211,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },
   };
+  merged.renderScale = Math.min(1, Math.max(0.25, Number(merged.renderScale) || 1));
 
   for (const def of SHADERS) {
     const savedShader = saved.shaders?.[def.id];

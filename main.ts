@@ -752,6 +752,7 @@ export class ShaderRitualApp extends LitElement {
       'sensitivity.mid': { min: 0, max: 5 },
       'sensitivity.high': { min: 0, max: 10 },
       fftSmoothing: { min: 0, max: 0.95 },
+      renderScale: { min: 0.25, max: 1 },
       'camera.bpm': { min: 60, max: 200 },
       'camera.orbitSpeed': { min: 0, max: 3 },
       'camera.distance': { min: 0.3, max: 2.5 },
@@ -1457,6 +1458,26 @@ export class ShaderRitualApp extends LitElement {
             ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
           </select>
           <div class="element-desc" style="margin-top:8px;">${def.description}</div>
+        </div>
+
+        <!-- PERFORMANCE -->
+        <div class="setting-group">
+          <span class="group-title">Performance</span>
+          <div class="control-row">
+            <label>Render scale</label>
+            <select .value=${live(String(this.config.renderScale))}
+              @change=${(e: any) => this.updateConfig('renderScale', parseFloat(e.target.value))}>
+              <option value="1">100% (Full)</option>
+              <option value="0.75">75%</option>
+              <option value="0.5">50%</option>
+              <option value="0.35">35%</option>
+            </select>
+          </div>
+          <div class="element-desc">
+            Lowers the internal resolution. Drop this to 50–75% for external
+            displays / projectors on Mac, where a Retina buffer is the biggest
+            GPU cost.
+          </div>
         </div>
 
         <!-- CAMERA / MOTION (global) -->

@@ -166,6 +166,9 @@ export interface ModelConfig {
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
+  /** Internal render-resolution multiplier (0.25..1) over the display's
+   *  device pixels. Lower it to cut GPU load on big / external displays. */
+  renderScale: number;
   fftSmoothing: number;
   sensitivity: { low: number; mid: number; high: number };
   thresholds: { low: number; mid: number; high: number };

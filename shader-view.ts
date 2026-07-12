@@ -204,11 +204,18 @@ export class ShaderRitualView extends LitElement {
         this.baseLayer.renderBufferB(this.camera);
       }
       if (this.analyser) this.analyser.smoothing = this.config.fftSmoothing;
+      // Re-apply the internal render resolution when the scale changes.
+      if ((this.config.renderScale ?? 1) !== this.lastRenderScale) {
+        this.lastRenderScale = this.config.renderScale ?? 1;
+        this.resize();
+      }
       // Refresh part / fracture visibility on config edits (mode, per-part
       // hide, fracture toggle) instead of recomputing it every frame.
       if (this.modelHolder) this.applyMode();
     }
   }
+
+  private lastRenderScale = 1;
 
   private init() {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false });
@@ -316,6 +323,11 @@ export class ShaderRitualView extends LitElement {
     if (!this.renderer) return;
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // Effective device pixels, scaled by the render-scale knob. Re-read the
+    // live devicePixelRatio so moving to an external display (different DPR)
+    // recomputes the backing-store size instead of ballooning it.
+    const scale = Math.min(1, Math.max(0.25, this.config?.renderScale ?? 1));
+    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio) * scale);
     this.renderer.setSize(w, h);
     const dpr = this.renderer.getPixelRatio();
     const pw = Math.floor(w * dpr);
