@@ -503,8 +503,22 @@ export class ShaderRitualView extends LitElement {
     }
   }
 
+  private rafId = 0;
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Resume the loop after a reconnect (init/firstUpdated only runs once).
+    if (this.renderer && !this.rafId) this.rafId = requestAnimationFrame(this.renderLoop);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.rafId = 0;
+  }
+
   private renderLoop = () => {
-    requestAnimationFrame(this.renderLoop);
+    this.rafId = requestAnimationFrame(this.renderLoop);
     if (!this.renderer) return;
 
     if (this.analyser) {
@@ -524,16 +538,33 @@ export class ShaderRitualView extends LitElement {
     const time = this.animTime;
     const cam = this.cameraRig.update(motionDt, time, this.config.camera, this.lastBands);
 
-    // Base layer -> baseTarget.
+    // Work out which optional passes are actually needed this frame. When the
+    // overlay is off and every post-FX filter is idle (the common case), we
+    // skip the composite + post passes entirely and draw the base image
+    // straight to the screen — 2 full-screen passes instead of 4.
+    const ov = this.config.overlay;
+    const px = this.fxAmount('pixelate');
+    const ed = this.fxAmount('edge');
+    const po = this.fxAmount('posterize');
+    const rg = this.fxAmount('rgbShift');
+    const sc = this.fxAmount('scanlines');
+    const anyPost = px + ed + po + rg + sc > 0.001;
+    const needComposite = ov.enabled;
+
     const baseDef = getShader(this.config.activeShader);
     const baseCfg = this.config.shaders[baseDef.id]?.elements || {};
     this.baseLayer.setUniforms(time, cam, this.lastBands, baseCfg);
-    this.baseLayer.render(this.camera, this.baseTarget);
 
-    // Optional overlay layer -> overlayTarget.
-    const ov = this.config.overlay;
-    this.compositeUniforms.uOverlay.value = ov.enabled ? 1 : 0;
-    if (ov.enabled) {
+    if (!needComposite && !anyPost) {
+      // Fast path: base image straight to the screen.
+      this.baseLayer.render(this.camera, null as any);
+    } else if (!needComposite) {
+      // Post only: base -> sceneTarget -> post -> screen.
+      this.baseLayer.render(this.camera, this.sceneTarget);
+    } else {
+      // Overlay compositing needed: base + overlay -> composite.
+      this.baseLayer.render(this.camera, this.baseTarget);
+      this.compositeUniforms.uOverlay.value = 1;
       this.ensureOverlay();
       const ovDef = getShader(ov.shader);
       const ovCfg = this.config.shaders[ovDef.id]?.elements || {};
@@ -541,20 +572,21 @@ export class ShaderRitualView extends LitElement {
       this.overlayLayer.render(this.camera, this.overlayTarget);
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
+      // Composite -> sceneTarget (if post follows) or straight to screen.
+      this.renderer.setRenderTarget(anyPost ? this.sceneTarget : null);
+      this.renderer.render(this.compositeScene, this.camera);
     }
 
-    // Composite (base + overlay) -> sceneTarget.
-    this.renderer.setRenderTarget(this.sceneTarget);
-    this.renderer.render(this.compositeScene, this.camera);
-
-    // Global post-FX -> screen.
-    this.postUniforms.uPixelate.value = this.fxAmount('pixelate');
-    this.postUniforms.uEdge.value = this.fxAmount('edge');
-    this.postUniforms.uPosterize.value = this.fxAmount('posterize');
-    this.postUniforms.uRgb.value = this.fxAmount('rgbShift');
-    this.postUniforms.uScan.value = this.fxAmount('scanlines');
-    this.renderer.setRenderTarget(null);
-    this.renderer.render(this.postScene, this.camera);
+    // Global post-FX -> screen (only when a filter is active).
+    if (anyPost) {
+      this.postUniforms.uPixelate.value = px;
+      this.postUniforms.uEdge.value = ed;
+      this.postUniforms.uPosterize.value = po;
+      this.postUniforms.uRgb.value = rg;
+      this.postUniforms.uScan.value = sc;
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.postScene, this.camera);
+    }
 
     // 3D model overlay, drawn on top of the post-processed image. All per-frame
     // model work is skipped entirely when there's no model or it's hidden.
