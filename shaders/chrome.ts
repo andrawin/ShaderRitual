@@ -201,7 +201,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   }
   c /= 81.;
   c = clamp(c, 0., 1.);
-  fragColor = vec4(c, 0.);
+  fragColor = vec4(c, 1.);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
 `;
