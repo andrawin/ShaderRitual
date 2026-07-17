@@ -31,6 +31,23 @@ interface MidiMapping {
   type: 'cc' | 'pb' | 'note';
 }
 
+/** ArrayBuffer <-> base64 (model uploads over the WebSocket relay). */
+function bufToB64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK) as any);
+  }
+  return btoa(bin);
+}
+function b64ToBuf(s: string): ArrayBuffer {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
 @customElement('shader-ritual-app')
 export class ShaderRitualApp extends LitElement {
   @state() isRecording = false;
@@ -63,23 +80,23 @@ export class ShaderRitualApp extends LitElement {
       const buf = await file.arrayBuffer();
       if (this.isController) {
         // No WebGL in the detached window — ship the bytes to the render window.
-        this.sync?.postMessage({ type: 'modelUpload', buffer: buf, name: file.name });
+        this.post({ type: 'modelUpload', buffer: buf, name: file.name });
         return;
       }
       const err = await this.viewEl?.loadModel?.(buf);
       this.modelName = err ? `⚠ ${err}` : file.name;
-      this.sync?.postMessage({ type: 'modelStatus', name: this.modelName });
+      this.post({ type: 'modelStatus', name: this.modelName });
     } catch (e: any) {
       this.modelName = `⚠ ${e?.message || 'Failed to load'}`;
-      this.sync?.postMessage({ type: 'modelStatus', name: this.modelName });
+      this.post({ type: 'modelStatus', name: this.modelName });
     }
   };
   private clearModel = () => {
     if (this.isController) {
-      this.sync?.postMessage({ type: 'command', name: 'removeModel' });
+      this.post({ type: 'command', name: 'removeModel' });
     } else {
       this.viewEl?.removeModel?.();
-      this.sync?.postMessage({ type: 'modelStatus', name: '' });
+      this.post({ type: 'modelStatus', name: '' });
     }
     this.modelName = '';
     this.partInfos = [];
@@ -94,7 +111,7 @@ export class ShaderRitualApp extends LitElement {
     this.config = { ...this.config, model: { ...this.config.model, parts } };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
     this.broadcastConfig();
-    this.sync?.postMessage({ type: 'partInfos', partInfos: infos });
+    this.post({ type: 'partInfos', partInfos: infos });
   };
 
   /** Distribute parts across the three bands / first three targets. */
@@ -118,7 +135,7 @@ export class ShaderRitualApp extends LitElement {
   /** Fire a physics action (works from either window). */
   private triggerPhysics = (action: 'burst' | 'implode' | 'reset') => {
     if (this.isController) {
-      this.sync?.postMessage({ type: 'command', name: action });
+      this.post({ type: 'command', name: action });
     } else {
       this.viewEl?.[action]?.();
     }
@@ -127,7 +144,7 @@ export class ShaderRitualApp extends LitElement {
   /** Share-a-window screen capture, projected onto the model scene. */
   private toggleCapture = async () => {
     if (this.isController) {
-      this.sync?.postMessage({ type: 'command', name: this.isCapturing ? 'stopCapture' : 'startCapture' });
+      this.post({ type: 'command', name: this.isCapturing ? 'stopCapture' : 'startCapture' });
       return;
     }
     if (this.isCapturing) {
@@ -471,7 +488,7 @@ export class ShaderRitualApp extends LitElement {
       // No WebGL here — push edits to the render window to compile.
       clearTimeout(this.codeApplyTimer);
       this.codeApplyTimer = setTimeout(
-        () => this.sync?.postMessage({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage }),
+        () => this.post({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage }),
         500,
       );
     } else {
@@ -482,7 +499,7 @@ export class ShaderRitualApp extends LitElement {
 
   private applyCode = () => {
     if (this.isCodeWindow) {
-      this.sync?.postMessage({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage });
+      this.post({ type: 'codeEdit', buffer: this.editBuffer, image: this.editImage });
       return;
     }
     const err = this.viewEl?.applySource?.(this.editBuffer, this.editImage);
@@ -492,7 +509,7 @@ export class ShaderRitualApp extends LitElement {
 
   private resetCode = () => {
     if (this.isCodeWindow) {
-      this.sync?.postMessage({ type: 'codeReset' });
+      this.post({ type: 'codeReset' });
       return;
     }
     this.viewEl?.resetSource?.();
@@ -509,7 +526,7 @@ export class ShaderRitualApp extends LitElement {
   };
 
   private broadcastCodeState() {
-    this.sync?.postMessage({
+    this.post({
       type: 'codeState',
       buffer: this.editBuffer,
       image: this.editImage,
@@ -529,12 +546,100 @@ export class ShaderRitualApp extends LitElement {
     if (this.isCodeWindow) {
       this.showCode = true;
     }
-    if (typeof BroadcastChannel === 'undefined') return;
-    this.sync = new BroadcastChannel(SYNC_CHANNEL);
-    this.sync.onmessage = (e) => this.handleSync(e.data);
+    if (typeof BroadcastChannel !== 'undefined') {
+      this.sync = new BroadcastChannel(SYNC_CHANNEL);
+      this.sync.onmessage = (e) => this.receive(e.data);
+    }
+    this.connectRemote();
     // A freshly opened satellite window asks the render window for current state.
-    if (this.isController) this.sync.postMessage({ type: 'request' });
-    if (this.isCodeWindow) this.sync.postMessage({ type: 'codeRequest' });
+    if (this.isController) this.post({ type: 'request' });
+    if (this.isCodeWindow) this.post({ type: 'codeRequest' });
+  }
+
+  /* ------------------- Remote (LAN / phone) sync ------------------- */
+  // BroadcastChannel only reaches windows of the same browser on the same
+  // machine. For a phone / tablet controller, every window also connects to
+  // the WebSocket relay (relay.mjs, `npm run remote`) when it's reachable.
+  // Messages go out on BOTH channels with a sender id + sequence number so
+  // receivers can drop the duplicate copy.
+
+  private ws: WebSocket | null = null;
+  private wsRetryTimer: any = null;
+  @state() private wsOk = false;
+  @state() private remoteUrls: string[] = [];
+  private readonly syncSid = Math.random().toString(36).slice(2);
+  private syncSeq = 0;
+  private seenSeq: Record<string, number> = {};
+
+  private connectRemote() {
+    // file:// has no host to connect to; a `?ws=host:port` param overrides.
+    const override = this.params.get('ws');
+    if (!override && !location.hostname) return;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const target = override || `${location.hostname}:8787`;
+    try {
+      this.ws = new WebSocket(`${proto}://${target}`);
+    } catch (e) {
+      this.scheduleRemoteRetry();
+      return;
+    }
+    this.ws.onopen = () => {
+      this.wsOk = true;
+      // Re-request state so a phone that connected late catches up.
+      if (this.isController) this.post({ type: 'request' });
+      if (this.isCodeWindow) this.post({ type: 'codeRequest' });
+    };
+    this.ws.onmessage = (e) => {
+      try {
+        this.receive(JSON.parse(e.data));
+      } catch (err) {}
+    };
+    this.ws.onclose = () => {
+      this.wsOk = false;
+      this.ws = null;
+      this.scheduleRemoteRetry();
+    };
+    this.ws.onerror = () => {
+      try { this.ws?.close(); } catch (e) {}
+    };
+  }
+
+  private scheduleRemoteRetry() {
+    clearTimeout(this.wsRetryTimer);
+    this.wsRetryTimer = setTimeout(() => this.connectRemote(), 8000);
+  }
+
+  /** Send a sync message to every other window, local or remote. */
+  private post(msg: any) {
+    const m = { ...msg, _sid: this.syncSid, _seq: ++this.syncSeq };
+    this.sync?.postMessage(m);
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        if (m.type === 'modelUpload' && m.buffer instanceof ArrayBuffer) {
+          this.ws.send(JSON.stringify({ ...m, buffer: bufToB64(m.buffer), _b64: true }));
+        } else {
+          this.ws.send(JSON.stringify(m));
+        }
+      } catch (e) {}
+    }
+  }
+
+  /** Receive from either channel; drop own echoes + cross-channel duplicates. */
+  private receive(msg: any) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'remoteHello') {
+      // The relay announces the LAN URLs it's serving on.
+      this.remoteUrls = Array.isArray(msg.urls) ? msg.urls : [];
+      return;
+    }
+    if (msg._sid) {
+      if (msg._sid === this.syncSid) return;
+      const last = this.seenSeq[msg._sid] || 0;
+      if (msg._seq <= last) return;
+      this.seenSeq[msg._sid] = msg._seq;
+    }
+    if (msg._b64 && typeof msg.buffer === 'string') msg.buffer = b64ToBuf(msg.buffer);
+    this.handleSync(msg);
   }
 
   private handleSync(msg: any) {
@@ -544,7 +649,7 @@ export class ShaderRitualApp extends LitElement {
         // Render window answers a controller with the full current config + parts.
         if (this.isMain) {
           this.broadcastConfig();
-          this.sync?.postMessage({ type: 'partInfos', partInfos: this.partInfos });
+          this.post({ type: 'partInfos', partInfos: this.partInfos });
         }
         break;
       case 'partInfos':
@@ -564,7 +669,7 @@ export class ShaderRitualApp extends LitElement {
               name = `⚠ ${e?.message || 'Failed to load'}`;
             }
             this.modelName = name;
-            this.sync?.postMessage({ type: 'modelStatus', name });
+            this.post({ type: 'modelStatus', name });
           })();
         }
         break;
@@ -623,7 +728,7 @@ export class ShaderRitualApp extends LitElement {
 
   /** Push the live config to the other window (called on every local edit). */
   private broadcastConfig() {
-    this.sync?.postMessage({ type: 'config', config: this.config });
+    this.post({ type: 'config', config: this.config });
   }
 
   private runCommand(name: string) {
@@ -635,7 +740,7 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'removeModel') {
       this.viewEl?.removeModel?.();
       this.modelName = '';
-      this.sync?.postMessage({ type: 'modelStatus', name: '' });
+      this.post({ type: 'modelStatus', name: '' });
     }
   }
 
@@ -651,7 +756,7 @@ export class ShaderRitualApp extends LitElement {
   /** Audio toggle that works from either window (controller proxies a command). */
   private toggleAudio = () => {
     if (this.isController) {
-      this.sync?.postMessage({
+      this.post({
         type: 'command',
         name: this.isRecording ? 'stopAudio' : 'startAudio',
       });
@@ -879,7 +984,7 @@ export class ShaderRitualApp extends LitElement {
         const now = performance.now();
         if (bands && now - lastBroadcast > 60) {
           lastBroadcast = now;
-          this.sync.postMessage({
+          this.post({
             type: 'bands',
             bands,
             isRecording: this.isRecording,
@@ -899,7 +1004,7 @@ export class ShaderRitualApp extends LitElement {
           const snap = this.viewEl?.getUniformSnapshot?.();
           if (snap) {
             this.codeValues = snap;
-            if (this.codeWindowOpen) this.sync?.postMessage({ type: 'codeValues', values: snap });
+            if (this.codeWindowOpen) this.post({ type: 'codeValues', values: snap });
           }
         }
       }
@@ -1599,6 +1704,27 @@ export class ShaderRitualApp extends LitElement {
               ${this.isRecording ? 'Kill Audio' : 'Ignite Audio'}
             </button>
           </div>
+        </div>
+
+        <!-- REMOTE (phone / tablet controller over the LAN) -->
+        <div class="setting-group">
+          <span class="group-title">Remote · phone / tablet</span>
+          ${this.wsOk
+            ? html`
+                <div class="live-dot" style="margin-bottom:8px;">Relay connected</div>
+                ${this.remoteUrls.length
+                  ? html`<div class="element-desc">
+                      Open on another device:
+                      ${this.remoteUrls.map((u) => html`<div><a style="color:#a855f7;" href="${u}?control" target="_blank">${u}?control</a></div>`)}
+                    </div>`
+                  : ''}
+              `
+            : html`<div class="element-desc">
+                Not connected. Run <strong>npm run remote</strong> in the project folder,
+                open the printed URL here and on your phone/tablet with
+                <strong>?control</strong> appended — the panel syncs live over your
+                local network.
+              </div>`}
         </div>
       </div>
     `;
