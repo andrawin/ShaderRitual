@@ -84,8 +84,8 @@ wss.on('connection', (ws) => {
 server.listen(PORT, '0.0.0.0', () => {
   const urls = lanUrls();
   console.log('\nShaderRitual LAN relay running.\n');
-  console.log('  Render window (this machine):');
-  for (const u of urls) console.log(`    ${u}`);
+  console.log('  Render window (THIS machine — use localhost so the mic works):');
+  console.log(`    http://localhost:${PORT}`);
   console.log('\n  Controller (phone / tablet on the same network):');
   for (const u of urls) console.log(`    ${u}?control`);
   console.log('');

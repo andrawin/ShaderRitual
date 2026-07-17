@@ -941,6 +941,16 @@ export class ShaderRitualApp extends LitElement {
 
   private startRecording = async () => {
     if (this.isRecording) return;
+    // Chrome only exposes the mic on secure origins (https or localhost).
+    // Opened via a LAN IP over plain http, mediaDevices is undefined.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.error =
+        'Mic blocked: browsers only allow the microphone on https or localhost. ' +
+        `Open the render window at http://localhost:${location.port || 8787} on this machine ` +
+        '(the phone/tablet controller can keep using the IP address).';
+      this.status = 'Mic needs localhost';
+      return;
+    }
     try {
       this.status = 'Initializing mic...';
       if (this.audioContext.state === 'suspended') await this.audioContext.resume();
@@ -1714,8 +1724,10 @@ export class ShaderRitualApp extends LitElement {
                 <div class="live-dot" style="margin-bottom:8px;">Relay connected</div>
                 ${this.remoteUrls.length
                   ? html`<div class="element-desc">
-                      Open on another device:
+                      Controller on another device:
                       ${this.remoteUrls.map((u) => html`<div><a style="color:#a855f7;" href="${u}?control" target="_blank">${u}?control</a></div>`)}
+                      Keep the render window on <strong>localhost</strong> on the host
+                      machine — browsers only allow the mic on https/localhost.
                     </div>`
                   : ''}
               `
