@@ -25,6 +25,11 @@ import { oscilloscope } from './shaders/oscilloscope';
 import { siren } from './shaders/siren';
 import { plasma } from './shaders/plasma';
 import { tardigrade } from './shaders/tardigrade';
+import { truchet } from './shaders/truchet';
+import { planet } from './shaders/planet';
+import { horizon } from './shaders/horizon';
+import { blossom } from './shaders/blossom';
+import { valley } from './shaders/valley';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -42,6 +47,11 @@ export const SHADERS: ShaderDef[] = [
   siren,
   plasma,
   tardigrade,
+  truchet,
+  planet,
+  horizon,
+  blossom,
+  valley,
 ];
 
 /** Fresh camera / motion rig defaults. */
