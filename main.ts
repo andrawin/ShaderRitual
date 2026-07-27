@@ -1130,7 +1130,11 @@ export class ShaderRitualApp extends LitElement {
 
         ${m.mode === 'parts' ? this.renderPartsMenu() : ''}
         ${m.mode === 'fracture' ? this.renderFractureControls() : ''}
+      </div>
 
+      <!-- Screen capture is its own layer — it works with or without a model. -->
+      <div class="setting-group">
+        <span class="group-title">Screen Capture</span>
         ${this.renderCaptureSection()}
       </div>
     `;
@@ -1272,8 +1276,10 @@ export class ShaderRitualApp extends LitElement {
   private renderCaptureSection() {
     const c = this.config.model.capture;
     return html`
-      <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
-        <div class="element-desc" style="margin-bottom:6px;">Screen capture (share a window onto the scene):</div>
+      <div>
+        <div class="element-desc" style="margin-bottom:6px;">
+          Project a shared window into the scene. Works on its own — no 3D model needed.
+        </div>
         <div class="control-row" style="gap:8px;justify-content:flex-start;">
           <button class="action-btn ${this.isCapturing ? 'active' : ''}" style="font-size:0.72rem;padding:6px 10px;"
             @click=${this.toggleCapture}>${this.isCapturing ? 'Stop Capture' : 'Share a Window'}</button>

@@ -600,10 +600,14 @@ export class ShaderRitualView extends LitElement {
       this.renderer.render(this.postScene, this.camera);
     }
 
-    // 3D model overlay, drawn on top of the post-processed image. All per-frame
-    // model work is skipped entirely when there's no model or it's hidden.
+    // 3D overlay scene, drawn on top of the post-processed image. It holds both
+    // the uploaded model and the screen-capture plane — either one alone is
+    // reason to render it, and all per-frame work is skipped when neither is up.
     const md = this.config.model;
-    if (this.modelHolder && md && md.visible) {
+    const modelUp = !!this.modelHolder && !!md && md.visible;
+    const captureUp = !!this.captureTexture && !!md?.capture?.visible && md.capture.opacity > 0;
+
+    if (modelUp) {
       // Rebuild fracture shards if the mode / fragment count changed.
       const wantFrag = md.mode === 'fracture' ? Math.max(2, Math.round(md.fracture.fragments)) : 0;
       if (wantFrag !== this.fragmentCount) this.syncFracture();
@@ -651,14 +655,17 @@ export class ShaderRitualView extends LitElement {
         }
       }
 
-      this.applyCapture(this.lastBands);
+    } else if (this.modelHolder) {
+      this.modelHolder.visible = false;
+    }
 
+    // Screen capture is independent of the model — it renders on its own.
+    if (modelUp || captureUp) {
+      this.applyCapture(this.lastBands);
       this.renderer.autoClear = false;
       this.renderer.clearDepth();
       this.renderer.render(this.modelScene, this.modelCamera);
       this.renderer.autoClear = true;
-    } else if (this.modelHolder) {
-      this.modelHolder.visible = false;
     }
   };
 
@@ -903,8 +910,8 @@ export class ShaderRitualView extends LitElement {
     const c = this.config.model.capture;
     if (!c) return;
     const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
-    this.captureMesh.visible =
-      !!this.captureTexture && c.visible && this.config.model.visible && c.opacity > 0;
+    // Independent of the model's own Visible toggle — capture is its own layer.
+    this.captureMesh.visible = !!this.captureTexture && c.visible && c.opacity > 0;
     if (!this.captureMesh.visible) return;
 
     mat.opacity = c.opacity;
