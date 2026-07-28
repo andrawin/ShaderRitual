@@ -101,6 +101,7 @@ export function defaultModel(): ModelConfig {
     posY: 0,
     posZ: 0,
     bpm: 0,
+    quality: 1,
     mode: 'none',
     parts: {},
     fracture: {
@@ -158,6 +159,7 @@ function mergeModel(base: ModelConfig, saved: any): ModelConfig {
   return {
     ...base,
     ...saved,
+    quality: Math.min(1, Math.max(0.25, Number(saved.quality) || base.quality)),
     parts: {}, // rebuilt per loaded model
     fracture: {
       ...base.fracture,

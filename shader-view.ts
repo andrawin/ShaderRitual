@@ -113,6 +113,12 @@ export class ShaderRitualView extends LitElement {
   private postScene!: THREE.Scene;
   private postUniforms!: Record<string, { value: any }>;
 
+  // Reduced-resolution pass for the 3D overlay (model + screen capture).
+  private modelTarget!: THREE.WebGLRenderTarget;
+  private modelBlitScene!: THREE.Scene;
+  private modelBlitUniforms!: Record<string, { value: any }>;
+  private lastModelQuality = 1;
+
   // User-uploaded GLB model overlay (rendered on top with a perspective camera).
   private modelScene!: THREE.Scene;
   private modelCamera!: THREE.PerspectiveCamera;
@@ -233,6 +239,32 @@ export class ShaderRitualView extends LitElement {
     this.baseTarget = new THREE.WebGLRenderTarget(1, 1, opts);
     this.overlayTarget = new THREE.WebGLRenderTarget(1, 1, opts);
     this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, opts);
+    // The 3D overlay (model + capture) can render at a fraction of the screen
+    // resolution and be blitted up — the big win on large displays.
+    this.modelTarget = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.modelBlitUniforms = { tModel: { value: this.modelTarget.texture } };
+    this.modelBlitScene = new THREE.Scene();
+    this.modelBlitScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.modelBlitUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tModel;
+void main(){
+  vec4 c = texture2D(tModel, vUv);
+  if(c.a <= 0.001) discard;
+  gl_FragColor = c;
+}`,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      ),
+    );
 
     this.baseLayer = new ShaderLayer(this.renderer, this.errorSink);
     this.overlayLayer = new ShaderLayer(this.renderer, this.errorSink);
@@ -335,6 +367,9 @@ export class ShaderRitualView extends LitElement {
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
+    const mq = Math.min(1, Math.max(0.25, this.config?.model?.quality ?? 1));
+    this.lastModelQuality = mq;
+    this.modelTarget.setSize(Math.max(1, Math.floor(pw * mq)), Math.max(1, Math.floor(ph * mq)));
     this.baseLayer.resize(pw, ph);
     this.overlayLayer.resize(pw, ph);
     (this.postUniforms.iResolution.value as THREE.Vector3).set(pw, ph, 1);
@@ -604,7 +639,7 @@ export class ShaderRitualView extends LitElement {
     // the uploaded model and the screen-capture plane — either one alone is
     // reason to render it, and all per-frame work is skipped when neither is up.
     const md = this.config.model;
-    const modelUp = !!this.modelHolder && !!md && md.visible;
+    const modelUp = !!this.modelHolder && !!md && md.visible && md.opacity > 0.004;
     const captureUp = !!this.captureTexture && !!md?.capture?.visible && md.capture.opacity > 0;
 
     if (modelUp) {
@@ -662,10 +697,31 @@ export class ShaderRitualView extends LitElement {
     // Screen capture is independent of the model — it renders on its own.
     if (modelUp || captureUp) {
       this.applyCapture(this.lastBands);
-      this.renderer.autoClear = false;
-      this.renderer.clearDepth();
-      this.renderer.render(this.modelScene, this.modelCamera);
-      this.renderer.autoClear = true;
+
+      const mq = Math.min(1, Math.max(0.25, md?.quality ?? 1));
+      if (mq !== this.lastModelQuality) this.resize();
+
+      if (mq >= 0.999) {
+        // Full resolution: draw straight over the screen image.
+        this.renderer.autoClear = false;
+        this.renderer.clearDepth();
+        this.renderer.render(this.modelScene, this.modelCamera);
+        this.renderer.autoClear = true;
+      } else {
+        // Reduced resolution: render the 3D layer to its own transparent
+        // target, then blit it over the screen (cheap on large displays).
+        const prevAlpha = this.renderer.getClearAlpha();
+        this.renderer.setClearAlpha(0);
+        this.renderer.setRenderTarget(this.modelTarget);
+        this.renderer.clear(true, true, false);
+        this.renderer.render(this.modelScene, this.modelCamera);
+        this.renderer.setRenderTarget(null);
+        this.renderer.setClearAlpha(prevAlpha);
+
+        this.renderer.autoClear = false;
+        this.renderer.render(this.modelBlitScene, this.camera);
+        this.renderer.autoClear = true;
+      }
     }
   };
 

@@ -874,6 +874,7 @@ export class ShaderRitualApp extends LitElement {
       'model.posY': { min: -3, max: 3 },
       'model.posZ': { min: -3, max: 3 },
       'model.bpm': { min: 0, max: 300 },
+      'model.quality': { min: 0.25, max: 1 },
       'model.fracture.fragments': { min: 2, max: 250 },
       'model.capture.opacity': { min: 0, max: 1 },
       'model.capture.scale': { min: 0.1, max: 4 },
@@ -1115,6 +1116,20 @@ export class ShaderRitualApp extends LitElement {
           <label>BPM (0=off)</label>
           <input class="bpm-num" type="number" min="0" max="300" step="1" .value=${String(Math.round(m.bpm))}
             @input=${(e: any) => this.updateConfig('model.bpm', parseFloat(e.target.value) || 0)} />
+        </div>
+        <div class="control-row">
+          <label>3D quality</label>
+          <select .value=${live(String(m.quality))}
+            @change=${(e: any) => this.updateConfig('model.quality', parseFloat(e.target.value))}>
+            <option value="1">100% (Full)</option>
+            <option value="0.75">75%</option>
+            <option value="0.5">50%</option>
+            <option value="0.35">35%</option>
+          </select>
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          Resolution of the 3D layer only (model + capture) — the shader stays sharp.
+          Drop to 50% on a big screen or projector.
         </div>
 
         <div class="element-desc" style="margin:10px 0 6px;">Break it apart:</div>

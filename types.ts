@@ -155,6 +155,12 @@ export interface ModelConfig {
   posZ: number;
   /** Auto-rotate tempo; 0 = off. */
   bpm: number;
+  /**
+   * Render resolution of the whole 3D overlay layer (model + screen capture)
+   * as a fraction of the screen, 0.25..1. Drop it on large displays — the 3D
+   * pass is the expensive one once a model is loaded.
+   */
+  quality: number;
   /** Whole / per-mesh parts / shattered fracture. */
   mode: 'none' | 'parts' | 'fracture';
   /** Per-part settings keyed by part id (rebuilt per loaded model). */
