@@ -134,6 +134,7 @@ export function defaultModel(): ModelConfig {
       reactive: true,
       reactiveBand: 'low',
       visible: true,
+      fps: 30,
     },
   };
 }

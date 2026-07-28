@@ -160,8 +160,16 @@ export class ShaderRitualApp extends LitElement {
     }
     try {
       this.error = '';
+      // Cap what the browser hands us — an uncapped 4K/60 share is by far the
+      // most expensive thing in the pipeline.
+      const fps = this.config.model.capture.fps || 30;
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'window' } as any,
+        video: {
+          displaySurface: 'window',
+          frameRate: { max: fps },
+          width: { max: 1920 },
+          height: { max: 1080 },
+        } as any,
         audio: false,
       });
       this.captureStream = stream;
@@ -1303,6 +1311,20 @@ export class ShaderRitualApp extends LitElement {
         </div>
         ${this.renderSlider('Capture opacity', 'model.capture.opacity', 0, 1, 0.05)}
         ${this.renderSlider('Capture scale', 'model.capture.scale', 0.1, 4, 0.1)}
+        <div class="control-row">
+          <label>Capture rate</label>
+          <select .value=${live(String(c.fps))}
+            @change=${(e: any) => this.updateConfig('model.capture.fps', parseFloat(e.target.value))}>
+            <option value="60">60 fps</option>
+            <option value="30">30 fps</option>
+            <option value="15">15 fps</option>
+            <option value="8">8 fps</option>
+          </select>
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          Each captured frame is a full texture upload. Lower this first if
+          sharing feels heavy — re-share the window to apply the new rate.
+        </div>
         <div class="control-row">
           <label>Projection</label>
           <select .value=${c.mode}

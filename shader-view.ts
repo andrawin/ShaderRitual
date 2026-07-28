@@ -153,9 +153,12 @@ export class ShaderRitualView extends LitElement {
 
   // Screen-capture projection (shared window -> textured plane).
   private captureMesh!: THREE.Mesh;
-  private captureTexture: THREE.VideoTexture | null = null;
+  private captureTexture: THREE.Texture | null = null;
   private captureVideo: HTMLVideoElement | null = null;
   private _captureStream: MediaStream | null = null;
+  private captureFrameReady = false; // a new video frame is waiting to upload
+  private captureTimer: any = null; // fallback ticker (no requestVideoFrameCallback)
+  private lastCaptureUpload = 0;
 
   private lastFrame = performance.now();
   private animTime = 0;
@@ -562,6 +565,10 @@ void main(){
     super.disconnectedCallback();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    if (this.captureTimer) {
+      clearInterval(this.captureTimer);
+      this.captureTimer = null;
+    }
   }
 
   private renderLoop = () => {
@@ -923,6 +930,11 @@ void main(){
   private async initCapture() {
     if (!this.captureMesh) return;
     const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
+    if (this.captureTimer) {
+      clearInterval(this.captureTimer);
+      this.captureTimer = null;
+    }
+    this.captureFrameReady = false;
     if (this.captureVideo) {
       this.captureVideo.pause();
       this.captureVideo.srcObject = null;
@@ -942,12 +954,32 @@ void main(){
       try {
         await video.play();
       } catch (e) {}
-      this.captureTexture = new THREE.VideoTexture(video);
+      // A plain Texture (not VideoTexture): VideoTexture re-uploads the whole
+      // frame to the GPU on every render, even when the shared window is
+      // static. Here a new frame is uploaded only when the video actually
+      // produces one, and no faster than the configured capture fps.
+      this.captureTexture = new THREE.Texture(video);
       this.captureTexture.colorSpace = THREE.SRGBColorSpace;
       this.captureTexture.minFilter = THREE.LinearFilter;
       this.captureTexture.magFilter = THREE.LinearFilter;
+      this.captureTexture.generateMipmaps = false;
+      this.captureTexture.needsUpdate = true;
       mat.map = this.captureTexture;
       mat.needsUpdate = true;
+
+      const v = video as any;
+      if (typeof v.requestVideoFrameCallback === 'function') {
+        const onFrame = () => {
+          if (this.captureVideo !== video) return; // stream replaced
+          this.captureFrameReady = true;
+          v.requestVideoFrameCallback(onFrame);
+        };
+        v.requestVideoFrameCallback(onFrame);
+      } else {
+        this.captureTimer = setInterval(() => {
+          this.captureFrameReady = true;
+        }, 1000 / 30);
+      }
     } else {
       mat.map = null;
       mat.needsUpdate = true;
@@ -969,6 +1001,18 @@ void main(){
     // Independent of the model's own Visible toggle — capture is its own layer.
     this.captureMesh.visible = !!this.captureTexture && c.visible && c.opacity > 0;
     if (!this.captureMesh.visible) return;
+
+    // Upload a new captured frame at most `fps` times a second, and only when
+    // one actually arrived — a static shared window costs nothing.
+    if (this.captureFrameReady && this.captureTexture) {
+      const fps = Math.min(60, Math.max(1, c.fps || 30));
+      const nowMs = performance.now();
+      if (nowMs - this.lastCaptureUpload >= 1000 / fps) {
+        this.captureTexture.needsUpdate = true;
+        this.captureFrameReady = false;
+        this.lastCaptureUpload = nowMs;
+      }
+    }
 
     mat.opacity = c.opacity;
     const react = c.reactive ? 1 + ((bands as any)[c.reactiveBand] || 0) * 0.2 : 1;

@@ -139,6 +139,11 @@ export interface CaptureConfig {
   reactive: boolean;
   reactiveBand: Band;
   visible: boolean;
+  /**
+   * Max captured frames uploaded to the GPU per second. Each upload costs a
+   * full-resolution texture transfer, so this is the main capture cost knob.
+   */
+  fps: number;
 }
 
 /**
