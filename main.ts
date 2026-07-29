@@ -834,6 +834,11 @@ export class ShaderRitualApp extends LitElement {
   };
 
   private processMidiEvent = (id: string, value: number, type: 'cc' | 'pb' | 'note') => {
+    // A control that reports anything between the extremes is a knob/fader,
+    // not a button — remembered so dropdowns scrub rather than step.
+    if (type === 'pb' || (type === 'cc' && value !== 0 && value !== 127)) {
+      this.midiContinuous[id] = true;
+    }
     this.midiPulse = true;
     setTimeout(() => {
       this.midiPulse = false;
@@ -851,7 +856,7 @@ export class ShaderRitualApp extends LitElement {
       if (mapping) {
         const normalized = type === 'pb' ? value / 16383 : value / 127;
         this.lastMidiMsg = `${id.toUpperCase()} → ${mapping.path.replace(/^!/, '')}`;
-        this.applyMidiValue(mapping.path, normalized, type);
+        this.applyMidiValue(mapping.path, normalized, type, id);
       } else {
         this.lastMidiMsg = `${id.toUpperCase()} value: ${value} (Unmapped)`;
       }
@@ -930,6 +935,19 @@ export class ShaderRitualApp extends LitElement {
     return /\.(visible|on|enabled|floor|distribute|reactive|audioGated)$/.test(path);
   }
 
+  /** Last normalised value seen per MIDI control, for rising-edge detection. */
+  private lastMidiNorm: Record<string, number> = {};
+  /** Controls that have sent something other than 0 / 127 — i.e. real knobs. */
+  private midiContinuous: Record<string, boolean> = {};
+
+  /**
+   * True until a control proves itself continuous. Pads and buttons only ever
+   * send the extremes, so they step dropdowns instead of scrubbing them.
+   */
+  private isButtonLike(id: string): boolean {
+    return !this.midiContinuous[id];
+  }
+
   /** One-shot actions (buttons), mappable to a MIDI note. */
   private readonly MIDI_ACTIONS: Record<string, () => void> = {
     '!burst': () => this.triggerPhysics('burst'),
@@ -952,10 +970,16 @@ export class ShaderRitualApp extends LitElement {
    * parameter range, dropdowns pick an option, on/off flags toggle (note) or
    * follow the control's position (fader), and `!actions` fire once.
    */
-  private applyMidiValue = (path: string, norm: number, type: 'cc' | 'pb' | 'note') => {
+  private applyMidiValue = (path: string, norm: number, type: 'cc' | 'pb' | 'note', id = '') => {
+    // Rising edge = the control just crossed into its top half. Notes always
+    // count (they only arrive on press). This makes momentary pads that send
+    // CC 127-on-press / 0-on-release latch instead of following the button.
+    const prev = this.lastMidiNorm[id] ?? 0;
+    this.lastMidiNorm[id] = norm;
+    const rising = type === 'note' || (norm >= 0.5 && prev < 0.5);
+
     if (path.startsWith('!')) {
-      // Fire on a note press, or when a fader/button crosses into its top half.
-      if (type === 'note' || norm >= 0.5) this.MIDI_ACTIONS[path]?.();
+      if (rising) this.MIDI_ACTIONS[path]?.();
       return;
     }
 
@@ -963,11 +987,13 @@ export class ShaderRitualApp extends LitElement {
     let value: any;
 
     if (this.isBooleanPath(path)) {
-      value = type === 'note' ? !cur : norm >= 0.5;
+      if (!rising) return; // ignore the release and any mid-sweep chatter
+      value = !cur;
     } else {
       const opts = this.getPathOptions(path);
       if (opts) {
-        if (type === 'note') {
+        if (type === 'note' || this.isButtonLike(id)) {
+          if (!rising) return;
           const i = opts.indexOf(cur);
           value = opts[(i + 1) % opts.length]; // step to the next choice
         } else {
@@ -988,6 +1014,8 @@ export class ShaderRitualApp extends LitElement {
     }
     if (ref[keys[keys.length - 1]] !== value) {
       ref[keys[keys.length - 1]] = value;
+      const shown = typeof value === 'number' ? value.toFixed(2) : String(value);
+      this.lastMidiMsg = `${keys.slice(-2).join('.')} = ${shown}`;
       if (!this.pendingMidiUpdate) {
         this.pendingMidiUpdate = true;
         requestAnimationFrame(() => {
