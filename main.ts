@@ -850,8 +850,8 @@ export class ShaderRitualApp extends LitElement {
       const mapping = this.midiMappings[id];
       if (mapping) {
         const normalized = type === 'pb' ? value / 16383 : value / 127;
-        this.lastMidiMsg = `${id.toUpperCase()} [${Math.round(normalized * 100)}%]`;
-        this.applyNormalizedValue(mapping.path, normalized);
+        this.lastMidiMsg = `${id.toUpperCase()} → ${mapping.path.replace(/^!/, '')}`;
+        this.applyMidiValue(mapping.path, normalized, type);
       } else {
         this.lastMidiMsg = `${id.toUpperCase()} value: ${value} (Unmapped)`;
       }
@@ -901,17 +901,93 @@ export class ShaderRitualApp extends LitElement {
     return { min: 0, max: 1 };
   };
 
-  private applyNormalizedValue = (path: string, norm: number) => {
-    const range = this.getParamRange(path);
-    const scaled = range.min + norm * (range.max - range.min);
+  /** Read the current value at a dotted config path. */
+  private readPath(path: string): any {
+    return path.split('.').reduce((o: any, k) => (o == null ? o : o[k]), this.config as any);
+  }
+
+  /**
+   * Discrete choices for a path that's shown as a dropdown. A continuous
+   * control (fader / knob) scrubs across the list; a note button steps to the
+   * next choice on each press.
+   */
+  private getPathOptions(path: string): any[] | null {
+    if (path === 'activeShader' || path === 'overlay.shader') return SHADERS.map((s) => s.id);
+    if (path === 'overlay.blend') return ['add', 'screen', 'mix'];
+    if (path === 'camera.mode') return ['manual', 'bpm', 'audio'];
+    if (path === 'model.mode') return ['none', 'parts', 'fracture'];
+    if (path === 'model.capture.mode') return ['background', 'floating'];
+    if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
+    if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
+    if (path === 'model.capture.fps') return [60, 30, 15, 8];
+    if (path.endsWith('.target')) return ['scale', 'emissive', 'explode', 'rotate'];
+    if (path.endsWith('.band') || path.endsWith('Band')) return ['none', 'low', 'mid', 'high'];
+    return null;
+  }
+
+  /** Paths that hold an on/off flag rather than a number. */
+  private isBooleanPath(path: string): boolean {
+    return /\.(visible|on|enabled|floor|distribute|reactive|audioGated)$/.test(path);
+  }
+
+  /** One-shot actions (buttons), mappable to a MIDI note. */
+  private readonly MIDI_ACTIONS: Record<string, () => void> = {
+    '!burst': () => this.triggerPhysics('burst'),
+    '!implode': () => this.triggerPhysics('implode'),
+    '!reset': () => this.triggerPhysics('reset'),
+    '!audio': () => this.toggleAudio(),
+    '!capture': () => this.toggleCapture(),
+    '!nextShader': () => this.stepShader(1),
+    '!prevShader': () => this.stepShader(-1),
+  };
+
+  private stepShader(dir: number) {
+    const i = SHADERS.findIndex((s) => s.id === this.config.activeShader);
+    const next = SHADERS[(i + dir + SHADERS.length) % SHADERS.length];
+    this.updateConfig('activeShader', next.id);
+  }
+
+  /**
+   * Apply an incoming MIDI value to a mapped target. Numbers scale across the
+   * parameter range, dropdowns pick an option, on/off flags toggle (note) or
+   * follow the control's position (fader), and `!actions` fire once.
+   */
+  private applyMidiValue = (path: string, norm: number, type: 'cc' | 'pb' | 'note') => {
+    if (path.startsWith('!')) {
+      // Fire on a note press, or when a fader/button crosses into its top half.
+      if (type === 'note' || norm >= 0.5) this.MIDI_ACTIONS[path]?.();
+      return;
+    }
+
+    const cur = this.readPath(path);
+    let value: any;
+
+    if (this.isBooleanPath(path)) {
+      value = type === 'note' ? !cur : norm >= 0.5;
+    } else {
+      const opts = this.getPathOptions(path);
+      if (opts) {
+        if (type === 'note') {
+          const i = opts.indexOf(cur);
+          value = opts[(i + 1) % opts.length]; // step to the next choice
+        } else {
+          value = opts[Math.min(opts.length - 1, Math.floor(norm * opts.length))];
+        }
+      } else {
+        const range = this.getParamRange(path);
+        value = range.min + norm * (range.max - range.min);
+        if (path === 'model.fracture.fragments') value = Math.round(value);
+      }
+    }
+
     const keys = path.split('.');
     let ref: any = this.config;
     for (let i = 0; i < keys.length - 1; i++) {
       if (!ref[keys[i]]) ref[keys[i]] = {};
       ref = ref[keys[i]];
     }
-    if (ref[keys[keys.length - 1]] !== scaled) {
-      ref[keys[keys.length - 1]] = scaled;
+    if (ref[keys[keys.length - 1]] !== value) {
+      ref[keys[keys.length - 1]] = value;
       if (!this.pendingMidiUpdate) {
         this.pendingMidiUpdate = true;
         requestAnimationFrame(() => {
@@ -928,9 +1004,45 @@ export class ShaderRitualApp extends LitElement {
     }
   };
 
+  /** The little ● MIDI-learn dot. Works for any mappable target. */
+  private learnDot = (path: string) => html`
+    <button
+      class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
+      title="MIDI learn"
+      @click=${() => this.toggleMidiLearn(path)}>●</button>
+  `;
+
+  /** A dropdown with a MIDI-learn dot: a knob scrubs it, a pad steps it. */
+  private renderSelect = (
+    label: string,
+    path: string,
+    options: { value: string; label: string }[],
+  ) => html`
+    <div class="control-row">
+      <label>${label}</label>
+      ${this.learnDot(path)}
+      <select .value=${live(String(this.readPath(path)))}
+        @change=${(e: any) => this.updateConfig(path, e.target.value)}>
+        ${options.map((o) => html`<option value=${o.value}>${o.label}</option>`)}
+      </select>
+    </div>
+  `;
+
+  /** An on/off toggle with a MIDI-learn dot: a pad flips it. */
+  private renderToggle = (label: string, path: string) => html`
+    <div class="control-row">
+      <label>${label}</label>
+      ${this.learnDot(path)}
+      <input type="checkbox" .checked=${!!this.readPath(path)}
+        @change=${(e: any) => this.updateConfig(path, e.target.checked)} />
+    </div>
+  `;
+
   private toggleMidiLearn = (path: string) => {
     this.learningParam = this.learningParam === path ? null : path;
-    this.lastMidiMsg = this.learningParam ? 'LEARN: Move slider/knob...' : 'Learn mode off.';
+    this.lastMidiMsg = this.learningParam
+      ? 'LEARN: move a knob/fader, or hit a pad...'
+      : 'Learn mode off.';
     (this as any).requestUpdate();
   };
 
@@ -1110,11 +1222,7 @@ export class ShaderRitualApp extends LitElement {
             ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.clearModel}>remove</a>`
             : ''}
         </div>
-        <div class="control-row">
-          <label>Visible</label>
-          <input type="checkbox" .checked=${m.visible}
-            @change=${(e: any) => this.updateConfig('model.visible', e.target.checked)} />
-        </div>
+        ${this.renderToggle('Visible', 'model.visible')}
         ${this.renderSlider('Scale', 'model.scale', 0.1, 5, 0.05)}
         ${this.renderSlider('Opacity', 'model.opacity', 0, 1, 0.02)}
         ${this.renderSlider('Position X', 'model.posX', -3, 3, 0.05)}
@@ -1141,15 +1249,11 @@ export class ShaderRitualApp extends LitElement {
         </div>
 
         <div class="element-desc" style="margin:10px 0 6px;">Break it apart:</div>
-        <div class="control-row">
-          <label>Mode</label>
-          <select .value=${m.mode}
-            @change=${(e: any) => this.updateConfig('model.mode', e.target.value)}>
-            <option value="none">Whole</option>
-            <option value="parts">Parts (by mesh)</option>
-            <option value="fracture">Fracture (shatter)</option>
-          </select>
-        </div>
+        ${this.renderSelect('Mode', 'model.mode', [
+          { value: 'none', label: 'Whole' },
+          { value: 'parts', label: 'Parts (by mesh)' },
+          { value: 'fracture', label: 'Fracture (shatter)' },
+        ])}
 
         ${m.mode === 'parts' ? this.renderPartsMenu() : ''}
         ${m.mode === 'fracture' ? this.renderFractureControls() : ''}
@@ -1224,6 +1328,7 @@ export class ShaderRitualApp extends LitElement {
     return html`
       <div class="control-row">
         <label>Fragments visible</label>
+        ${this.learnDot('model.fracture.visible')}
         <button class="vis-toggle ${f.visible ? 'on' : 'off'}"
           @click=${() => this.updateConfig('model.fracture.visible', !f.visible)}>${f.visible ? 'SHOWN' : 'HIDDEN'}</button>
       </div>
@@ -1234,6 +1339,7 @@ export class ShaderRitualApp extends LitElement {
       </div>
       <div class="control-row">
         <label>Distribute across bands</label>
+        ${this.learnDot('model.fracture.distribute')}
         <input type="checkbox" .checked=${f.distribute}
           @change=${(e: any) => this.updateConfig('model.fracture.distribute', e.target.checked)} />
       </div>
@@ -1257,6 +1363,7 @@ export class ShaderRitualApp extends LitElement {
       <div style="margin-top:12px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
         <div class="control-row">
           <label><strong>Physics</strong> (burst · fall · tumble)</label>
+          ${this.learnDot('model.fracture.physics.enabled')}
           <input type="checkbox" .checked=${p.enabled}
             @change=${(e: any) => this.updateConfig('model.fracture.physics.enabled', e.target.checked)} />
         </div>
@@ -1265,8 +1372,11 @@ export class ShaderRitualApp extends LitElement {
               Trigger a burst / implode by hand or on a beat.</div>`
           : html`
               <div class="control-row" style="gap:6px;justify-content:flex-start;flex-wrap:wrap;margin-bottom:8px;">
+                ${this.learnDot('!burst')}
                 <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('burst')}>💥 Burst</button>
+                ${this.learnDot('!implode')}
                 <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('implode')}>🧲 Implode</button>
+                ${this.learnDot('!reset')}
                 <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;" @click=${() => this.triggerPhysics('reset')}>↺ Reset</button>
               </div>
               ${this.renderSlider('Gravity', 'model.fracture.physics.gravity', 0, 4, 0.05)}
@@ -1275,6 +1385,7 @@ export class ShaderRitualApp extends LitElement {
               ${this.renderSlider('Implode pull', 'model.fracture.physics.implodeStrength', 1, 20, 0.5)}
               <div class="control-row">
                 <label>Floor collision</label>
+                ${this.learnDot('model.fracture.physics.floor')}
                 <input type="checkbox" .checked=${p.floor}
                   @change=${(e: any) => this.updateConfig('model.fracture.physics.floor', e.target.checked)} />
               </div>
@@ -1282,7 +1393,8 @@ export class ShaderRitualApp extends LitElement {
               <div class="control-row">
                 <label>Beat trigger</label>
                 ${this.renderBandSelect('model.fracture.physics.beatBand', p.beatBand)}
-                <select .value=${p.beatAction}
+                ${this.learnDot('model.fracture.physics.beatAction')}
+                <select .value=${live(p.beatAction)}
                   @change=${(e: any) => this.updateConfig('model.fracture.physics.beatAction', e.target.value)}>
                   <option value="burst">Burst</option>
                   <option value="implode">Implode</option>
@@ -1304,8 +1416,10 @@ export class ShaderRitualApp extends LitElement {
           Project a shared window into the scene. Works on its own — no 3D model needed.
         </div>
         <div class="control-row" style="gap:8px;justify-content:flex-start;">
+          ${this.learnDot('!capture')}
           <button class="action-btn ${this.isCapturing ? 'active' : ''}" style="font-size:0.72rem;padding:6px 10px;"
             @click=${this.toggleCapture}>${this.isCapturing ? 'Stop Capture' : 'Share a Window'}</button>
+          ${this.learnDot('model.capture.visible')}
           <button class="vis-toggle ${c.visible ? 'on' : 'off'}"
             @click=${() => this.updateConfig('model.capture.visible', !c.visible)}>${c.visible ? 'SHOWN' : 'HIDDEN'}</button>
         </div>
@@ -1327,7 +1441,8 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="control-row">
           <label>Projection</label>
-          <select .value=${c.mode}
+          ${this.learnDot('model.capture.mode')}
+          <select .value=${live(c.mode)}
             @change=${(e: any) => this.updateConfig('model.capture.mode', e.target.value)}>
             <option value="background">Rear Wall</option>
             <option value="floating">Floating Plane</option>
@@ -1335,6 +1450,7 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="control-row">
           <label>Audio reactive</label>
+          ${this.learnDot('model.capture.reactive')}
           <input type="checkbox" .checked=${c.reactive}
             @change=${(e: any) => this.updateConfig('model.capture.reactive', e.target.checked)} />
           ${this.renderBandSelect('model.capture.reactiveBand', c.reactiveBand)}
@@ -1352,6 +1468,7 @@ export class ShaderRitualApp extends LitElement {
       <div class="element-card ${fx.on ? '' : 'hidden-el'}">
         <div class="element-head">
           <span class="element-name">${label}</span>
+          ${this.learnDot(onPath)}
           <button class="vis-toggle ${fx.on ? 'on' : 'off'}"
             @click=${() => this.updateConfig(onPath, !fx.on)}>${fx.on ? 'ON' : 'OFF'}</button>
         </div>
@@ -1365,7 +1482,8 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="control-row">
           <label>React band</label>
-          <select .value=${fx.band}
+          ${this.learnDot(bandPath)}
+          <select .value=${live(fx.band)}
             @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
             <option value="none">None</option>
             <option value="low">Low</option>
@@ -1390,18 +1508,21 @@ export class ShaderRitualApp extends LitElement {
         <div class="element-head">
           <span class="element-name">${meta.name}</span>
           ${meta.canHide
-            ? html`<button
-                class="vis-toggle ${setting.visible ? 'on' : 'off'}"
-                @click=${() => this.updateConfig(visiblePath, !setting.visible)}>
-                ${setting.visible ? 'SHOWN' : 'HIDDEN'}
-              </button>`
+            ? html`
+                ${this.learnDot(visiblePath)}
+                <button
+                  class="vis-toggle ${setting.visible ? 'on' : 'off'}"
+                  @click=${() => this.updateConfig(visiblePath, !setting.visible)}>
+                  ${setting.visible ? 'SHOWN' : 'HIDDEN'}
+                </button>`
             : ''}
         </div>
         <div class="element-desc">${meta.description}</div>
         <div class="control-row">
           <label>Audio band</label>
+          ${this.learnDot(bandPath)}
           <select
-            .value=${setting.band}
+            .value=${live(setting.band)}
             @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
             <option value="none">None</option>
             <option value="low">Low</option>
@@ -1459,8 +1580,9 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="control-row">
           <label>Mode</label>
+          ${this.learnDot('camera.mode')}
           <select
-            .value=${cam.mode}
+            .value=${live(cam.mode)}
             @change=${(e: any) => this.updateConfig('camera.mode', e.target.value as CameraMode)}>
             ${modes.map((m) => html`<option value=${m.id}>${m.label}</option>`)}
           </select>
@@ -1553,23 +1675,21 @@ export class ShaderRitualApp extends LitElement {
           to Mandala and hide all but its Light Columns to ride its beams over any
           shader. Add / Screen drop the overlay's dark areas out.
         </div>
-        <div class="control-row">
-          <label>Enable overlay</label>
-          <input type="checkbox" .checked=${ov.enabled}
-            @change=${(e: any) => this.updateConfig('overlay.enabled', e.target.checked)} />
-        </div>
+        ${this.renderToggle('Enable overlay', 'overlay.enabled')}
         ${ov.enabled
           ? html`
               <div class="control-row">
                 <label>Overlay shader</label>
-                <select .value=${ov.shader}
+                ${this.learnDot('overlay.shader')}
+                <select .value=${live(ov.shader)}
                   @change=${(e: any) => this.updateConfig('overlay.shader', e.target.value)}>
                   ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
                 </select>
               </div>
               <div class="control-row">
                 <label>Blend</label>
-                <select .value=${ov.blend}
+                ${this.learnDot('overlay.blend')}
+                <select .value=${live(ov.blend)}
                   @change=${(e: any) => this.updateConfig('overlay.blend', e.target.value)}>
                   <option value="add">Add (glow)</option>
                   <option value="screen">Screen</option>
@@ -1609,13 +1729,27 @@ export class ShaderRitualApp extends LitElement {
         <!-- SHADER SELECT -->
         <div class="setting-group">
           <span class="group-title">Active Shader</span>
-          <select
-            class="shader-select"
-            .value=${this.config.activeShader}
-            @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
-            ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
-          </select>
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${this.learnDot('activeShader')}
+            <select
+              class="shader-select"
+              style="flex:1;"
+              .value=${live(this.config.activeShader)}
+              @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
+              ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
+            </select>
+          </div>
+          <div class="control-row" style="gap:6px;justify-content:flex-start;margin-top:8px;">
+            ${this.learnDot('!prevShader')}
+            <button class="action-btn small" @click=${() => this.stepShader(-1)}>‹ Prev</button>
+            ${this.learnDot('!nextShader')}
+            <button class="action-btn small" @click=${() => this.stepShader(1)}>Next ›</button>
+          </div>
           <div class="element-desc" style="margin-top:8px;">${def.description}</div>
+          <div class="element-desc">
+            Map the dot beside the list to a knob to scrub shaders, or map
+            Prev/Next to two pads.
+          </div>
         </div>
 
         <!-- PERFORMANCE -->
@@ -1648,11 +1782,7 @@ export class ShaderRitualApp extends LitElement {
             Animation speed follows the audio. With this on, the scene calms (or
             freezes, at Idle 0) when no sound is coming in.
           </div>
-          <div class="control-row">
-            <label>Audio-gated</label>
-            <input type="checkbox" .checked=${this.config.motion.audioGated}
-              @change=${(e: any) => this.updateConfig('motion.audioGated', e.target.checked)} />
-          </div>
+          ${this.renderToggle('Audio-gated', 'motion.audioGated')}
           ${this.renderSlider('Idle drift', 'motion.idle', 0, 1, 0.01)}
           ${this.renderSlider('Audio gain', 'motion.gain', 0, 3, 0.05)}
         </div>
@@ -1706,6 +1836,11 @@ export class ShaderRitualApp extends LitElement {
           <div class="midi-log ${this.midiPulse ? 'pulse' : ''} ${this.learningParam ? 'learning' : ''}">
             ${this.learningParam ? 'LEARNING...' : this.lastMidiMsg}
           </div>
+          <div class="element-desc" style="margin-top:8px;">
+            Hit any ● to learn, then move a control. Knobs / faders sweep values
+            and scrub dropdowns; pads step a dropdown to its next choice, flip an
+            on/off, or fire a button.
+          </div>
           <select
             class="device-select"
             @change=${(e: any) => (this.selectedMidiId = e.target.value)}
@@ -1751,6 +1886,7 @@ export class ShaderRitualApp extends LitElement {
         <div class="setting-group">
           <span class="group-title">System</span>
           <div class="control-row action-row">
+            ${this.learnDot('!audio')}
             <button
               class="action-btn ${this.isRecording ? 'active' : ''}"
               @click=${this.toggleAudio}>
