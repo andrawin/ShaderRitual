@@ -126,7 +126,7 @@ export class ShaderRitualView extends LitElement {
   private modelRootObj: THREE.Object3D | null = null; // the loaded gltf scene (centred)
   private modelMats: THREE.Material[] = [];
   private modelBaseScale = 1;
-  private modelRot = 0;
+  private modelPhase = 0; // elapsed beats, drives the tempo-locked motion
   private modelRadius = 1; // model-local bounding radius (physics + capture scaling)
 
   // MeshRitual engine: per-mesh parts + fracture shards + physics.
@@ -656,13 +656,15 @@ void main(){
       this.physicsWasEnabled = md.mode === 'fracture' && md.fracture.physics.enabled;
 
       this.modelHolder.visible = true;
-      this.modelHolder.position.set(md.posX, md.posY, md.posZ);
       this.modelHolder.scale.setScalar(md.scale * this.modelBaseScale);
-      // Physics needs a non-rotating frame so gravity stays "down".
-      if (!physicsActive && md.bpm > 0) {
-        this.modelRot += motionDt * (md.bpm / 60) * (Math.PI / 2); // quarter-turn/beat
+      if (physicsActive) {
+        // Physics needs a still, upright frame so gravity stays "down".
+        this.modelHolder.position.set(md.posX, md.posY, md.posZ);
+        this.modelHolder.rotation.set(0, 0, 0);
+      } else {
+        if (md.bpm > 0) this.modelPhase += motionDt * (md.bpm / 60); // beats elapsed
+        this.applyModelMotion(md);
       }
-      this.modelHolder.rotation.y = physicsActive ? 0 : this.modelRot;
 
       // Opacity applies to every part / fragment material — only re-applied when
       // it (or the active material set) actually changes, not every frame.
@@ -728,6 +730,51 @@ void main(){
   };
 
   /* ----------------------- Model animation ----------------------- */
+
+  /**
+   * Tempo-locked model movement. `modelPhase` counts elapsed beats, so every
+   * mode lands on the beat: a quarter turn, one full bob, one swing.
+   */
+  private applyModelMotion(md: ShaderRitualConfig['model']) {
+    const h = this.modelHolder!;
+    const p = this.modelPhase;
+    const amt = md.motionAmount ?? 1;
+
+    h.position.set(md.posX, md.posY, md.posZ);
+    h.rotation.set(0, 0, 0);
+
+    switch (md.motion) {
+      case 'bob':
+        // Floats up and down, one cycle every two beats, with a soft nod.
+        h.position.y += Math.sin(p * Math.PI) * 0.35 * amt;
+        h.rotation.x = Math.sin(p * Math.PI + 1.2) * 0.12 * amt;
+        h.rotation.y = p * Math.PI * 0.12; // slow drift so it never reads static
+        break;
+      case 'sway':
+        // Pendulum rock, like a hanging sign.
+        h.rotation.z = Math.sin(p * Math.PI) * 0.45 * amt;
+        h.position.x += Math.sin(p * Math.PI) * 0.25 * amt;
+        break;
+      case 'orbit': {
+        // Circles the frame, keeping the same face toward the centre.
+        const a = p * Math.PI * 0.5;
+        h.position.x += Math.cos(a) * 0.6 * amt;
+        h.position.z += Math.sin(a) * 0.6 * amt;
+        h.rotation.y = -a;
+        break;
+      }
+      case 'tumble':
+        // Off-axis rotation on all three axes at unrelated rates.
+        h.rotation.x = p * Math.PI * 0.31;
+        h.rotation.y = p * Math.PI * 0.5;
+        h.rotation.z = p * Math.PI * 0.17;
+        break;
+      case 'spin':
+      default:
+        h.rotation.y = p * Math.PI * 0.5; // a quarter turn per beat
+        break;
+    }
+  }
 
   private animateParts(bands: Bands, dt: number) {
     const k = this.modelRadius;

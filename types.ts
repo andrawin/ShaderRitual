@@ -131,6 +131,12 @@ export interface FractureConfig {
   visible: boolean;
   physics: PhysicsConfig;
 }
+/**
+ * How the model moves on the beat. All are tempo-locked to `ModelConfig.bpm`;
+ * `spin` is the classic turntable rotation.
+ */
+export type ModelMotion = 'spin' | 'bob' | 'sway' | 'orbit' | 'tumble';
+
 /** Shared-window screen-capture projection. */
 export interface CaptureConfig {
   opacity: number;
@@ -158,8 +164,12 @@ export interface ModelConfig {
   posX: number;
   posY: number;
   posZ: number;
-  /** Auto-rotate tempo; 0 = off. */
+  /** Movement tempo in beats per minute; 0 = hold still. */
   bpm: number;
+  /** Which tempo-locked movement to play. */
+  motion: ModelMotion;
+  /** Depth / travel of the movement (1 = default). */
+  motionAmount: number;
   /**
    * Render resolution of the whole 3D overlay layer (model + screen capture)
    * as a fraction of the screen, 0.25..1. Drop it on large displays — the 3D

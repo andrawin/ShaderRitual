@@ -101,6 +101,8 @@ export function defaultModel(): ModelConfig {
     posY: 0,
     posZ: 0,
     bpm: 0,
+    motion: 'spin',
+    motionAmount: 1,
     quality: 1,
     mode: 'none',
     parts: {},
