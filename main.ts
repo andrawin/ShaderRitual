@@ -69,6 +69,8 @@ export class ShaderRitualApp extends LitElement {
 
   // MeshRitual engine: parts surfaced from the loaded model + screen capture.
   @state() partInfos: PartInfo[] = [];
+  /** How many part cards are rendered at once (see renderPartsMenu). */
+  @state() private partsShown = 40;
   @state() isCapturing = false;
   private captureStream: MediaStream | null = null;
 
@@ -106,10 +108,11 @@ export class ShaderRitualApp extends LitElement {
   private onPartsChanged = (e: CustomEvent<PartInfo[]>) => {
     const infos = e.detail || [];
     this.partInfos = infos;
+    this.partsShown = 40;
     const parts: Record<string, PartSetting> = {};
     for (const info of infos) parts[info.id] = this.config.model.parts[info.id] || defaultPart();
     this.config = { ...this.config, model: { ...this.config.model, parts } };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.persist();
     this.broadcastConfig();
     this.post({ type: 'partInfos', partInfos: infos });
   };
@@ -128,7 +131,7 @@ export class ShaderRitualApp extends LitElement {
       };
     });
     this.config = { ...this.config, model: { ...this.config.model, parts } };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.persist();
     this.broadcastConfig();
   };
 
@@ -187,7 +190,6 @@ export class ShaderRitualApp extends LitElement {
   };
 
   private pendingMidiUpdate = false;
-  private saveTimeout: any = null;
   private monitorRaf = 0;
 
   // Detached control-panel / code-window support.
@@ -687,7 +689,7 @@ export class ShaderRitualApp extends LitElement {
         break;
       case 'config':
         this.config = sanitizeConfig(msg.config);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+        this.persist();
         break;
       case 'bands':
         // Controller mirrors the render window's live meter + audio state.
@@ -734,9 +736,28 @@ export class ShaderRitualApp extends LitElement {
     }
   }
 
-  /** Push the live config to the other window (called on every local edit). */
+  private broadcastTimer: any = null;
+  private lastBroadcastAt = 0;
+
+  /**
+   * Push the live config to the other windows. Throttled: a slider drag fires
+   * on every mousemove and each send serialises the whole config, which is
+   * heavy once a model's parts are in there. Always sends a trailing update so
+   * the final value lands.
+   */
   private broadcastConfig() {
-    this.post({ type: 'config', config: this.config });
+    const now = performance.now();
+    const since = now - this.lastBroadcastAt;
+    clearTimeout(this.broadcastTimer);
+    if (since >= 60) {
+      this.lastBroadcastAt = now;
+      this.post({ type: 'config', config: this.config });
+    } else {
+      this.broadcastTimer = setTimeout(() => {
+        this.lastBroadcastAt = performance.now();
+        this.post({ type: 'config', config: this.config });
+      }, 60 - since);
+    }
   }
 
   private runCommand(name: string) {
@@ -1024,11 +1045,7 @@ export class ShaderRitualApp extends LitElement {
           this.config = { ...this.config };
           this.pendingMidiUpdate = false;
           this.broadcastConfig();
-          clearTimeout(this.saveTimeout);
-          this.saveTimeout = setTimeout(
-            () => localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config)),
-            2000,
-          );
+          this.persist();
         });
       }
     }
@@ -1217,9 +1234,28 @@ export class ShaderRitualApp extends LitElement {
     }
     ref[keys[keys.length - 1]] = value;
     this.config = { ...this.config };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
+    this.persist();
     this.broadcastConfig();
   };
+
+  private persistTimer: any = null;
+
+  /**
+   * Save to localStorage, debounced. Dragging a slider fires this on every
+   * mousemove, and `setItem` is a synchronous write — with a decomposed model
+   * in the config that stalls the UI. `model.parts` is dropped because it is
+   * rebuilt from the model on load anyway (sanitizeConfig clears it).
+   */
+  private persist() {
+    clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => {
+      try {
+        const { model, ...rest } = this.config;
+        const { parts, ...modelRest } = model;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...rest, model: modelRest }));
+      } catch (e) {}
+    }, 400);
+  }
 
   /* ----------------------------- UI ------------------------------ */
 
@@ -1321,12 +1357,25 @@ export class ShaderRitualApp extends LitElement {
       return html`<div class="element-desc">Upload a model to list its parts. Each mesh becomes
         an element you can wire to Low / Mid / High, choose a reaction, and hide.</div>`;
     }
+    // Each card is ~6 live controls, and Lit rebuilds them on every config
+    // change — a model with hundreds of meshes would stall the panel. Show a
+    // page at a time instead.
+    const total = this.partInfos.length;
+    const shown = Math.min(this.partsShown, total);
     return html`
-      <div class="control-row" style="margin:6px 0;">
+      <div class="control-row" style="margin:6px 0;gap:6px;justify-content:flex-start;">
         <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;"
           @click=${this.autoDistribute}>Auto-distribute bands</button>
       </div>
-      ${this.partInfos.map((info) => this.renderPart(info))}
+      ${this.partInfos.slice(0, shown).map((info) => this.renderPart(info))}
+      ${shown < total
+        ? html`<div class="control-row" style="gap:6px;justify-content:flex-start;">
+            <button class="action-btn" style="font-size:0.7rem;padding:4px 8px;"
+              @click=${() => (this.partsShown = this.partsShown + 40)}>
+              Show more (${shown} of ${total})
+            </button>
+          </div>`
+        : ''}
     `;
   }
 
