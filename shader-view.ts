@@ -118,6 +118,7 @@ export class ShaderRitualView extends LitElement {
   private modelBlitScene!: THREE.Scene;
   private modelBlitUniforms!: Record<string, { value: any }>;
   private lastModelQuality = 1;
+  private contextLost = false;
 
   // User-uploaded GLB model overlay (rendered on top with a perspective camera).
   private modelScene!: THREE.Scene;
@@ -346,6 +347,21 @@ void main(){
     this.gltfLoader.setDRACOLoader(draco);
     this.gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 
+    // A lost GL context (starting a screen share, a GPU switch, waking from
+    // sleep) otherwise leaves the canvas dead until a reload. Ride it out and
+    // rebuild the render targets when it comes back.
+    this.canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.contextLost = true;
+    });
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.contextLost = false;
+      this.resize();
+      this.baseLayer.renderBufferB(this.camera);
+      this.overlayShaderId = ''; // force the overlay layer to rebuild
+      this.lastAppliedOpacity = -1; // re-apply model material state
+    });
+
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
@@ -568,7 +584,7 @@ void main(){
 
   private renderLoop = () => {
     this.rafId = requestAnimationFrame(this.renderLoop);
-    if (!this.renderer) return;
+    if (!this.renderer || this.contextLost) return;
 
     if (this.analyser) {
       this.analyser.update();
@@ -645,9 +661,13 @@ void main(){
     const captureUp = !!this.captureTexture && !!md?.capture?.visible && md.capture.opacity > 0;
 
     if (modelUp) {
-      // Rebuild fracture shards if the mode / fragment count changed.
+      // Rebuild fracture shards if the mode / fragment count changed — or if
+      // the group went missing while the count still matches (a config sync or
+      // a reload can leave the two out of step, which would render nothing).
       const wantFrag = md.mode === 'fracture' ? Math.max(2, Math.round(md.fracture.fragments)) : 0;
-      if (wantFrag !== this.fragmentCount) this.syncFracture();
+      if (wantFrag !== this.fragmentCount || (wantFrag > 0 && !this.fractureGroup)) {
+        this.syncFracture();
+      }
 
       const physicsActive =
         md.mode === 'fracture' && md.fracture.physics.enabled && !!this.fractureGroup;

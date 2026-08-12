@@ -662,10 +662,19 @@ export class ShaderRitualApp extends LitElement {
           this.post({ type: 'partInfos', partInfos: this.partInfos });
         }
         break;
-      case 'partInfos':
-        // Controller mirrors the render window's decomposed part list.
-        if (this.isController) this.partInfos = msg.partInfos || [];
+      case 'partInfos': {
+        // Controller mirrors the render window's decomposed part list, and
+        // seeds a settings entry for each part — otherwise editing one part
+        // would broadcast a parts map containing only that part.
+        if (!this.isController) break;
+        const infos: PartInfo[] = msg.partInfos || [];
+        this.partInfos = infos;
+        this.partsShown = 40;
+        const parts: Record<string, PartSetting> = {};
+        for (const info of infos) parts[info.id] = this.config.model.parts[info.id] || defaultPart();
+        this.config = { ...this.config, model: { ...this.config.model, parts } };
         break;
+      }
       case 'modelUpload':
         // Render window loads a model uploaded from the detached controller.
         if (this.isMain) {
@@ -687,10 +696,21 @@ export class ShaderRitualApp extends LitElement {
         // Controller mirrors the render window's load result.
         if (!this.isMain) this.modelName = msg.name || '';
         break;
-      case 'config':
-        this.config = sanitizeConfig(msg.config);
+      case 'config': {
+        // sanitizeConfig always clears model.parts (they belong to whichever
+        // model is loaded, not to saved settings). Carry them across the sync
+        // instead, or a round-trip would silently wipe every part's band and
+        // reaction — which is what happens the moment a controller is attached.
+        const next = sanitizeConfig(msg.config);
+        const incomingParts = msg.config?.model?.parts;
+        next.model.parts =
+          incomingParts && Object.keys(incomingParts).length
+            ? incomingParts
+            : this.config.model.parts;
+        this.config = next;
         this.persist();
         break;
+      }
       case 'bands':
         // Controller mirrors the render window's live meter + audio state.
         if (this.isController) {
