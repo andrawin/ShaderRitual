@@ -30,6 +30,11 @@ import { planet } from './shaders/planet';
 import { horizon } from './shaders/horizon';
 import { blossom } from './shaders/blossom';
 import { valley } from './shaders/valley';
+import { vectors } from './shaders/vectors';
+import { electric } from './shaders/electric';
+import { machina } from './shaders/machina';
+import { soundblob } from './shaders/soundblob';
+import { moire } from './shaders/moire';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -52,6 +57,11 @@ export const SHADERS: ShaderDef[] = [
   horizon,
   blossom,
   valley,
+  vectors,
+  electric,
+  machina,
+  soundblob,
+  moire,
 ];
 
 /** Fresh camera / motion rig defaults. */
