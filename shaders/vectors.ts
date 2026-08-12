@@ -62,7 +62,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   float FREQUENCY_SCALAR = mix(1.0, 1.50, min(high, 1.));
   // Hiding the grid element locks the lattice terms flat -> smooth field.
   float GRID_SPACING = grid_visible > 0.5 ? mix(1.0, 2.0, min(high, 1.)) : 1.0;
-  float GRID_DENSITY = grid_visible > 0.5 ? mix(1.0, 3.0, min(high, 1.)) : 0.0;
+  // Kept above zero when hidden: at exactly 0 the step length collapses and the
+  // accumulator blows out instead of smoothing.
+  float GRID_DENSITY = grid_visible > 0.5 ? mix(1.0, 3.0, min(high, 1.)) : 0.4;
   float GLOW = mix(1.0, 0.8, min(high, 1.));
   float DEPTH = mix(4.0, 0.0, min(high, 1.));
   float BRIGHT = mix(1.0, 0.8, min(high, 1.)) * (1.0 + glow_react * 1.2);
@@ -73,7 +75,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec4 outputColor = vec4(0.0);
 
   float depth = DEPTH;
-  float stepDistance = 0.0;
 
   // Camera rig: fov zooms the ray, burst throws the volume outward.
   float zoom = (60.0 / iCamFov) / max(iCamDist, 0.3);
@@ -92,15 +93,16 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     tempVector = animationVector =
       dot(animationVector, position) * animationVector + cross(animationVector, position);
 
-    for(stepDistance = 2.0; stepDistance < 9.0; stepDistance++){
-      animationVector += sin(ceil(animationVector * stepDistance * GRID_SPACING) * GLOW - time).yzx / stepDistance;
+    // GLSL ES 1.00 requires the loop index to be declared in the init clause.
+    for(float k = 2.0; k < 9.0; k++){
+      animationVector += sin(ceil(animationVector * k * GRID_SPACING) * GLOW - time).yzx / k;
     }
 
-    stepDistance = 0.10 * length(sin(animationVector * animationVector * FREQUENCY_SCALAR)) * GLOW
-                 * sqrt(length(tempVector * sin(tempVector.yzx * GRID_DENSITY)));
-    stepDistance = max(stepDistance, 1e-4);
-    depth += stepDistance;
-    outputColor += vec4(9.0, iteration, depth, 1.0) / stepDistance * BRIGHT;
+    float sd = 0.10 * length(sin(animationVector * animationVector * FREQUENCY_SCALAR)) * GLOW
+             * sqrt(length(tempVector * sin(tempVector.yzx * GRID_DENSITY)));
+    sd = max(sd, 1e-3);
+    depth += sd;
+    outputColor += vec4(9.0, iteration, depth, 1.0) / sd * BRIGHT;
   }
 
   outputColor = outputColor / 60000.0;

@@ -144,13 +144,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
 
   vec3 p = s;
   vec3 col = vec3(0.);
-  float i = 0.;
   float dd = 0.;
   const float alfa = 1.;
   glowe = 0.;
   glowrep = 0.;
 
-  for(; i < 64.; i++){
+  // GLSL ES 1.00 requires the loop index to be declared in the init clause.
+  for(float i = 0.; i < 64.; i++){
     float d = map(p, time);
     if(abs(d) < 0.001){
       if(hitGround){
