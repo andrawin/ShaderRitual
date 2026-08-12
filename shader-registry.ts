@@ -35,6 +35,10 @@ import { electric } from './shaders/electric';
 import { machina } from './shaders/machina';
 import { soundblob } from './shaders/soundblob';
 import { moire } from './shaders/moire';
+import { reactor } from './shaders/reactor';
+import { trench } from './shaders/trench';
+import { vault } from './shaders/vault';
+import { shards } from './shaders/shards';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -62,6 +66,10 @@ export const SHADERS: ShaderDef[] = [
   machina,
   soundblob,
   moire,
+  reactor,
+  trench,
+  vault,
+  shards,
 ];
 
 /** Fresh camera / motion rig defaults. */
