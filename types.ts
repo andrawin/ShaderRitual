@@ -86,7 +86,14 @@ export interface FxSetting {
 }
 
 /** The available global post-process filters (applied to the final image). */
-export type FxName = 'pixelate' | 'edge' | 'posterize' | 'rgbShift' | 'scanlines';
+export type FxName =
+  | 'pixelate'
+  | 'edge'
+  | 'posterize'
+  | 'rgbShift'
+  | 'scanlines'
+  | 'glitch'
+  | 'mosaic';
 
 export type PostFXConfig = Record<FxName, FxSetting>;
 

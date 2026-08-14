@@ -33,7 +33,6 @@ import { valley } from './shaders/valley';
 import { vectors } from './shaders/vectors';
 import { electric } from './shaders/electric';
 import { machina } from './shaders/machina';
-import { soundblob } from './shaders/soundblob';
 import { moire } from './shaders/moire';
 import { reactor } from './shaders/reactor';
 import { trench } from './shaders/trench';
@@ -64,7 +63,6 @@ export const SHADERS: ShaderDef[] = [
   vectors,
   electric,
   machina,
-  soundblob,
   moire,
   reactor,
   trench,
@@ -167,6 +165,8 @@ export function defaultPostFX(): PostFXConfig {
     posterize: { on: false, amount: 0.5, band: 'none' },
     rgbShift: { on: false, amount: 0.4, band: 'none' },
     scanlines: { on: false, amount: 0.5, band: 'none' },
+    glitch: { on: false, amount: 0.5, band: 'none' },
+    mosaic: { on: false, amount: 0.5, band: 'none' },
   };
 }
 

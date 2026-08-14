@@ -46,14 +46,153 @@ const postShader = `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tScene;
+uniform sampler2D tPrev;
 uniform vec3 iResolution;
+uniform float iTime;
 uniform float uPixelate;
 uniform float uEdge;
 uniform float uPosterize;
 uniform float uRgb;
 uniform float uScan;
+uniform float uGlitch;
+uniform float uMosaic;
+
+/* ---------------------------------------------------------------
+ * Glitch — block swap / static / colour banding, adapted from a
+ * Shadertoy original that drove its probability from a raymarched
+ * mask. Here the probability comes from scene luminance instead, so
+ * the glitch clusters on the bright parts of whatever is playing.
+ * ------------------------------------------------------------- */
+
+float rnd(vec2 co){ return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453); }
+float rnd1(float p){ p = fract(p * .1031); p *= p + 33.33; p *= p + p; return fract(p); }
+float hash12(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * .1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float aspect(){ return iResolution.x / iResolution.y; }
+vec2 pToUv(vec2 p){ return p / (2.0 * vec2(aspect(), 1.0)) + 0.5; }
+vec2 uvToP(vec2 uv){ return (uv - 0.5) * 2.0 * vec2(aspect(), 1.0); }
+
+vec2 glitchCoord(vec2 p, vec2 gridSize){
+  vec2 coord = floor(p / gridSize) * gridSize;
+  coord += gridSize * 0.5;
+  return coord;
+}
+
+/** Probability that a region glitches: brighter scene -> more likely. */
+float glitchProb(vec2 p){
+  vec2 uv = clamp(pToUv(p), 0.0, 1.0);
+  vec3 c = texture2D(tScene, uv).rgb;
+  return clamp(dot(c, vec3(.299, .587, .114)) * 1.6, 0.0, 1.0);
+}
+
+/** vec3(seed.xy, prob) — the original's GlitchSeed struct, flattened. */
+vec3 glitchSeed(vec2 p, float speed, float t){
+  float seedTime = floor(t * speed);
+  vec2 seed = vec2(1. + mod(seedTime / 100., 100.), 1. + mod(seedTime, 100.)) / 100.;
+  seed += p;
+  return vec3(seed, glitchProb(p));
+}
+
+float shouldApply(vec3 s){
+  float v = mix(mix(rnd(s.xy), 1., s.z - .5), 0., (1. - s.z) * .5);
+  return floor(v + 0.5); // ES 1.00 has no round()
+}
+
+vec4 swapCoords(vec2 seed, vec2 groupSize, vec2 subGrid, vec2 blockSize){
+  vec2 r2 = vec2(rnd(seed), rnd(seed + .1));
+  vec2 range = subGrid - (blockSize - 1.);
+  vec2 coord = floor(r2 * range) / subGrid;
+  vec2 bottomLeft = coord * groupSize;
+  vec2 realBlockSize = (groupSize / subGrid) * blockSize;
+  vec2 topRight = bottomLeft + realBlockSize;
+  topRight -= groupSize / 2.;
+  bottomLeft -= groupSize / 2.;
+  return vec4(bottomLeft, topRight);
+}
+float isInBlock(vec2 pos, vec4 block){
+  vec2 a = sign(pos - block.xy);
+  vec2 b = sign(block.zw - pos);
+  return min(sign(a.x + a.y + b.x + b.y - 3.), 0.);
+}
+vec2 moveDiff(vec2 pos, vec4 swapA, vec4 swapB){
+  return (swapB.xy - swapA.xy) * isInBlock(pos, swapA);
+}
+void swapBlocks(inout vec2 xy, vec2 groupSize, vec2 subGrid, vec2 blockSize, vec2 seed, float apply){
+  vec2 groupOffset = glitchCoord(xy, groupSize);
+  vec2 pos = xy - groupOffset;
+  vec4 swapA = swapCoords(seed * groupOffset, groupSize, subGrid, blockSize);
+  vec4 swapB = swapCoords(seed * (groupOffset + .1), groupSize, subGrid, blockSize);
+  pos += moveDiff(pos, swapA, swapB) * apply;
+  pos += moveDiff(pos, swapB, swapA) * apply;
+  xy = pos + groupOffset;
+}
+
+void glitchSwap(inout vec2 p, float t, float scale){
+  float speed = 5.;
+  vec3 seed;
+  float apply;
+
+  seed = glitchSeed(glitchCoord(p, vec2(.6) * scale), speed, t);
+  apply = shouldApply(seed);
+  swapBlocks(p, vec2(.6) * scale, vec2(2), vec2(1), seed.xy, apply);
+
+  seed = glitchSeed(glitchCoord(p, vec2(.8) * scale), speed, t);
+  apply = shouldApply(seed);
+  swapBlocks(p, vec2(.8) * scale, vec2(3), vec2(1), seed.xy, apply);
+
+  vec2 gs = vec2(.2) * scale;
+  seed = glitchSeed(glitchCoord(p, gs), speed, t);
+  float apply2 = shouldApply(seed);
+  swapBlocks(p, gs, vec2(6), vec2(1), seed.xy + 1., apply * apply2);
+  swapBlocks(p, gs, vec2(6), vec2(1), seed.xy + 2., apply * apply2);
+  swapBlocks(p, gs, vec2(6), vec2(1), seed.xy + 3., apply * apply2);
+
+  gs = vec2(1.2, .2) * scale;
+  seed = glitchSeed(glitchCoord(p, gs), speed, t);
+  apply = shouldApply(seed);
+  swapBlocks(p, gs, vec2(9, 2), vec2(3, 1), seed.xy, apply);
+}
+
+void glitchStatic(inout vec2 p, float t, float scale){
+  vec2 groupSize = vec2(.5, .125) * scale;
+  float grainSize = .2 * scale;
+  vec3 a = glitchSeed(glitchCoord(p, groupSize), 5., t);
+  a.z *= .5;
+  if(shouldApply(a) == 1.){
+    vec3 b = glitchSeed(glitchCoord(p, vec2(grainSize)), 5., t);
+    vec2 offset = vec2(rnd(b.xy), rnd(b.xy + .1));
+    offset = floor(offset * 2. - 1. + 0.5);
+    p += offset * 2.0 * scale;
+  }
+}
+
+void glitchColor(vec2 p, inout vec3 color, float t, float scale){
+  vec2 groupSize = vec2(.75, .125) * scale;
+  vec3 seed = glitchSeed(glitchCoord(p, groupSize), 5., t);
+  seed.z *= .3;
+  if(shouldApply(seed) == 1.){
+    vec2 co = mod(p, groupSize) / groupSize * vec2(0., 6.);
+    float a = max(co.x, co.y);
+    color *= min(floor(mod(a, 2.)), 1.) * 3.5;
+  }
+}
+
 void main(){
   vec2 uv = vUv;
+
+  // Glitch displaces the sampling coordinate before anything else reads it.
+  if(uGlitch > 0.001){
+    float g = clamp(uGlitch, 0., 1.);
+    float t = iTime * 0.35;
+    float scale = mix(1.2, 0.35, g); // smaller groups -> busier glitch
+    vec2 p = uvToP(uv);
+    glitchSwap(p, t, scale);
+    glitchStatic(p, t, scale * 0.5);
+    uv = pToUv(p);
+  }
   if(uPixelate > 0.001){
     float blk = max(mix(1.0, 90.0, clamp(uPixelate, 0., 1.)), 1.0);
     vec2 bs = vec2(blk) / iResolution.xy;
@@ -83,6 +222,32 @@ void main(){
     float sl = 0.5 + 0.5 * sin(vUv.y * iResolution.y * 3.14159);
     col *= 1.0 - clamp(uScan, 0., 1.) * (1.0 - sl);
   }
+
+  // Glitch colour banding, applied after shading like the original.
+  if(uGlitch > 0.001){
+    float g = clamp(uGlitch, 0., 1.);
+    glitchColor(uvToP(uv), col, iTime * 0.35, mix(1.2, 0.35, g));
+  }
+
+  /* Mosaic Shuffle (Leon Denise): each tile drags the previous frame along a
+   * quantised direction, and tiles respawn from the live image at random, so
+   * the picture smears into shuffling blocks. Needs the feedback texture. */
+  if(uMosaic > 0.001){
+    float m = clamp(uMosaic, 0., 1.);
+    float unit = 1.0 / iResolution.y;
+    float mt = iTime * 10.0;
+    float index = floor(mt);
+    float mask = hash12(floor(vUv * rnd1(index + 78.) * 32.) + index);
+    float a = 6.283 * floor(rnd1(index * 72.) * 4.) / 4.;
+    vec2 dir = vec2(cos(a), sin(a));
+    vec2 offset = mask * dir * unit * (10.0 * m) * hash12(floor(vUv * 16.));
+    vec3 prev = texture2D(tPrev, vUv - offset).rgb;
+    // Respawn threshold eases off as the amount rises -> longer smears.
+    bool spawn = hash12(floor(vUv * rnd1(index + 78.) * 8.) + index) > mix(0.55, 0.92, m);
+    bool cold = dot(prev, prev) < 1e-5; // first frame / just switched on
+    col = (spawn || cold) ? col : mix(col, prev, m);
+  }
+
   gl_FragColor = vec4(clamp(col, 0., 1.), 1.);
 }
 `;
@@ -112,6 +277,12 @@ export class ShaderRitualView extends LitElement {
   private sceneTarget!: THREE.WebGLRenderTarget;
   private postScene!: THREE.Scene;
   private postUniforms!: Record<string, { value: any }>;
+
+  // Mosaic feedback (previous post output) + a plain copy pass to the screen.
+  private feedRead!: THREE.WebGLRenderTarget;
+  private feedWrite!: THREE.WebGLRenderTarget;
+  private copyScene!: THREE.Scene;
+  private copyUniforms!: Record<string, { value: any }>;
 
   // Reduced-resolution pass for the 3D overlay (model + screen capture).
   private modelTarget!: THREE.WebGLRenderTarget;
@@ -242,6 +413,27 @@ export class ShaderRitualView extends LitElement {
     this.baseTarget = new THREE.WebGLRenderTarget(1, 1, opts);
     this.overlayTarget = new THREE.WebGLRenderTarget(1, 1, opts);
     this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, opts);
+    // Mosaic feedback: the post pass reads the previous frame from one target
+    // while writing the next into the other, then the result is copied out.
+    this.feedRead = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.feedWrite = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.copyUniforms = { tSrc: { value: null } };
+    this.copyScene = new THREE.Scene();
+    this.copyScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.copyUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tSrc;
+void main(){ gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.); }`,
+        }),
+      ),
+    );
+
     // The 3D overlay (model + capture) can render at a fraction of the screen
     // resolution and be blitted up — the big win on large displays.
     this.modelTarget = new THREE.WebGLRenderTarget(1, 1, opts);
@@ -296,12 +488,16 @@ void main(){
     // Global post-FX pass.
     this.postUniforms = {
       tScene: { value: this.sceneTarget.texture },
+      tPrev: { value: null },
       iResolution: { value: new THREE.Vector3(1, 1, 1) },
+      iTime: { value: 0 },
       uPixelate: { value: 0 },
       uEdge: { value: 0 },
       uPosterize: { value: 0 },
       uRgb: { value: 0 },
       uScan: { value: 0 },
+      uGlitch: { value: 0 },
+      uMosaic: { value: 0 },
     };
     this.postScene = new THREE.Scene();
     this.postScene.add(
@@ -385,6 +581,8 @@ void main(){
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
+    this.feedRead.setSize(pw, ph);
+    this.feedWrite.setSize(pw, ph);
     const mq = Math.min(1, Math.max(0.25, this.config?.model?.quality ?? 1));
     this.lastModelQuality = mq;
     this.modelTarget.setSize(Math.max(1, Math.floor(pw * mq)), Math.max(1, Math.floor(ph * mq)));
@@ -613,7 +811,9 @@ void main(){
     const po = this.fxAmount('posterize');
     const rg = this.fxAmount('rgbShift');
     const sc = this.fxAmount('scanlines');
-    const anyPost = px + ed + po + rg + sc > 0.001;
+    const gl = this.fxAmount('glitch');
+    const mo = this.fxAmount('mosaic');
+    const anyPost = px + ed + po + rg + sc + gl + mo > 0.001;
     const needComposite = ov.enabled;
 
     const baseDef = getShader(this.config.activeShader);
@@ -649,8 +849,26 @@ void main(){
       this.postUniforms.uPosterize.value = po;
       this.postUniforms.uRgb.value = rg;
       this.postUniforms.uScan.value = sc;
-      this.renderer.setRenderTarget(null);
-      this.renderer.render(this.postScene, this.camera);
+      this.postUniforms.uGlitch.value = gl;
+      this.postUniforms.uMosaic.value = mo;
+      this.postUniforms.iTime.value = time;
+
+      if (mo > 0.001) {
+        // Mosaic needs the previous post output: render into the write target,
+        // copy that to the screen, then swap so it becomes next frame's source.
+        this.postUniforms.tPrev.value = this.feedRead.texture;
+        this.renderer.setRenderTarget(this.feedWrite);
+        this.renderer.render(this.postScene, this.camera);
+        this.renderer.setRenderTarget(null);
+        this.copyUniforms.tSrc.value = this.feedWrite.texture;
+        this.renderer.render(this.copyScene, this.camera);
+        const tmp = this.feedRead;
+        this.feedRead = this.feedWrite;
+        this.feedWrite = tmp;
+      } else {
+        this.renderer.setRenderTarget(null);
+        this.renderer.render(this.postScene, this.camera);
+      }
     }
 
     // 3D overlay scene, drawn on top of the post-processed image. It holds both

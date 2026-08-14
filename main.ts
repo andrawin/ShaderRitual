@@ -1932,6 +1932,8 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderFx('posterize', 'Posterize')}
           ${this.renderFx('rgbShift', 'RGB Shift')}
           ${this.renderFx('scanlines', 'Scanlines')}
+          ${this.renderFx('glitch', 'Glitch (block swap)')}
+          ${this.renderFx('mosaic', 'Mosaic Shuffle')}
         </div>
 
         <!-- 3D MODEL -->
