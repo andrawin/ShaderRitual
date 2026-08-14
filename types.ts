@@ -139,10 +139,10 @@ export interface FractureConfig {
   physics: PhysicsConfig;
 }
 /**
- * How the model moves on the beat. All are tempo-locked to `ModelConfig.bpm`;
- * `spin` is the classic turntable rotation.
+ * How the model moves on the beat. All are tempo-locked; `spin` is the classic
+ * turntable rotation and `none` holds it still.
  */
-export type ModelMotion = 'spin' | 'bob' | 'sway' | 'orbit' | 'tumble';
+export type ModelMotion = 'none' | 'spin' | 'bob' | 'sway' | 'orbit' | 'tumble';
 
 /** Shared-window screen-capture projection. */
 export interface CaptureConfig {
@@ -171,7 +171,7 @@ export interface ModelConfig {
   posX: number;
   posY: number;
   posZ: number;
-  /** Movement tempo in beats per minute; 0 = hold still. */
+  /** Movement tempo in beats per minute; 0 = follow the global camera BPM. */
   bpm: number;
   /** Which tempo-locked movement to play. */
   motion: ModelMotion;

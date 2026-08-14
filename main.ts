@@ -963,7 +963,7 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'overlay.blend') return ['add', 'screen', 'mix'];
     if (path === 'camera.mode') return ['manual', 'bpm', 'audio'];
     if (path === 'model.mode') return ['none', 'parts', 'fracture'];
-    if (path === 'model.motion') return ['spin', 'bob', 'sway', 'orbit', 'tumble'];
+    if (path === 'model.motion') return ['none', 'spin', 'bob', 'sway', 'orbit', 'tumble'];
     if (path === 'model.capture.mode') return ['background', 'floating'];
     if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
     if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
@@ -1315,11 +1315,12 @@ export class ShaderRitualApp extends LitElement {
         ${this.renderSlider('Position Y', 'model.posY', -3, 3, 0.05)}
         ${this.renderSlider('Position Z', 'model.posZ', -3, 3, 0.05)}
         <div class="control-row">
-          <label>BPM (0=off)</label>
+          <label>BPM (0 = global)</label>
           <input class="bpm-num" type="number" min="0" max="300" step="1" .value=${String(Math.round(m.bpm))}
             @input=${(e: any) => this.updateConfig('model.bpm', parseFloat(e.target.value) || 0)} />
         </div>
         ${this.renderSelect('Movement', 'model.motion', [
+          { value: 'none', label: 'Still (no movement)' },
           { value: 'spin', label: 'Spin (turntable)' },
           { value: 'bob', label: 'Bob (float)' },
           { value: 'sway', label: 'Sway (pendulum)' },
@@ -1327,6 +1328,10 @@ export class ShaderRitualApp extends LitElement {
           { value: 'tumble', label: 'Tumble (off-axis)' },
         ])}
         ${this.renderSlider('Movement depth', 'model.motionAmount', 0, 3, 0.05)}
+        <div class="element-desc" style="margin-bottom:8px;">
+          The Movement setting drives the model on its own. BPM only sets the
+          rate — leave it at 0 to follow the global camera tempo.
+        </div>
         <div class="control-row">
           <label>3D quality</label>
           <select .value=${live(String(m.quality))}

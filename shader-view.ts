@@ -901,10 +901,13 @@ void main(){
         this.modelHolder.position.set(md.posX, md.posY, md.posZ);
         this.modelHolder.rotation.set(0, 0, 0);
       } else {
-        // BPM is an explicit tempo, so the phase runs on real time rather than
-        // the audio-gated clock — otherwise "calm on silence" throttles a
-        // movement the user asked to run at a set rate, and it reads as frozen.
-        if (md.bpm > 0) this.modelPhase += dt * (md.bpm / 60); // beats elapsed
+        // The Movement dropdown is what decides whether the model moves; the
+        // BPM field only sets the rate, falling back to the global camera tempo
+        // so choosing a movement does something without a second setting.
+        // Real time, not the audio-gated clock: a tempo the user typed should
+        // run at that tempo whether or not audio is coming in.
+        const beat = md.bpm > 0 ? md.bpm : this.config.camera?.bpm || 120;
+        if (md.motion !== 'none') this.modelPhase += dt * (beat / 60); // beats
         this.applyModelMotion(md);
       }
 
@@ -998,6 +1001,8 @@ void main(){
     h.rotation.set(0, 0, 0);
 
     switch (md.motion) {
+      case 'none':
+        break; // held at rest — position/rotation already reset above
       case 'bob':
         // Floats up and down, one cycle every two beats, with a soft nod.
         h.position.y += Math.sin(p * Math.PI) * 0.35 * amt;
