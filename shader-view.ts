@@ -320,6 +320,7 @@ export class ShaderRitualView extends LitElement {
   private readonly IDENTITY = new THREE.Quaternion();
   private tmpVec = new THREE.Vector3();
   private tmpQuat = new THREE.Quaternion(); // scratch (avoids per-frame allocation)
+  private partsPosed = false; // parts carry an animated pose that needs resetting
   private lastAppliedOpacity = -1; // skip the material opacity loop when unchanged
   private opacityMatCount = -1;
 
@@ -900,7 +901,10 @@ void main(){
         this.modelHolder.position.set(md.posX, md.posY, md.posZ);
         this.modelHolder.rotation.set(0, 0, 0);
       } else {
-        if (md.bpm > 0) this.modelPhase += motionDt * (md.bpm / 60); // beats elapsed
+        // BPM is an explicit tempo, so the phase runs on real time rather than
+        // the audio-gated clock — otherwise "calm on silence" throttles a
+        // movement the user asked to run at a set rate, and it reads as frozen.
+        if (md.bpm > 0) this.modelPhase += dt * (md.bpm / 60); // beats elapsed
         this.applyModelMotion(md);
       }
 
@@ -919,6 +923,7 @@ void main(){
 
       if (md.mode === 'parts') {
         this.animateParts(this.lastBands, motionDt);
+        this.partsPosed = true;
       } else if (md.mode === 'fracture') {
         if (physicsActive) {
           this.detectBeat(this.lastBands);
@@ -930,6 +935,17 @@ void main(){
         } else {
           this.animateFracture(this.lastBands, motionDt);
         }
+      } else if (this.partsPosed) {
+        // Left Parts mode: animateParts had been rewriting each mesh every
+        // frame, so without this they stay frozen in their last pose and the
+        // model looks stuck / deformed.
+        for (const p of this.modelParts) {
+          p.mesh.position.copy(p.basePosition);
+          p.mesh.scale.copy(p.baseScale);
+          p.mesh.quaternion.copy(p.baseQuaternion);
+          for (const m of p.materials) m.emissiveIntensity = 0;
+        }
+        this.partsPosed = false;
       }
 
     } else if (this.modelHolder) {
