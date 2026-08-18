@@ -5,25 +5,25 @@
 import type { ShaderDef } from '../types';
 
 /*
- * "Waveform" — a monochrome 3D soundwave landscape: rows of waveform traces
- * receding into perspective, each row an older snapshot, so the sound scrolls
- * away from the viewer as a terrain of ridges.
+ * "Waveform" — a monochrome 3D soundwave rendered as a volumetric contour scan.
  *
- * Rendered analytically rather than raymarched: for every pixel the rows are
- * walked front to back while tracking the highest line drawn so far, which
- * gives exact hidden-line removal (a nearer ridge hides everything behind it)
- * and keeps the strokes crisp at any resolution.
+ * Structure follows a Shadertoy original that raymarched a box and lit a thin
+ * sheet wherever the ray's height matched a height map sampled from an image,
+ * accumulating additively so the sheets read as glowing translucent surfaces.
+ * Here the height map is a soundwave synthesised from the engine's bands rather
+ * than an image, and the four RGB+luminance sheets of the original become
+ * stacked monochrome layers.
  *
- * The trace is synthesised from the engine's bands — low sets the body of the
- * wave, high adds the fine harmonics — since the engine exposes bands rather
- * than a full FFT spectrum.
+ * Ported to GLSL-ES 1.00: the mouse-orbit state (which the original kept in a
+ * feedback buffer) is replaced by the camera rig, and the march is 256 fixed
+ * steps with the original's early-exit once the ray leaves the box heading out.
  *
  * Elements:
- *   wave   -> amplitude of the trace (the body of the sound)
- *   detail -> fine harmonics riding on top
- *   scan   -> how fast rows scroll away
- *   glow   -> bloom around the strokes
- *   grid   -> cross-ticks that read as a wireframe mesh; hideable
+ *   wave   -> amplitude of the soundwave surface
+ *   detail -> harmonics folded into the surface
+ *   scan   -> how fast the wave travels
+ *   glow   -> brightness accumulated per sheet crossing
+ *   sheets -> the extra stacked layers; hide for a single clean surface
  */
 
 const bufferShader = `
@@ -43,67 +43,82 @@ uniform float wave_react;
 uniform float detail_react;
 uniform float scan_react;
 uniform float glow_react;
-uniform float grid_react;
-uniform float grid_visible;
+uniform float sheets_react;
+uniform float sheets_visible;
 
-/** One waveform trace. The seed differs per row, so each is an older snapshot. */
-float waveAt(float x, float seed){
-  float s = seed * 0.7;
-  float w = sin(x * 1.7 + s);
-  w += sin(x * 3.9 - s * 1.3) * 0.55;
-  w += sin(x * 8.3 + s * 2.1) * 0.30 * (0.30 + detail_react);
-  w += sin(x * 17.1 - s * 3.3) * 0.16 * (0.20 + detail_react * 1.5);
-  return w * 0.5;
+#define MAX_STEPS 256
+#define STEP_SIZE .012
+#define WIDTH .009
+#define Z_SCALE 1.4
+#define Z_OFFSET .6
+#define CAM_RADIUS 3.
+#define _tau 6.2831853071
+
+/**
+ * The height field: a soundwave running along x, with the trailing axis
+ * carrying older phase so the wave visibly travels across the surface.
+ * Returns roughly 0..1, the range the sheet heights are scaled from.
+ */
+float field(vec2 p, float ph){
+  float amp = 0.20 + wave_react * 0.55;
+  float d = 0.30 + detail_react;
+
+  float w = sin(p.x * 5.0 + ph);
+  w += sin(p.x * 11.0 - ph * 1.4 + p.y * 3.0) * 0.55 * d;
+  w += sin(p.x * 23.0 + ph * 2.1 - p.y * 5.0) * 0.28 * d * 1.4;
+
+  // Fade toward the edges of the box so the surface reads as a slab of sound.
+  float env = exp(-1.5 * dot(p, p));
+  return clamp(0.5 + w * amp * env * 0.5, 0.0, 1.0);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
-  uv *= (iCamFov / 60.) * max(iCamDist, 0.3);
-  uv.x += iCamOrbit * 0.12;
+  // Same framing as the original: both axes divided by width.
+  vec2 uv = vec2(2. * fragCoord.x / iResolution.x - 1.,
+                 (2. * fragCoord.y - iResolution.y) / iResolution.x);
 
-  float t = iTime;
-  float scroll = t * (0.35 + scan_react * 1.6);
-  float amp = 0.16 + wave_react * 0.40;
+  // Camera rig replaces the original's mouse-orbit feedback buffer.
+  float a = (0.35 + iCamOrbit * 0.15) * _tau;
+  float b = (0.08 + iCamHeight * 0.09) * _tau;
+  float radius = CAM_RADIUS * max(iCamDist, 0.4);
 
-  float line = 0.0;   // crisp strokes
-  float bloom = 0.0;  // soft halo
-  float horizon = -1e3;
+  vec3 ro = radius * vec3(-cos(a) * cos(b), -sin(a) * cos(b), sin(b));
+  ro.z += Z_OFFSET;
+  mat3 cm = mat3(
+    cos(-b) * cos(a), cos(-b) * sin(a), sin(-b),
+    -sin(a), cos(a), 0.,
+    -sin(-b) * cos(a), -sin(-b) * sin(a), cos(-b));
+  vec3 rd = cm * normalize(vec3(60.0 / iCamFov, uv));
+  ro += rd;
 
-  for(int i = 0; i < 48; i++){
-    float fi = float(i);
-    // Rows march toward the viewer; the fractional part gives smooth motion
-    // while the integer part hands each row the previous row's shape.
-    float rowT = fi + fract(scroll);
-    float z = 0.42 + rowT * 0.17;
-    float s = 1.0 / z;                    // perspective scale
+  float ph = iTime * (0.8 + scan_react * 2.6);
+  float bright = 0.028 + glow_react * 0.05;
+  float v = 0.0;
 
-    float wx = uv.x * z * 2.4;            // world x at this depth
-    float seed = floor(scroll) - fi;      // per-row history
-    float ly = (waveAt(wx, seed) * amp - 0.34 + iCamHeight * 0.18) * s + 0.02;
+  for(int i = 0; i < MAX_STEPS; i++){
+    ro += STEP_SIZE * rd;
 
-    // Hidden-line removal: a row is only visible where it rises above every
-    // nearer row already walked.
-    if(ly > horizon){
-      float thick = 0.0055 * s + 0.0012;
-      float d = abs(uv.y - ly);
-      float fade = smoothstep(1.0, 0.12, z * 0.11); // distance falloff
-      line = max(line, smoothstep(thick, thick * 0.3, d) * fade);
-      bloom += fade * 0.0009 / (0.0016 + d * d);
+    // Left the box travelling away — nothing further can be hit.
+    if((abs(ro.x) >= 1. || abs(ro.y) >= 1.) && dot(rd, ro) >= .2) break;
+    // Outside the box but still heading in: keep marching.
+    if(abs(ro.x) >= 1. || abs(ro.y) >= 1. || ro.z <= 0.) continue;
 
-      if(grid_visible > 0.5){
-        // Cross-ticks at regular world-x steps read as a wireframe mesh.
-        float gm = abs(fract(wx * 0.5 + 0.5) - 0.5) * 2.0;
-        float tick = smoothstep(0.14, 0.0, gm) * (0.4 + grid_react * 0.8);
-        line = max(line, tick * smoothstep(thick * 7.0, 0.0, d) * fade * 0.75);
-      }
+    float h = field(ro.xy, ph);
 
-      horizon = ly;
+    // Main surface.
+    if(abs(ro.z - h * Z_SCALE) <= WIDTH) v += bright;
+
+    if(sheets_visible > 0.5){
+      // Stacked companions — the original's separate RGB sheets, kept
+      // monochrome so crossings simply read as brighter.
+      float o = 0.10 + sheets_react * 0.12;
+      if(abs(ro.z - (h + o) * Z_SCALE) <= WIDTH) v += bright * 0.7;
+      if(abs(ro.z - (h - o) * Z_SCALE) <= WIDTH) v += bright * 0.7;
+      // A flat reference plane at the wave's resting height.
+      if(abs(ro.z - 0.5 * Z_SCALE) <= WIDTH * 0.7) v += bright * 0.35;
     }
   }
 
-  float v = clamp(line + bloom * (0.35 + glow_react * 1.4), 0.0, 1.0);
-  // Monochrome by design: a single luminance channel, with a soft vignette.
-  v *= 1.0 - 0.55 * dot(uv, uv);
   fragColor = vec4(vec3(clamp(v, 0.0, 1.0)), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -121,14 +136,14 @@ export const waveform: ShaderDef = {
   id: 'waveform',
   name: 'Waveform',
   description:
-    'A monochrome 3D soundwave landscape — rows of waveform traces receding into perspective, scrolling away as the sound moves.',
+    'A monochrome 3D soundwave scanned volumetrically — thin glowing contour sheets tracing a wave surface inside a box.',
   bufferShader,
   imageShader,
   elements: [
     {
       id: 'wave',
       name: 'Amplitude',
-      description: 'Height of the trace — the body of the sound. React drives it on the bass.',
+      description: 'Height of the wave surface. React drives it on the bass.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.25,
@@ -138,7 +153,7 @@ export const waveform: ShaderDef = {
     {
       id: 'detail',
       name: 'Harmonics',
-      description: 'Fine ripple riding on top of the trace.',
+      description: 'Finer ripples folded into the surface.',
       defaultBand: 'high',
       defaultAmount: 1.0,
       canHide: false,
@@ -146,8 +161,8 @@ export const waveform: ShaderDef = {
     },
     {
       id: 'scan',
-      name: 'Scroll',
-      description: 'How fast rows recede. React surges the scroll.',
+      name: 'Travel',
+      description: 'How fast the wave runs across the surface.',
       defaultBand: 'mid',
       defaultAmount: 0.8,
       canHide: false,
@@ -156,18 +171,18 @@ export const waveform: ShaderDef = {
     {
       id: 'glow',
       name: 'Glow',
-      description: 'Bloom around the strokes. React flares them on hits.',
+      description: 'Brightness picked up per sheet crossing. React flares it.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       canHide: false,
       defaultVisible: true,
     },
     {
-      id: 'grid',
-      name: 'Mesh',
-      description: 'Cross-ticks that read as a wireframe. Hide for clean traces.',
-      defaultBand: 'high',
-      defaultAmount: 0.7,
+      id: 'sheets',
+      name: 'Layers',
+      description: 'Stacked companion sheets. React spreads them; hide for one clean surface.',
+      defaultBand: 'mid',
+      defaultAmount: 0.8,
       canHide: true,
       defaultVisible: true,
     },
