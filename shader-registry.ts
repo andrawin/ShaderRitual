@@ -38,6 +38,7 @@ import { reactor } from './shaders/reactor';
 import { trench } from './shaders/trench';
 import { vault } from './shaders/vault';
 import { shards } from './shaders/shards';
+import { waveform } from './shaders/waveform';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -68,6 +69,7 @@ export const SHADERS: ShaderDef[] = [
   trench,
   vault,
   shards,
+  waveform,
 ];
 
 /** Fresh camera / motion rig defaults. */
