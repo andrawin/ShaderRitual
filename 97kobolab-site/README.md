@@ -5,11 +5,10 @@ Styled as a Vim buffer: line-number gutter, tabline, statusline, `:` command
 line, and a slow parallax backdrop.
 
 ```
-97kobolab-site/
-├── index.html                  ← the whole site. single source of truth.
-├── build.py                    ← regenerates the Squarespace snippet
-├── assets/                     ← logo, WebP + PNG
-└── squarespace/code-block.html ← GENERATED. paste this into Squarespace.
+index.html                  ← the whole site. single source of truth.
+build.py                    ← regenerates the Squarespace snippet
+assets/                     ← logo, WebP + PNG
+squarespace/code-block.html ← GENERATED. paste this into Squarespace.
 ```
 
 No build step, no dependencies. `index.html` is self-contained: markup, CSS and
@@ -31,9 +30,11 @@ ever missing. So the hero never looks broken, and never says anything twice.
 ## 2. Preview locally
 
 ```bash
-cd 97kobolab-site
 python3 -m http.server 8000     # then open http://localhost:8000
 ```
+
+Serve it rather than opening `index.html` from the file system — a `file://`
+page can't load the logo, so you'd get the text fallback instead.
 
 ## 3. Publish on Squarespace
 
