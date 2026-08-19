@@ -19,8 +19,12 @@ JS in one file, one external request (Google Fonts, JetBrains Mono).
 
 ## 1. Add the logo
 
-Save the logo as `assets/97kobolab-logo.png`. The site inverts it in CSS, so the
-original white-background PNG is the right file to use — no editing needed.
+Save the logo as `assets/97kobolab-logo.png`. The original white-background PNG
+is the right file to use — no editing needed. The site inverts it in CSS, which
+turns the white field to pure black; the page background is pure black
+(`--bg: #000`) for exactly that reason, so the field vanishes and the logo reads
+as floating linework rather than a black square. **If you change `--bg` away
+from black, export the logo with a transparent background instead.**
 
 If the image is missing the hero falls back to the typographic lockup
 (`97KOBOLAB` + `AUDIOVISUAL ART + TECH LAB / JAKARTA, INDONESIA`), so the page

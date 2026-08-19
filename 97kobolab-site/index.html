@@ -23,7 +23,7 @@
 <style>
 /* ---------------------------------------------------------------- tokens -- */
 :root{
-  --bg:#0b0d10;
+  --bg:#000000;          /* keep this pure black — see .logo below */
   --bg-soft:#0f1216;
   --gutter-bg:#0d1014;
   --status:#161b21;
@@ -153,6 +153,11 @@ section{padding-block:calc(var(--lh) * 2); scroll-margin-top:calc(var(--lh) * 2)
 #hero{padding-top:calc(var(--lh) * 3); min-height:calc(100vh - var(--lh) * 3); display:flex; flex-direction:column; justify-content:center}
 .hero-inner{will-change:transform}
 .logo-wrap{margin-bottom:var(--lh); max-width:min(420px, 80vw)}
+/* The logo ships as grey linework on a WHITE background, so it is inverted to
+   sit on the dark page. That turns its white field into pure black, which is
+   why --bg is #000: the field then matches the page exactly and the logo reads
+   as floating linework instead of a black square. A transparent-background PNG
+   works here too, and frees you to change --bg. */
 .logo{display:block; width:100%; height:auto; filter:invert(1) contrast(1.05) brightness(1.1); opacity:.92}
 .logo-wrap.no-img{display:none}   /* no logo file yet -> wordmark carries the hero */
 #hero.has-logo .tagline{display:none}
