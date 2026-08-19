@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>97KoboLab — Audiovisual Art + Tech Lab, Jakarta</title>
+<meta name="description" content="97KoboLab is an audiovisual art + tech lab in Blok M, Jakarta. Live coding, modular synthesis, audiovisual performance, workshops and open-stage sessions.">
+<meta property="og:title" content="97KoboLab — Audiovisual Art + Tech Lab">
+<meta property="og:description" content="Audiovisual art + tech lab in Blok M, Jakarta. Shows, programs, workshops.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.97kobolab.io">
+<meta name="theme-color" content="#0b0d10">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!-- ==========================================================================
+     97KOBOLAB — one-page site, VIM-flavoured.
+     Everything lives in this single file: styles, markup, behaviour.
+     To edit content, look for the  EDIT:  markers below.
+     ========================================================================== -->
+
+<style>
+/* ---------------------------------------------------------------- tokens -- */
+:root{
+  --bg:#0b0d10;
+  --bg-soft:#0f1216;
+  --gutter-bg:#0d1014;
+  --status:#161b21;
+  --line:#1c2128;
+  --fg:#c5cdd3;
+  --dim:#6b7681;
+  --comment:#59636e;
+  --green:#a3be8c;
+  --cyan:#7fc7d9;
+  --yellow:#e0c184;
+  --magenta:#b48ead;
+  --red:#d08c8c;
+  --lh:24px;              /* the baseline. every vertical value is a multiple */
+  --gut:5.5ch;
+  --pad:2.5rem;
+  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth; -webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font:400 15px/var(--lh) var(--mono);
+  letter-spacing:.01em;
+  overflow-x:hidden;
+  font-variant-ligatures:none;
+}
+::selection{background:#2c3742;color:#e6edf3}
+a{color:inherit}
+
+/* ------------------------------------------------------------ background -- */
+.bg{position:fixed; inset:-10% -10% -10% -10%; z-index:0; pointer-events:none}
+.bg-grid{
+  position:absolute; inset:0;
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.028) 1px, transparent 1px);
+  background-size: 48px var(--lh);
+  mask-image:radial-gradient(ellipse 90% 70% at 50% 30%, #000 20%, transparent 100%);
+  -webkit-mask-image:radial-gradient(ellipse 90% 70% at 50% 30%, #000 20%, transparent 100%);
+  will-change:transform;
+}
+#contour{position:absolute; inset:0; width:100%; height:100%; opacity:.5; will-change:transform}
+.bg-vignette{
+  position:absolute; inset:0;
+  background:radial-gradient(ellipse 120% 90% at 50% 0%, transparent 40%, rgba(0,0,0,.65) 100%);
+}
+
+/* --------------------------------------------------------------- tabline -- */
+.tabline{
+  position:fixed; top:0; left:0; right:0; z-index:40;
+  height:var(--lh); line-height:var(--lh);
+  display:flex; align-items:stretch;
+  background:var(--status);
+  border-bottom:1px solid #000;
+  font-size:12.5px;
+  overflow-x:auto; scrollbar-width:none;
+}
+.tabline::-webkit-scrollbar{display:none}
+.tabline .tab{
+  padding:0 1.1ch; white-space:nowrap; color:var(--dim);
+  text-decoration:none; border-right:1px solid #0b0d10;
+  transition:color .18s ease, background .18s ease;
+}
+.tabline .tab:hover{color:var(--fg)}
+.tabline .tab.is-active{background:var(--bg); color:var(--fg)}
+.tabline .tab .n{color:var(--comment); margin-right:.6ch}
+.tabline .spacer{flex:1; border-right:0}
+.tabline .brand{padding:0 1.2ch; color:var(--comment); white-space:nowrap}
+
+/* ---------------------------------------------------------------- gutter -- */
+.gutter{
+  position:fixed; top:var(--lh); bottom:calc(var(--lh) * 2); left:0; z-index:20;
+  width:var(--gut);
+  background:var(--gutter-bg);
+  border-right:1px solid var(--line);
+  overflow:hidden;
+  text-align:right;
+  font-size:13px;
+  color:#39424c;
+  user-select:none; pointer-events:none;
+}
+.gutter .rows{will-change:transform}
+.gutter .r{height:var(--lh); line-height:var(--lh); padding-right:1.2ch}
+.gutter .r.tilde{color:#2a323a; text-align:left; padding-left:1.2ch}
+.gutter .r.cur{color:var(--yellow); font-weight:700}
+
+/* ------------------------------------------------------------------ page -- */
+main{
+  position:relative; z-index:10;
+  padding:calc(var(--lh) * 2) var(--pad) calc(var(--lh) * 6) calc(var(--gut) + var(--pad));
+  max-width:110ch;
+}
+section{padding-block:calc(var(--lh) * 2); scroll-margin-top:calc(var(--lh) * 2)}
+
+/* section heading, rendered like a markdown header in a vim buffer */
+.head{margin:0 0 var(--lh); font-size:15px; font-weight:400; line-height:var(--lh)}
+.head .hash{color:var(--comment)}
+.head .txt{color:var(--cyan); font-weight:700; letter-spacing:.06em}
+.head .file{color:var(--comment); font-weight:400; letter-spacing:0}
+.rule{border:0; border-top:1px solid var(--line); margin:0 0 var(--lh)}
+
+.cmt{color:var(--comment)}
+.hang{padding-left:2ch; text-indent:-2ch}
+.cmt a{color:var(--dim)}
+.str{color:var(--green)}
+.num{color:var(--yellow)}
+.kw{color:var(--magenta)}
+.fn{color:var(--cyan)}
+.warn{color:var(--red)}
+
+/* block caret used by the typing animation */
+.caret{
+  display:inline-block; width:1ch; height:calc(var(--lh) - 6px);
+  background:var(--yellow); vertical-align:-4px; margin-left:1px;
+  animation:blink 1.05s steps(1) infinite;
+}
+@keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+
+/* scroll reveal */
+.rv{opacity:0; transform:translateY(10px); transition:opacity .5s ease, transform .5s ease}
+.rv.in{opacity:1; transform:none}
+
+/* ------------------------------------------------------------------ hero -- */
+#hero{padding-top:calc(var(--lh) * 3); min-height:calc(100vh - var(--lh) * 3); display:flex; flex-direction:column; justify-content:center}
+.hero-inner{will-change:transform}
+.logo-wrap{margin-bottom:var(--lh); max-width:min(420px, 80vw)}
+.logo{display:block; width:100%; height:auto; filter:invert(1) contrast(1.05) brightness(1.1); opacity:.92}
+.logo-wrap.no-img{display:none}   /* no logo file yet -> wordmark carries the hero */
+#hero.has-logo .tagline{display:none}
+.wordmark{margin:0; font-size:clamp(30px,7vw,52px); line-height:calc(var(--lh) * 2); font-weight:700; letter-spacing:.02em; color:#e8eef3}
+.tagline{margin:0; color:var(--fg); letter-spacing:.22em; font-size:13px; text-transform:uppercase}
+.tagline .sub{color:var(--dim)}
+.hero-note{margin:var(--lh) 0 0; max-width:62ch}
+.hero-cmd{margin:calc(var(--lh) * 2) 0 0; color:var(--fg)}
+.hero-cmd .p{color:var(--green)}
+
+/* -------------------------------------------------------------- programs -- */
+.prog{padding-block:var(--lh); border-top:1px solid var(--line)}
+.prog:first-of-type{border-top:0}
+.prog h3{margin:0; font-size:19px; line-height:var(--lh); font-weight:700; letter-spacing:.04em; color:#e8eef3}
+.prog h3 .idx{color:var(--comment); font-size:13px; font-weight:400; margin-right:1.5ch; letter-spacing:0}
+.prog .alt{margin:0 0 var(--lh); color:var(--yellow); font-size:13px; padding-left:5.5ch}
+.prog p{margin:0 0 var(--lh); max-width:78ch; padding-left:5.5ch; color:#b3bcc4}
+.prog p:last-child{margin-bottom:0}
+.prog p.lede{color:var(--fg)}
+
+/* -------------------------------------------------------------- schedule -- */
+.sched{list-style:none; margin:0 0 var(--lh); padding:0}
+.sched li{
+  display:flex; gap:2ch; align-items:baseline; flex-wrap:wrap;
+  padding-block:calc(var(--lh) / 2);
+  border-bottom:1px dashed var(--line);
+  transition:background .18s ease, padding-left .18s ease;
+}
+.sched li:hover{background:rgba(255,255,255,.022)}
+.sched .date{color:var(--yellow); font-weight:700; flex:0 0 7ch}
+.sched .what{flex:1 1 32ch; min-width:0; color:#dbe3e9}
+.sched .tag{color:var(--comment); font-size:12.5px; white-space:nowrap}
+.sched .off{color:var(--magenta)}
+.sched .mo{margin-top:var(--lh); color:var(--comment); border-bottom:0; padding-bottom:0}
+.notes{margin:0; color:var(--comment); max-width:78ch; padding-left:3ch; text-indent:-3ch}
+.notes .warn{color:var(--red)}
+
+/* ------------------------------------------------------------------- feed -- */
+.ig-grid{
+  display:grid; grid-template-columns:repeat(4, 1fr);
+  gap:2px; margin:0 0 var(--lh); padding:0; list-style:none;
+  border:1px solid var(--line); background:var(--line);
+}
+.ig-grid li{position:relative; aspect-ratio:1/1; background:var(--bg-soft); overflow:hidden}
+.ig-grid a{display:block; width:100%; height:100%; text-decoration:none; color:var(--dim)}
+.ig-grid img{width:100%; height:100%; object-fit:cover; display:block; filter:grayscale(1) contrast(1.05); opacity:.82; transition:filter .3s ease, opacity .3s ease, transform .5s ease}
+.ig-grid a:hover img{filter:grayscale(0); opacity:1; transform:scale(1.03)}
+.ig-grid .ph{
+  display:flex; align-items:center; justify-content:center; height:100%;
+  font-size:11.5px; color:#4b5560; letter-spacing:.05em;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 6px, rgba(255,255,255,.02) 6px 7px);
+  transition:color .3s ease, background-color .3s ease;
+}
+.ig-grid a:hover .ph{color:var(--cyan); background-color:rgba(255,255,255,.03)}
+.ig-grid .cap{
+  position:absolute; left:0; right:0; bottom:0; padding:4px 8px;
+  font-size:11px; line-height:16px; color:#cfd8de;
+  background:linear-gradient(to top, rgba(0,0,0,.85), transparent);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  opacity:0; transition:opacity .25s ease;
+}
+.ig-grid a:hover .cap{opacity:1}
+#ig-embed:empty{display:none}
+
+/* ---------------------------------------------------------------- contact -- */
+.kv{margin:0 0 var(--lh); display:grid; grid-template-columns:max-content 1fr; gap:0 3ch}
+.kv dt{color:var(--comment)}
+.kv dd{margin:0; color:#dbe3e9}
+.kv a{color:var(--cyan); text-decoration:none; border-bottom:1px solid transparent; transition:border-color .18s ease}
+.kv a:hover{border-bottom-color:var(--cyan)}
+.eof{color:var(--comment); margin:calc(var(--lh) * 2) 0 0}
+
+/* ------------------------------------------------------------ statusline -- */
+.statusline{
+  position:fixed; left:0; right:0; bottom:var(--lh); z-index:40;
+  height:var(--lh); line-height:var(--lh);
+  display:flex; align-items:center; gap:2ch;
+  background:var(--status); border-top:1px solid #000;
+  font-size:12.5px; color:var(--dim); padding-right:1.5ch;
+  white-space:nowrap; overflow:hidden;
+}
+.statusline .mode{
+  background:var(--green); color:#0b0d10; font-weight:700;
+  padding:0 1.4ch; letter-spacing:.08em; flex:none;
+}
+.statusline .file{color:var(--fg); flex:none}
+.statusline .mod{color:var(--red); flex:none}
+.statusline .push{flex:1}
+.statusline .meta{flex:none}
+.statusline .pct{flex:none; color:var(--fg); min-width:5ch; text-align:right}
+
+/* ---------------------------------------------------------------- cmdline -- */
+.cmdline{
+  position:fixed; left:0; right:0; bottom:0; z-index:41;
+  height:var(--lh); line-height:var(--lh);
+  background:var(--bg); border-top:1px solid #000;
+  font-size:13px; padding:0 1.2ch; color:var(--fg);
+  display:flex; align-items:center; gap:.4ch;
+}
+.cmdline .prompt{color:var(--fg)}
+.cmdline input{
+  flex:1; background:transparent; border:0; outline:0; padding:0;
+  font:inherit; color:var(--fg); caret-color:var(--yellow);
+}
+.cmdline .hint{color:var(--comment); font-size:12px}
+.cmdline.is-msg .hint{color:var(--green)}
+.cmdline.is-err .hint{color:var(--red)}
+.cmdline .prompt,.cmdline input{display:none}
+.cmdline.is-open .prompt,.cmdline.is-open input{display:block}
+.cmdline.is-open .hint{display:none}
+
+/* --------------------------------------------------------------- responsive */
+@media (max-width:860px){
+  :root{--pad:1.25rem}
+  body{font-size:14px}
+  .gutter{display:none}
+  main{padding-left:var(--pad)}
+  .prog .alt,.prog p{padding-left:0}
+  .statusline .meta{display:none}
+  .tabline .brand{display:none}
+  .cmdline{display:none}
+  .statusline{bottom:0}
+  .gutter{bottom:var(--lh)}
+}
+@media (max-width:640px){
+  .ig-grid{grid-template-columns:repeat(2, 1fr)}
+}
+@media (max-width:520px){
+  .sched .date{flex-basis:100%}
+  .sched .tag{flex-basis:100%}
+  .kv{grid-template-columns:1fr; gap:0}
+  .kv dt{margin-top:calc(var(--lh) / 2)}
+}
+
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  .rv{opacity:1; transform:none; transition:none}
+  .caret{animation:none}
+  #contour{display:none}
+  .ig-grid img{transition:none}
+}
+</style>
+</head>
+<body>
+
+<div class="bg" aria-hidden="true">
+  <div class="bg-grid" id="bgGrid"></div>
+  <canvas id="contour"></canvas>
+  <div class="bg-vignette"></div>
+</div>
+
+<nav class="tabline" id="tabline" aria-label="Sections">
+  <a class="tab" href="#hero"><span class="n">1</span>index</a>
+  <a class="tab" href="#programs"><span class="n">2</span>programs.md</a>
+  <a class="tab" href="#schedule"><span class="n">3</span>schedule.md</a>
+  <a class="tab" href="#feed"><span class="n">4</span>feed.md</a>
+  <a class="tab" href="#contact"><span class="n">5</span>contact.md</a>
+  <span class="tab spacer"></span>
+  <span class="brand">97kobolab.io</span>
+</nav>
+
+<div class="gutter" aria-hidden="true"><div class="rows" id="gutterRows"></div></div>
+
+<main>
+
+  <!-- ============================================================ hero == -->
+  <section id="hero" class="has-logo">
+    <div class="hero-inner" id="heroInner">
+      <!-- EDIT: point src at your logo. On Squarespace, upload the PNG and
+           paste its URL here. If the file is missing the text lockup shows. -->
+      <div class="logo-wrap" id="logoWrap">
+        <img class="logo" src="assets/97kobolab-logo.png" alt="97KoboLab" width="1122" height="1122"
+             onerror="document.getElementById('logoWrap').classList.add('no-img');document.getElementById('hero').classList.remove('has-logo')"
+             onload="document.getElementById('logoWrap').classList.remove('no-img');document.getElementById('hero').classList.add('has-logo')">
+      </div>
+      <h1 class="wordmark">97KOBOLAB</h1>
+      <p class="tagline">AUDIOVISUAL ART + TECH LAB<br><span class="sub">JAKARTA, INDONESIA</span></p>
+      <p class="hero-note cmt hang">" a room for process-first work — live coding, modular synthesis, audiovisual performance, and things that are still being built.</p>
+      <p class="hero-cmd"><span class="p">:</span><span class="type" data-type="e programs.md"></span></p>
+    </div>
+  </section>
+
+  <!-- ======================================================== programs == -->
+  <section id="programs">
+    <h2 class="head"><span class="hash">##</span> <span class="txt">PROGRAMS</span> <span class="file">— programs.md</span></h2>
+    <hr class="rule">
+
+    <!-- EDIT: add or remove an <article class="prog"> block to change programs. -->
+    <article class="prog rv">
+      <h3><span class="idx">01</span>BYOM</h3>
+      <p class="alt">[Bring Your Own Machine]</p>
+      <p class="lede">An open stage session for electronic musicians, live coders, and audiovisual artists to bring their own gear and perform.</p>
+      <p>Participants plug in laptops, synths, controllers, modular systems, or custom-built tools and run short live sets in a shared setup. The format encourages experimentation, patch testing, unfinished ideas, and spontaneous collaboration.</p>
+      <p class="cmt">" BYOM functions as a community lab floor: low barrier, high curiosity.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">02</span>LFO</h3>
+      <p class="alt">[LOVE, Frequency Oscillator]</p>
+      <p class="lede">A synthesizer-focused live session dedicated to hardware and modular performance.</p>
+      <p>LFO centers on analog and digital synthesis, voltage control, modulation systems, and hands-on sound design. Artists perform using standalone synths, modular racks, drum machines, and custom signal chains, shaping tone in real time through oscillators, filters, envelopes, and modulation sources. Visuals, if present, remain secondary to the instrument.</p>
+      <p class="cmt">" Built for people who care about waveform texture, signal routing, and the physical act of sculpting sound.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">03</span>ALGORAPTURE</h3>
+      <p class="alt">[Live Coding Audio/Visual Surge]</p>
+      <p class="lede">A live coding showcase where artists generate music and visuals by writing code in real time.</p>
+      <p>The programming interface is projected during the performance, allowing the audience to witness the logic behind the sound and imagery as it unfolds. Sets are built through algorithms, live edits, and system improvisation.</p>
+      <p class="cmt">" Each performance is executed once, shaped by live decisions and computational processes.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">04</span>STRAIT//FREQ</h3>
+      <p class="alt">[Live Audio/Visual Show Series]</p>
+      <p class="lede">A recurring live audio/visual show series connecting artists across regions through performance.</p>
+      <p>Strait//Freq presents electronic musicians and visual practitioners who operate in real-time format: from computational art to hybrid hardware setups. The series emphasizes cross-scene exchange, regional dialogue, and collaborative signal routing.</p>
+      <p class="cmt">" Built as a transmission platform for shared frequencies.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">05</span>SO I BUILT THIS THING_</h3>
+      <p class="alt">[Project Demo / Show-and-Tell Series]</p>
+      <p class="lede">A recurring showcase where builders bring what they've been making and put it in front of a room.</p>
+      <p>So I Built This Thing gives makers a short slot to demo a project live — tools and utilities, games, tech-art, or musical instruments. Each build gets walked through in the open: what it is, how it works, why it exists. Rough edges welcome; the demo is the point, not the pitch.</p>
+      <p class="cmt">" Built as a table for work-in-progress. Show what you've been making.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">06</span>DISPATCH</h3>
+      <p class="alt">[Release Showcase Series]</p>
+      <p class="lede">A recurring night built around new work landing in the world — releases from the musicians in and around the lab.</p>
+      <p>Dispatch hands the room to an artist or band marking a release, playing it out loud the way it was meant to be heard, alongside a rotating set of submission slots for others sending signal. Part launch, part gathering, run for friends first.</p>
+      <p class="cmt">" Built as a channel for work leaving the studio and reaching people.</p>
+    </article>
+
+    <article class="prog rv">
+      <h3><span class="idx">07</span>97KoboROT</h3>
+      <p class="alt">[Offsite Division]</p>
+      <p class="lede">The lab's mobile arm — programming that travels beyond the home room.</p>
+      <p>97KoboROT carries the 97KoboLab format into rooms that aren't ours: other venues, other cities, other scenes. Same process-first ethos, same open-signal approach, relocated. Where the space can't come to the work, the work goes to the space.</p>
+      <p class="cmt">" Built as the lab off its own floor.</p>
+    </article>
+  </section>
+
+  <!-- ======================================================== schedule == -->
+  <section id="schedule">
+    <h2 class="head"><span class="hash">##</span> <span class="txt">SCHEDULE</span> <span class="file">— schedule.md</span></h2>
+    <hr class="rule">
+
+    <!-- EDIT: schedule rows. Keep the date in the .date span.
+         Add class="off" to the .tag when the event is offsite. -->
+    <ul class="sched rv">
+      <li class="mo"><span class="cmt">" AUGUST 2026</span></li>
+      <li><span class="date">22.08</span><span class="what">Watch party — SO I BUILT THIS THING_ Vol.3</span><span class="tag">demo / show-and-tell</span></li>
+      <li><span class="date">29.08</span><span class="what">Live Coding AV Workshop <span class="warn">**</span></span><span class="tag off">offsite — Museum MACAN</span></li>
+      <li><span class="date">29.08</span><span class="what">DISPATCH: 8110118 + BYOM</span><span class="tag">release show series</span></li>
+
+      <li class="mo"><span class="cmt">" SEPTEMBER 2026</span></li>
+      <li><span class="date">05.09</span><span class="what">LFO — Love, Frequency Oscillation</span><span class="tag">synth show</span></li>
+      <li><span class="date">12.09</span><span class="what">ALGORAPTURE: typeanddestroy</span><span class="tag">live coding av show</span></li>
+      <li><span class="date">17.09</span><span class="what">hash verified rage II <span class="warn">**</span></span><span class="tag off">offsite — secret venue</span></li>
+      <li><span class="date">26.09</span><span class="what">BYOM — Bring Your Own Machine showcase <span class="warn">*</span></span><span class="tag">open stage</span></li>
+    </ul>
+
+    <p class="notes rv">
+      <span class="warn">*</span>&nbsp; more workshops are coming in September 2026.<br>
+      <span class="warn">**</span> except the 29.08 workshop and the 17.09 showcase, everything above happens at the lab.
+    </p>
+  </section>
+
+  <!-- ============================================================ feed == -->
+  <section id="feed">
+    <h2 class="head"><span class="hash">##</span> <span class="txt">FEED</span> <span class="file">— feed.md</span></h2>
+    <hr class="rule">
+    <p class="cmt rv">" latest from <a href="https://instagram.com/97kobo.lab" target="_blank" rel="noopener">@97kobo.lab</a></p>
+
+    <!-- Auto-pulled tiles land here. See the IG config in the script below. -->
+    <ul class="ig-grid rv" id="igGrid" data-count="8"></ul>
+    <!-- Third-party widget (LightWidget / SnapWidget / Elfsight) mounts here. -->
+    <div id="ig-embed"></div>
+  </section>
+
+  <!-- ========================================================= contact == -->
+  <section id="contact">
+    <h2 class="head"><span class="hash">##</span> <span class="txt">LOCATION</span> <span class="file">— contact.md</span></h2>
+    <hr class="rule">
+
+    <!-- EDIT: contact + address -->
+    <dl class="kv rv">
+      <dt>where</dt>
+      <dd>97KoboLab, Blok M, Jakarta<br><span class="cmt">ROW9 Building, 1st floor — loading area</span></dd>
+      <dt>instagram</dt>
+      <dd><a href="https://instagram.com/97kobo.lab" target="_blank" rel="noopener">@97kobo.lab</a></dd>
+      <dt>whatsapp</dt>
+      <dd><a href="https://wa.me/6285171588508" target="_blank" rel="noopener">+62 851-7158-8508</a></dd>
+    </dl>
+
+    <p class="eof rv">" bring your machine.<br>-- END OF BUFFER --</p>
+  </section>
+
+</main>
+
+<div class="statusline" id="statusline">
+  <span class="mode" id="stMode">NORMAL</span>
+  <span class="file" id="stFile">index</span>
+  <span class="mod">[+]</span>
+  <span class="push"></span>
+  <span class="meta">utf-8[unix]</span>
+  <span class="meta" id="stPos">Ln 1, Col 1</span>
+  <span class="pct" id="stPct">Top</span>
+</div>
+
+<div class="cmdline" id="cmdline">
+  <span class="prompt" id="cmdPrompt">:</span>
+  <input id="cmdInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Command line">
+  <span class="hint" id="cmdHint">press <b>:</b> for commands &nbsp;·&nbsp; <b>j</b>/<b>k</b> scroll &nbsp;·&nbsp; <b>gg</b>/<b>G</b> jump</span>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ===================================================================== */
+  /* EDIT: INSTAGRAM FEED                                                  */
+  /*                                                                        */
+  /* mode: 'behold'   pull posts automatically from a Behold.so feed.       */
+  /*                  Create a free feed at behold.so, connect the IG       */
+  /*                  account, paste the feed id below. No token in code.   */
+  /*       'embed'    use a third-party widget instead (LightWidget,        */
+  /*                  SnapWidget, Elfsight). Paste their <script>/<iframe>  */
+  /*                  into the #ig-embed div in the markup above.           */
+  /*       'fallback' static tiles linking to the profile (default).        */
+  /* ===================================================================== */
+  var IG = {
+    handle:   '97kobo.lab',
+    mode:     'fallback',
+    beholdId: '',
+    count:    8
+  };
+
+  /* ------------------------------------------------------------- setup -- */
+  var root      = document.documentElement;
+  var LH        = parseFloat(getComputedStyle(root).getPropertyValue('--lh')) || 24;
+  var reduced   = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var sections  = [].slice.call(document.querySelectorAll('main section'));
+  var tabs      = [].slice.call(document.querySelectorAll('.tabline .tab[href]'));
+  var gutterRow = [];
+
+  var gutterRows = document.getElementById('gutterRows');
+  var bgGrid     = document.getElementById('bgGrid');
+  var contour    = document.getElementById('contour');
+  var heroInner  = document.getElementById('heroInner');
+  var stMode     = document.getElementById('stMode');
+  var stFile     = document.getElementById('stFile');
+  var stPos      = document.getElementById('stPos');
+  var stPct      = document.getElementById('stPct');
+  var cmdline    = document.getElementById('cmdline');
+  var cmdPrompt  = document.getElementById('cmdPrompt');
+  var cmdInput   = document.getElementById('cmdInput');
+  var cmdHint    = document.getElementById('cmdHint');
+
+  var FILES = {
+    hero:     'index',
+    programs: 'programs.md',
+    schedule: 'schedule.md',
+    feed:     'feed.md',
+    contact:  'contact.md'
+  };
+
+  /* ------------------------------------------------------------ gutter -- */
+  function buildGutter() {
+    var need = Math.ceil(window.innerHeight / LH) + 2;
+    while (gutterRow.length > need) { gutterRows.removeChild(gutterRow.pop()); }
+    while (gutterRow.length < need) {
+      var d = document.createElement('div');
+      d.className = 'r';
+      gutterRows.appendChild(d);
+      gutterRow.push(d);
+    }
+  }
+
+  /* -------------------------------------------------------- scroll loop -- */
+  var ticking = false;
+  var lastY   = -1;
+
+  function onScroll() {
+    if (!ticking) { ticking = true; requestAnimationFrame(frame); }
+  }
+
+  function frame() {
+    ticking = false;
+    var y     = window.pageYOffset || root.scrollTop;
+    var vh    = window.innerHeight;
+    var docH  = Math.max(root.scrollHeight, document.body.scrollHeight);
+    var maxY  = Math.max(1, docH - vh);
+    if (y === lastY) { return; }
+    lastY = y;
+
+    /* --- gutter line numbers, exactly like a scrolling buffer --- */
+    var total  = Math.ceil(docH / LH);
+    var first  = Math.floor(y / LH) + 1;
+    var curIdx = Math.round((vh / 2) / LH) - 1;
+    gutterRows.style.transform = 'translateY(' + (-(y % LH)) + 'px)';
+    for (var i = 0; i < gutterRow.length; i++) {
+      var n = first + i;
+      var r = gutterRow[i];
+      var isTilde = n > total;
+      var cls = 'r' + (isTilde ? ' tilde' : '') + (i === curIdx && !isTilde ? ' cur' : '');
+      if (r.className !== cls) { r.className = cls; }
+      var txt = isTilde ? '~' : String(n);
+      if (r.textContent !== txt) { r.textContent = txt; }
+    }
+
+    /* --- parallax layers --- */
+    if (!reduced) {
+      bgGrid.style.transform  = 'translateY(' + (y * 0.12) + 'px)';
+      contour.style.transform = 'translateY(' + (y * 0.06) + 'px)';
+      if (y < vh * 1.2) {
+        heroInner.style.transform = 'translateY(' + (y * 0.22) + 'px)';
+        heroInner.style.opacity   = String(Math.max(0, 1 - y / (vh * 0.8)));
+      }
+    }
+
+    /* --- statusline --- */
+    var ln = Math.min(total, first + Math.max(0, curIdx));
+    stPos.textContent = 'Ln ' + ln + ', Col 1';
+    stPct.textContent = y <= 2 ? 'Top' : (y >= maxY - 2 ? 'Bot' : Math.round(y / maxY * 100) + '%');
+
+    /* --- active section / tab --- */
+    var probe  = y + vh * 0.45;
+    var active = sections[0];
+    for (var s = 0; s < sections.length; s++) {
+      if (sections[s].offsetTop <= probe) { active = sections[s]; }
+    }
+    if (y >= maxY - 4) { active = sections[sections.length - 1]; }
+    var name = FILES[active.id] || active.id;
+    if (stFile.textContent !== name) { stFile.textContent = name; }
+    for (var t = 0; t < tabs.length; t++) {
+      tabs[t].classList.toggle('is-active', tabs[t].getAttribute('href') === '#' + active.id);
+    }
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', function () { buildGutter(); lastY = -1; onScroll(); });
+
+  /* ------------------------------------------------------ scroll reveal -- */
+  var revealables = [].slice.call(document.querySelectorAll('.rv'));
+  if (reduced || !('IntersectionObserver' in window)) {
+    revealables.forEach(function (el) { el.classList.add('in'); });
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -12% 0px', threshold: 0.08 });
+    revealables.forEach(function (el) { io.observe(el); });
+  }
+
+  /* ------------------------------------------------- typing animation -- */
+  [].slice.call(document.querySelectorAll('.type')).forEach(function (el) {
+    var text = el.getAttribute('data-type') || '';
+    if (reduced) { el.textContent = text; return; }
+    var caret = document.createElement('span');
+    caret.className = 'caret';
+    el.parentNode.appendChild(caret);
+    var i = 0;
+    (function step() {
+      el.textContent = text.slice(0, ++i);
+      if (i < text.length) { setTimeout(step, 55 + Math.random() * 45); }
+    })();
+  });
+
+  /* --------------------------------------------------- contour backdrop -- */
+  /* Slow-moving wireframe contours — a nod to the mesh in the logo. */
+  (function () {
+    if (reduced || !contour.getContext) { return; }
+    var ctx = contour.getContext('2d');
+    var W = 0, H = 0, dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    var LINES = 34, STEPS = 56;
+
+    function size() {
+      W = contour.clientWidth; H = contour.clientHeight;
+      contour.width = Math.floor(W * dpr);
+      contour.height = Math.floor(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    size();
+    window.addEventListener('resize', size);
+
+    var t = 0, last = 0;
+    function draw(now) {
+      requestAnimationFrame(draw);
+      if (document.hidden || now - last < 33) { return; }
+      last = now; t += 0.0042;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.lineWidth = 1;
+
+      var cx = W * 0.42, cy = H * 0.42;
+      var rad = Math.min(W, H) * 0.62;
+
+      for (var l = 0; l < LINES; l++) {
+        var v = l / (LINES - 1);
+        var baseY = H * 0.08 + v * H * 0.84;
+        ctx.beginPath();
+        for (var s = 0; s <= STEPS; s++) {
+          var u = s / STEPS;
+          var x = u * W;
+          var dx = (x - cx) / rad, dy = (baseY - cy) / rad;
+          var d = Math.sqrt(dx * dx + dy * dy);
+          var bump = Math.exp(-d * d * 1.9) * 78;
+          var wob = Math.sin(u * 5.2 + t * 2.1 + l * 0.32) * 9
+                  + Math.sin(u * 11.0 - t * 1.4 + l * 0.11) * 4.5;
+          var y = baseY + wob - bump * Math.sin(t * 0.8 + l * 0.18);
+          if (s === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
+        }
+        ctx.strokeStyle = 'rgba(197,205,211,' + (0.030 + Math.exp(-Math.abs(v - 0.42) * 3.4) * 0.055) + ')';
+        ctx.stroke();
+      }
+    }
+    requestAnimationFrame(draw);
+  })();
+
+  /* ---------------------------------------------------------- instagram -- */
+  var igGrid = document.getElementById('igGrid');
+
+  function igTile(inner) {
+    var li = document.createElement('li');
+    li.innerHTML = inner;
+    igGrid.appendChild(li);
+  }
+
+  function igFallback() {
+    igGrid.innerHTML = '';
+    var url = 'https://instagram.com/' + IG.handle;
+    for (var i = 1; i <= IG.count; i++) {
+      var label = 'IMG_' + String(1000 + i).slice(1) + '.jpg';
+      igTile('<a href="' + url + '" target="_blank" rel="noopener" aria-label="Open @' + IG.handle + ' on Instagram">' +
+             '<span class="ph">' + label + '</span></a>');
+    }
+  }
+
+  function igRender(posts) {
+    igGrid.innerHTML = '';
+    posts.slice(0, IG.count).forEach(function (p) {
+      var src = (p.sizes && p.sizes.medium && p.sizes.medium.mediaUrl) || p.thumbnailUrl || p.mediaUrl;
+      if (!src) { return; }
+      var link = p.permalink || ('https://instagram.com/' + IG.handle);
+      var cap  = (p.caption || '').replace(/\s+/g, ' ').slice(0, 90).replace(/[<>&"]/g, '');
+      igTile('<a href="' + link + '" target="_blank" rel="noopener">' +
+             '<img src="' + src + '" alt="" loading="lazy" decoding="async">' +
+             (cap ? '<span class="cap">' + cap + '</span>' : '') + '</a>');
+    });
+    if (!igGrid.children.length) { igFallback(); }
+  }
+
+  if (IG.mode === 'behold' && IG.beholdId) {
+    fetch('https://feeds.behold.so/' + IG.beholdId)
+      .then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.json(); })
+      .then(function (data) { igRender(Array.isArray(data) ? data : (data.posts || [])); })
+      .catch(igFallback);
+  } else if (IG.mode !== 'embed') {
+    igFallback();
+  }
+
+  /* ---------------------------------------------------- command / keys -- */
+  var mode = 'NORMAL';
+  var msgTimer;
+
+  function setMode(m) {
+    mode = m;
+    stMode.textContent = m;
+    stMode.style.background = (m === 'COMMAND') ? 'var(--yellow)' : 'var(--green)';
+  }
+
+  function say(text, isErr) {
+    clearTimeout(msgTimer);
+    cmdHint.innerHTML = text;
+    cmdline.classList.toggle('is-err', !!isErr);
+    cmdline.classList.toggle('is-msg', !isErr);
+    msgTimer = setTimeout(function () {
+      cmdline.classList.remove('is-err', 'is-msg');
+      cmdHint.innerHTML = DEFAULT_HINT;
+    }, 4200);
+  }
+  var DEFAULT_HINT = cmdHint.innerHTML;
+
+  function openCmd(prefix) {
+    cmdPrompt.textContent = prefix;
+    cmdInput.value = '';
+    cmdline.classList.add('is-open');
+    cmdInput.focus();
+    setMode('COMMAND');
+  }
+
+  function closeCmd() {
+    cmdline.classList.remove('is-open');
+    cmdInput.blur();
+    setMode('NORMAL');
+  }
+
+  function jump(id) {
+    var el = document.getElementById(id);
+    if (!el) { return false; }
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+    return true;
+  }
+
+  var ALIASES = {
+    'index': 'hero', '1': 'hero', 'hero': 'hero', 'index.md': 'hero',
+    'programs': 'programs', 'programs.md': 'programs', '2': 'programs', 'shows': 'programs',
+    'schedule': 'schedule', 'schedule.md': 'schedule', '3': 'schedule', 'shows.md': 'schedule',
+    'feed': 'feed', 'feed.md': 'feed', '4': 'feed', 'insta': 'feed', 'instagram': 'feed',
+    'contact': 'contact', 'contact.md': 'contact', '5': 'contact', 'location': 'contact'
+  };
+
+  function runCmd(raw) {
+    var kind = cmdPrompt.textContent;
+    var cmd  = raw.trim();
+    closeCmd();
+    if (!cmd) { return; }
+
+    if (kind === '/') {
+      var hit = ALIASES[cmd.toLowerCase()];
+      if (hit && jump(hit)) { say('/' + cmd); }
+      else { say('E486: Pattern not found: ' + cmd, true); }
+      return;
+    }
+
+    var parts = cmd.replace(/^:+/, '').split(/\s+/);
+    var head  = parts[0].toLowerCase();
+    var arg   = (parts[1] || '').toLowerCase();
+
+    if (head === 'e' || head === 'edit' || head === 'b' || head === 'buffer') {
+      if (ALIASES[arg] && jump(ALIASES[arg])) { say('"' + arg + '" opened'); }
+      else { say('E447: Can\'t find file "' + (arg || '') + '"', true); }
+      return;
+    }
+    if (ALIASES[head]) { jump(ALIASES[head]); say('"' + head + '"'); return; }
+    if (head === 'help' || head === 'h') {
+      say('commands: <b>:e programs.md</b> · <b>:schedule</b> · <b>:feed</b> · <b>:contact</b> · <b>:ig</b> · <b>:wa</b> · <b>:gg</b> / <b>:G</b>');
+      return;
+    }
+    if (head === 'ig') { window.open('https://instagram.com/' + IG.handle, '_blank', 'noopener'); say('opening @' + IG.handle); return; }
+    if (head === 'wa') { window.open('https://wa.me/6285171588508', '_blank', 'noopener'); say('opening whatsapp'); return; }
+    if (head === 'gg' || head === 'top') { window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' }); return; }
+    if (head === 'g' || head === '$' || head === 'bot') { window.scrollTo({ top: document.body.scrollHeight, behavior: reduced ? 'auto' : 'smooth' }); return; }
+    if (/^\d+$/.test(head)) { window.scrollTo({ top: (parseInt(head, 10) - 1) * LH, behavior: reduced ? 'auto' : 'smooth' }); return; }
+    if (head === 'q' || head === 'qa' || head === 'q!' || head === 'wq' || head === 'x') {
+      say('E37: no write since last change &nbsp;·&nbsp; nothing to quit, you are already here', true);
+      return;
+    }
+    if (head === 'w') { say('"97kobolab.io" written'); return; }
+    say('E492: Not an editor command: ' + cmd.replace(/^:+/, ''), true);
+  }
+
+  cmdInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); runCmd(cmdInput.value); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeCmd(); }
+  });
+
+  var gPending = false;
+  document.addEventListener('keydown', function (e) {
+    if (cmdline.classList.contains('is-open')) { return; }
+    var tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) { return; }
+    if (e.metaKey || e.altKey) { return; }
+
+    var vh = window.innerHeight;
+    var smooth = { behavior: reduced ? 'auto' : 'smooth' };
+
+    if (e.key === ':' || (e.shiftKey && e.key === ';')) { e.preventDefault(); openCmd(':'); return; }
+    if (e.key === '/') { e.preventDefault(); openCmd('/'); return; }
+    if (e.ctrlKey && (e.key === 'd' || e.key === 'u')) {
+      e.preventDefault();
+      window.scrollBy(Object.assign({ top: (e.key === 'd' ? 1 : -1) * vh / 2 }, smooth));
+      return;
+    }
+    if (e.ctrlKey) { return; }
+
+    switch (e.key) {
+      case 'j': window.scrollBy(Object.assign({ top:  LH * 3 }, smooth)); break;
+      case 'k': window.scrollBy(Object.assign({ top: -LH * 3 }, smooth)); break;
+      case 'G': window.scrollTo(Object.assign({ top: document.body.scrollHeight }, smooth)); break;
+      case 'g':
+        if (gPending) { window.scrollTo(Object.assign({ top: 0 }, smooth)); gPending = false; }
+        else { gPending = true; setTimeout(function () { gPending = false; }, 600); }
+        return;
+      case '1': case '2': case '3': case '4': case '5':
+        jump(ALIASES[e.key]);
+        break;
+      case '?': openCmd(':'); cmdInput.value = 'help'; break;
+      default: return;
+    }
+    gPending = false;
+  });
+
+  /* ---------------------------------------------------------------- go -- */
+  buildGutter();
+  setMode('NORMAL');
+  onScroll();
+  setTimeout(function () { lastY = -1; onScroll(); }, 300);
+})();
+</script>
+</body>
+</html>
