@@ -27,7 +27,7 @@ body, #siteWrapper { background: #0b0d10 !important; }
 <style>
 /* ---------------------------------------------------------------- tokens -- */
 :root{
-  --bg:#000000;          /* keep this pure black — see .logo below */
+  --bg:#0b0d10;
   --bg-soft:#0f1216;
   --gutter-bg:#0d1014;
   --status:#161b21;
@@ -156,15 +156,20 @@ section{padding-block:calc(var(--lh) * 2); scroll-margin-top:calc(var(--lh) * 2)
 /* ------------------------------------------------------------------ hero -- */
 #hero{padding-top:calc(var(--lh) * 3); min-height:calc(100vh - var(--lh) * 3); display:flex; flex-direction:column; justify-content:center}
 .hero-inner{will-change:transform}
-.logo-wrap{margin-bottom:var(--lh); max-width:min(420px, 80vw)}
-/* The logo ships as grey linework on a WHITE background, so it is inverted to
-   sit on the dark page. That turns its white field into pure black, which is
-   why --bg is #000: the field then matches the page exactly and the logo reads
-   as floating linework instead of a black square. A transparent-background PNG
-   works here too, and frees you to change --bg. */
-.logo{display:block; width:100%; height:auto; filter:invert(1) contrast(1.05) brightness(1.1); opacity:.92}
-.logo-wrap.no-img{display:none}   /* no logo file yet -> wordmark carries the hero */
-#hero.has-logo .tagline{display:none}
+.logo-wrap{display:flow-root; margin-bottom:var(--lh); max-width:min(620px, 88vw)}
+/* The logo is already dark-background artwork: transparent field, grey mesh,
+   white knockout type. It needs no filter — inverting it would sink the mesh
+   into the page and turn the white type black. */
+/* The artwork sits inside its own transparent padding — measured at 6.04% left,
+   13.16% top, 13.87% bottom. Cancelling it lines the mark up with the text
+   column and drops the dead space under the tagline. */
+.logo{display:block; width:100%; height:auto; margin:-13.16% 0 -13.87% -6.04%}
+.logo-wrap.no-img{display:none}   /* no logo file yet -> text lockup carries the hero */
+#hero.has-logo .wordmark,
+#hero.has-logo .tagline{
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip-path:inset(50%); white-space:nowrap;
+}
 .wordmark{margin:0; font-size:clamp(30px,7vw,52px); line-height:calc(var(--lh) * 2); font-weight:700; letter-spacing:.02em; color:#e8eef3}
 .tagline{margin:0; color:var(--fg); letter-spacing:.22em; font-size:13px; text-transform:uppercase}
 .tagline .sub{color:var(--dim)}
@@ -328,10 +333,13 @@ section{padding-block:calc(var(--lh) * 2); scroll-margin-top:calc(var(--lh) * 2)
   <!-- ============================================================ hero == -->
   <section id="hero" class="has-logo">
     <div class="hero-inner" id="heroInner">
-      <!-- EDIT: point src at your logo. On Squarespace, upload the PNG and
-           paste its URL here. If the file is missing the text lockup shows. -->
+      <!-- EDIT: point src at your logo. On Squarespace, upload the file and
+           paste its URL here. The artwork already carries the wordmark and the
+           tagline, so the h1/tagline below are hidden while it loads — they
+           stay in the DOM for search engines, and become visible again if the
+           image is missing. -->
       <div class="logo-wrap" id="logoWrap">
-        <img class="logo" src="assets/97kobolab-logo.png" alt="97KoboLab" width="1122" height="1122"
+        <img class="logo" src="assets/97kobolab-logo.webp" alt="97KoboLab — audiovisual art + tech lab, Jakarta, Indonesia" width="1125" height="1125"
              onerror="document.getElementById('logoWrap').classList.add('no-img');document.getElementById('hero').classList.remove('has-logo')"
              onload="document.getElementById('logoWrap').classList.remove('no-img');document.getElementById('hero').classList.add('has-logo')">
       </div>

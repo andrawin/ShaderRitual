@@ -8,7 +8,7 @@ line, and a slow parallax backdrop.
 97kobolab-site/
 ├── index.html                  ← the whole site. single source of truth.
 ├── build.py                    ← regenerates the Squarespace snippet
-├── assets/97kobolab-logo.png   ← drop the logo here (not committed yet)
+├── assets/                     ← logo, WebP + PNG
 └── squarespace/code-block.html ← GENERATED. paste this into Squarespace.
 ```
 
@@ -17,19 +17,16 @@ JS in one file, one external request (Google Fonts, JetBrains Mono).
 
 ---
 
-## 1. Add the logo
+## 1. The logo
 
-Save the logo as `assets/97kobolab-logo.png`. The original white-background PNG
-is the right file to use — no editing needed. The site inverts it in CSS, which
-turns the white field to pure black; the page background is pure black
-(`--bg: #000`) for exactly that reason, so the field vanishes and the logo reads
-as floating linework rather than a black square. **If you change `--bg` away
-from black, export the logo with a transparent background instead.**
+Already in place at `assets/97kobolab-logo.webp`, with a PNG copy beside it for
+upload forms that reject WebP. See `assets/README.md` for how the artwork is
+built and why no CSS filter is applied to it.
 
-If the image is missing the hero falls back to the typographic lockup
-(`97KOBOLAB` + `AUDIOVISUAL ART + TECH LAB / JAKARTA, INDONESIA`), so the page
-never looks broken. When the logo *is* present that tagline line is hidden,
-because the logo already carries it.
+The logo carries the wordmark *and* both tagline lines, so the `<h1>` and
+tagline in the markup are hidden while it loads — they stay in the DOM for
+search engines and screen readers, and become visible again if the image is
+ever missing. So the hero never looks broken, and never says anything twice.
 
 ## 2. Preview locally
 
@@ -42,14 +39,16 @@ python3 -m http.server 8000     # then open http://localhost:8000
 
 Custom code requires a **Business plan or higher**.
 
-1. Upload the logo: **Design → Custom CSS → Manage Custom Files → Add images**,
-   then copy the file URL it gives you.
+1. Upload the logo: **Design → Custom CSS → Manage Custom Files → Add images**.
+   Use `assets/97kobolab-logo.webp`; if the uploader rejects WebP, use the PNG
+   beside it. Copy the file URL it gives you.
 2. Regenerate the snippet and paste your logo URL into it:
    ```bash
    python3 build.py
    ```
-   Open `squarespace/code-block.html`, find `src="assets/97kobolab-logo.png"`
-   and replace it with the Squarespace URL from step 1.
+   Open `squarespace/code-block.html`, find `src="assets/97kobolab-logo.webp"`
+   and replace it with the Squarespace URL from step 1. The relative path only
+   resolves locally, so this step is required.
 3. In Squarespace: **Pages → +** → add a **Blank** page, name it `Home`.
 4. Edit the page → add a **Code Block** → paste the entire contents of
    `squarespace/code-block.html` → **Apply** → **Save**.
