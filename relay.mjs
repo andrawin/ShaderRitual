@@ -46,6 +46,13 @@ function lanUrls() {
 const server = createServer(async (req, res) => {
   try {
     let path = decodeURIComponent((req.url || '/').split('?')[0]);
+    // Plain-text reachability probe — open this on the phone to prove the
+    // network path works before blaming the app.
+    if (path === '/health') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(`ShaderRitual relay OK\nclients: ${wss.clients.size}\n`);
+      return;
+    }
     if (path === '/') path = '/index.html';
     // Keep requests inside dist/.
     const file = normalize(join(ROOT, path));
@@ -70,7 +77,13 @@ const server = createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ server, maxPayload: 256 * 1024 * 1024 });
-wss.on('connection', (ws) => {
+
+wss.on('connection', (ws, req) => {
+  const who = req.socket.remoteAddress || 'unknown';
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  console.log(`  + client connected (${who}) — ${wss.clients.size} total`);
+
   ws.send(JSON.stringify({ type: 'remoteHello', urls: lanUrls() }));
   ws.on('message', (data, isBinary) => {
     // Relay to every other connected window.
@@ -78,8 +91,27 @@ wss.on('connection', (ws) => {
       if (client !== ws && client.readyState === 1) client.send(data, { binary: isBinary });
     }
   });
+  ws.on('close', () => {
+    console.log(`  - client left (${who}) — ${wss.clients.size} total`);
+  });
   ws.on('error', () => {});
 });
+
+// Phones suspend backgrounded tabs and home routers drop idle NAT entries, so
+// an untouched socket can die silently. Ping every 25s and drop the ones that
+// stop answering, which frees the client to reconnect instead of sitting on a
+// half-open socket.
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) {}
+  }
+}, 25000);
+wss.on('close', () => clearInterval(heartbeat));
 
 server.listen(PORT, '0.0.0.0', () => {
   const urls = lanUrls();
@@ -87,6 +119,21 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('  Render window (THIS machine — use localhost so the mic works):');
   console.log(`    http://localhost:${PORT}`);
   console.log('\n  Controller (phone / tablet on the same network):');
+  if (urls.length === 0) {
+    console.log('    (no LAN address found — is Wi-Fi connected?)');
+  }
   for (const u of urls) console.log(`    ${u}?control`);
-  console.log('');
+  if (urls.length > 1) {
+    console.log('\n  More than one address is listed because this machine has');
+    console.log('  several network interfaces. Try each — only the Wi-Fi one works.');
+  }
+  console.log('\n  If the phone will not connect, open this on it first:');
+  for (const u of urls) console.log(`    ${u}/health`);
+  console.log('  Blank/timeout there means the network is blocking us, not the app:');
+  console.log('    - macOS may be firewalling node. System Settings > Network >');
+  console.log('      Firewall > Options: allow incoming connections for node.');
+  console.log('    - macOS 14+ also gates local networking: System Settings >');
+  console.log('      Privacy & Security > Local Network: enable Terminal.');
+  console.log('    - Some routers isolate wireless clients (AP/guest isolation).');
+  console.log('  Connections are logged below as they arrive.\n');
 });

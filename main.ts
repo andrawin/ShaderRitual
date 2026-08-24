@@ -561,6 +561,7 @@ export class ShaderRitualApp extends LitElement {
       this.sync.onmessage = (e) => this.receive(e.data);
     }
     this.connectRemote();
+    this.watchRemoteWake();
     // A freshly opened satellite window asks the render window for current state.
     if (this.isController) this.post({ type: 'request' });
     if (this.isCodeWindow) this.post({ type: 'codeRequest' });
@@ -595,6 +596,7 @@ export class ShaderRitualApp extends LitElement {
     }
     this.ws.onopen = () => {
       this.wsOk = true;
+      this.wsRetryDelay = 1000; // reset the backoff on a good connection
       // Re-request state so a phone that connected late catches up.
       if (this.isController) this.post({ type: 'request' });
       if (this.isCodeWindow) this.post({ type: 'codeRequest' });
@@ -614,9 +616,34 @@ export class ShaderRitualApp extends LitElement {
     };
   }
 
+  private wsRetryDelay = 1000;
+
   private scheduleRemoteRetry() {
     clearTimeout(this.wsRetryTimer);
-    this.wsRetryTimer = setTimeout(() => this.connectRemote(), 8000);
+    this.wsRetryTimer = setTimeout(() => this.connectRemote(), this.wsRetryDelay);
+    // Back off gradually so a relay that is simply not running does not get
+    // hammered, but a transient drop reconnects almost immediately.
+    this.wsRetryDelay = Math.min(this.wsRetryDelay * 2, 10000);
+  }
+
+  /**
+   * Phones suspend a backgrounded tab and kill its socket. Reconnect the
+   * instant the page is looked at again (or the network returns) rather than
+   * waiting out the backoff — that wait is what makes it feel like the phone
+   * "won't connect".
+   */
+  private watchRemoteWake() {
+    const wake = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+      this.wsRetryDelay = 1000;
+      clearTimeout(this.wsRetryTimer);
+      this.connectRemote();
+    };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('focus', wake);
+    window.addEventListener('online', wake);
+    window.addEventListener('pageshow', wake);
   }
 
   /** Send a sync message to every other window, local or remote. */
@@ -2025,10 +2052,18 @@ export class ShaderRitualApp extends LitElement {
                   : ''}
               `
             : html`<div class="element-desc">
-                Not connected. Run <strong>npm run remote</strong> in the project folder,
-                open the printed URL here and on your phone/tablet with
-                <strong>?control</strong> appended — the panel syncs live over your
-                local network.
+                Not connected${location.hostname ? html` to <strong>${location.hostname}:8787</strong>` : ''}.
+                Run <strong>npm run remote</strong> in the project folder, then open
+                the printed URL with <strong>?control</strong> appended here.
+                ${location.hostname
+                  ? html`<div style="margin-top:6px;">
+                      Reachability check:
+                      <a style="color:#a855f7;" href="http://${location.hostname}:8787/health" target="_blank">
+                        ${location.hostname}:8787/health</a>
+                      — if that fails too, the network is blocking the connection
+                      (macOS firewall, Local Network privacy, or router client isolation).
+                    </div>`
+                  : ''}
               </div>`}
         </div>
       </div>
