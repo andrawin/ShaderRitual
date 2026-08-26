@@ -20,7 +20,6 @@ import { thunder } from './shaders/thunder';
 import { pulsar } from './shaders/pulsar';
 import { alive } from './shaders/alive';
 import { chrome } from './shaders/chrome';
-import { nebula } from './shaders/nebula';
 import { oscilloscope } from './shaders/oscilloscope';
 import { siren } from './shaders/siren';
 import { plasma } from './shaders/plasma';
@@ -28,7 +27,6 @@ import { tardigrade } from './shaders/tardigrade';
 import { truchet } from './shaders/truchet';
 import { planet } from './shaders/planet';
 import { horizon } from './shaders/horizon';
-import { blossom } from './shaders/blossom';
 import { valley } from './shaders/valley';
 import { vectors } from './shaders/vectors';
 import { electric } from './shaders/electric';
@@ -36,9 +34,13 @@ import { machina } from './shaders/machina';
 import { moire } from './shaders/moire';
 import { reactor } from './shaders/reactor';
 import { trench } from './shaders/trench';
-import { vault } from './shaders/vault';
 import { shards } from './shaders/shards';
 import { waveform } from './shaders/waveform';
+import { pralina } from './shaders/pralina';
+import { leangleang } from './shaders/leangleang';
+import { jalurmerah } from './shaders/jalurmerah';
+import { jagokandang } from './shaders/jagokandang';
+import { embong } from './shaders/embong';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -51,7 +53,6 @@ export const SHADERS: ShaderDef[] = [
   pulsar,
   alive,
   chrome,
-  nebula,
   oscilloscope,
   siren,
   plasma,
@@ -59,7 +60,6 @@ export const SHADERS: ShaderDef[] = [
   truchet,
   planet,
   horizon,
-  blossom,
   valley,
   vectors,
   electric,
@@ -67,9 +67,13 @@ export const SHADERS: ShaderDef[] = [
   moire,
   reactor,
   trench,
-  vault,
   shards,
   waveform,
+  pralina,
+  leangleang,
+  jalurmerah,
+  jagokandang,
+  embong,
 ];
 
 /** Fresh camera / motion rig defaults. */
