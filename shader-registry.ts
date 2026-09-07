@@ -41,6 +41,7 @@ import { leangleang } from './shaders/leangleang';
 import { jalurmerah } from './shaders/jalurmerah';
 import { jagokandang } from './shaders/jagokandang';
 import { embong } from './shaders/embong';
+import { journey } from './shaders/journey';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -74,6 +75,7 @@ export const SHADERS: ShaderDef[] = [
   jalurmerah,
   jagokandang,
   embong,
+  journey,
 ];
 
 /** Fresh camera / motion rig defaults. */
