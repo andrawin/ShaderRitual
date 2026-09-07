@@ -205,7 +205,9 @@ float sdTerrain(in vec3 pos){
   dist = dist * dist * 0.01;
 
   float detailNoise = vnoise(pos.xz) * -2.5;
-  float amp = 2.96 * (0.7 + dunes_react * 0.7);
+  // The original amplitude at rest — the band only ever adds. Reducing this
+  // raises the dune surface (it sits at -large) and buries the camera.
+  float amp = 2.96 * (1.0 + dunes_react * 0.30);
   float large = (sin(-11.64 + pos.z * 0.73 + pos.z * 0.02)
                * sin((-3.65 + dist) + (pos.x * 0.25)) * 0.5) + 0.5;
   large = -4.41 + pow(large, 0.6) * amp - detailNoise * 0.1;
@@ -487,11 +489,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
     float lum = dot(col, vec3(0.299, 0.587, 0.114));
     col = mix(col, vec3(lum), clamp(grey_react, 0.0, 1.0));
   }
-  // Exposure lift + gentle contrast so grey does not read flat or dark.
-  col *= 1.0 + grey_react * 0.15;
-  col = clamp((col - 0.5) * 1.08 + 0.5 + 0.04, 0.0, 1.0);
-
-  fragColor = vec4(col, 1.0);
+  fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
 `;
