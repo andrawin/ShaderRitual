@@ -43,6 +43,7 @@ import { jagokandang } from './shaders/jagokandang';
 import { embong } from './shaders/embong';
 import { journey } from './shaders/journey';
 import { polyframe } from './shaders/polyframe';
+import { beacon } from './shaders/beacon';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -78,6 +79,7 @@ export const SHADERS: ShaderDef[] = [
   embong,
   journey,
   polyframe,
+  beacon,
 ];
 
 /** Fresh camera / motion rig defaults. */
