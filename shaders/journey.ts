@@ -471,6 +471,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   rY(ro, iCamOrbit * 0.12);
   ro = ta + (ro - ta) * max(iCamDist, 0.5);
 
+  // Ride above the sand. The dune height varies with position and with the
+  // Dunes element, so any fixed eye height gets buried on a crest sooner or
+  // later — clamp the eye (and the aim point) to the ground beneath them.
+  // sdTerrain is independent of y, so the surface is just -sdTerrain(x,_,z).
+  ro.y = max(ro.y, -sdTerrain(vec3(ro.x, 0.0, ro.z)) + 0.55);
+  ta.y = max(ta.y, -sdTerrain(vec3(ta.x, 0.0, ta.z)) + 0.30);
+
   vec3 ww = normalize(ta - ro);
   vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
   vec3 vv = normalize(cross(uu, ww));
