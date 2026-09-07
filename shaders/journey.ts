@@ -15,8 +15,10 @@ import type { ShaderDef } from '../types';
  *     (body, head with snout and ears, walking legs, tail);
  *   - the scarves become cables — five trailing from the creature and two
  *     from each standing stone, where the original had one scarf each;
- *   - everything renders on a single luminance channel, which also let the
- *     original's four colour schemes and per-material colour work drop out.
+ *   - the picture is desaturated to grey. The original's tuned palette (its
+ *     warm desert scheme) is kept and the colour is drained at the very end,
+ *     so the greys carry its tonal relationships rather than hand-picked
+ *     luminances — and the Grey element can dial the colour back in.
  *
  * Ported to GLSL-ES 1.00 besides: the terrain and mountain noise came from
  * textureLod reads of a noise texture (procedural value noise here), the
@@ -29,6 +31,7 @@ import type { ShaderDef } from '../types';
  *   dunes    -> height of the dunes
  *   clouds   -> the cloud banks; hideable
  *   sun      -> sun glare and haze
+ *   grey     -> how far toward grey; hide it for the original colour
  */
 
 const bufferShader = `
@@ -52,6 +55,8 @@ uniform float dunes_react;
 uniform float clouds_react;
 uniform float clouds_visible;
 uniform float sun_react;
+uniform float grey_react;
+uniform float grey_visible;
 
 #define MAT_PYRAMID 1.0
 #define MAT_TERRAIN 10.0
@@ -340,94 +345,115 @@ float softShadow(in vec3 ro, in vec3 rd, float mint, float maxt, float k){
   return res;
 }
 
-/* ---------------- monochrome sky ---------------- */
-float sky(vec3 ro, vec3 rd){
+/* ----------------------------------------------------------------------
+ * Shading keeps the original's tuned palette (its warm "scheme 2" desert)
+ * and desaturates at the very end, so the grey carries the original's tonal
+ * relationships instead of hand-picked luminances.
+ * -------------------------------------------------------------------- */
+const vec3 SUN_COL      = vec3(0.97059, 0.97059, 0.97059);
+const vec3 ZENITH       = vec3(0.98039, 0.83137, 0.53725);
+const vec3 HORIZON      = vec3(0.84559, 0.77688, 0.60310);
+const vec3 PYRAMID_COL  = vec3(0.92647, 0.73579, 0.33380);
+const vec3 TERRAIN_COL  = vec3(0.71324, 0.50760, 0.23600);
+const vec3 TERRAIN_SPEC = vec3(0.32353, 0.32123, 0.31877);
+const vec3 TERRAIN_SHAD = vec3(0.66912, 0.52969, 0.36900);
+const vec3 TERRAIN_DIST = vec3(1.00000, 0.75466, 0.43382);
+const vec3 CLOUD_COL    = vec3(0.99216, 0.94510, 0.76471);
+const vec3 CLOUD_SPEC   = vec3(0.17647, 0.06228, 0.06228);
+const vec3 STONE_COL    = vec3(0.94118, 0.82759, 0.45675);
+const vec3 STONE_CABLE  = vec3(0.44118, 0.19989, 0.14922);
+const vec3 CREATURE_COL = vec3(0.60294, 0.15150, 0.06207);
+const vec3 CREATURE_LEG = vec3(0.50000, 0.34040, 0.12868);
+const vec3 CABLE_COL    = vec3(0.64706, 0.30233, 0.00000);
+
+vec3 sky(vec3 ro, vec3 rd){
   float sunDistance = length(SUN_POS);
   vec3 delta = SUN_POS - (ro + rd * sunDistance);
   float dist = length(delta);
   delta.xy *= vec2(14.7, 1.47);
   float spot = 1.0 - smoothstep(0.0, 26.0, length(delta));
-  float glare = 0.6 + sun_react * 1.1;
-  float sun = clamp(15.0 * spot * spot * spot, 0.0, 1.0) * glare;
+  vec3 sun = clamp(15.0 * spot * spot * spot, 0.0, 1.0) * SUN_COL * (0.6 + sun_react * 1.0);
 
   float expControl = pow(clamp((dist - 11.1) * 0.09, 0.0, 1.0), 0.52);
   float y = rd.y;
   float zen = 1.0 - pow(min(1.0, 1.0 - y), 2.36);
-  float zenith = mix(0.95, 0.62 * zen, expControl);
+  vec3 zenithColor = mix(SUN_COL, ZENITH * zen, expControl);
   float nad = 1.0 - pow(min(1.0, 1.0 + y), 1.91);
   float hor = 1.0 - zen - nad;
-  return sun * 0.1 + zenith + hor * 0.78 + nad * 0.55;
+  return sun * 0.1 + zenithColor + HORIZON * hor;
 }
 
-/* ---------------- render (single luminance channel) ---------------- */
-float render(in vec3 ro, in vec3 rd){
+vec3 render(in vec3 ro, in vec3 rd){
   vec3 res = castRay(ro, rd);
-  float skyL = sky(ro, rd);
+  vec3 skyCol = sky(ro, rd);
   float t = res.x;
   float m = res.y;
   vec3 pos = ro + t * rd;
 
-  if(m < 0.0) return skyL + res.z * res.z * 0.12; // iteration-count bloom
+  // Iteration-count bloom around foreground silhouettes.
+  if(m < 0.0) return skyCol + res.z * res.z * 0.2;
 
-  float skyFog = 1.0 - exp(-0.008 * t * pow(max(pos.y, 0.0), 1.0));
+  // The original's light haze (-0.001), not the heavy one — this is what had
+  // crushed the scene dark.
+  float skyFog = 1.0 - exp(-0.001 * t * pow(max(pos.y, 0.0), 1.68));
 
-  // Mountain: height fog straight into the sky.
+  vec3 pyramidCol = mix(PYRAMID_COL, skyCol, skyFog * 0.5);
   if(m < MAT_PYRAMID + 0.1){
     float nh = pos.y / 38.66;
     nh = nh * nh * nh * nh * nh;
-    float heightFog = clamp(pow(clamp(1.0 - nh, 0.0, 1.0), 1.3), 0.0, 1.0);
-    return mix(mix(0.42, skyL, skyFog * 0.5), skyL, heightFog);
+    float heightFog = clamp(pow(clamp(1.0 - nh, 0.0, 1.0), 4.65), 0.0, 1.0);
+    return mix(pyramidCol, skyCol, heightFog);
   }
 
   vec3 nor = calcNormal(pos);
 
-  // Terrain: shadowed, rim-lit, with glitter on the crests.
   if(m < MAT_TERRAIN + 0.1){
     float shadow = clamp(softShadow(pos - rd * 0.01, LIGHT_DIR, 0.12, 5.2, 88.7) + 0.28, 0.0, 1.0);
+    vec3 shadowCol = mix(shadow * TERRAIN_SHAD, TERRAIN_DIST, pow(skyFog, 2.11 * 0.11));
     float rim = clamp(pow(1.0 - clamp(dot(nor, -rd), 0.0, 1.0), 5.59), 0.0, 1.0) * 1.61;
     vec3 ref = reflect(rd, nor);
     vec3 halfDir = normalize(LIGHT_DIR + rd);
-    float spec = pow(clamp(dot(ref, halfDir), 0.0, 1.0), 55.35) * 1.56 * 2.0;
+    float mainSpec = pow(clamp(dot(ref, halfDir), 0.0, 1.0), 55.35) * 0.03 * 2.0;
     float glitter = pow(vnoise(pos.xz * 7.0) * 1.15, 3.2);
-    spec *= glitter;
-    float rimSpec = pow(rim, 2.88) * glitter;
-    float terrainL = mix(rim * 0.16 + (spec + rimSpec) * shadow + 0.42, skyL, pow(skyFog, 2.11)) + res.z * 0.2;
-    return mix(0.22 * shadow, terrainL, shadow);
+    mainSpec *= glitter;
+    float rimSpec = pow(rim, 0.38) * glitter;
+    vec3 specColor = (mainSpec + rimSpec) * TERRAIN_SPEC;
+    vec3 terrainCol = mix(specColor * shadow + TERRAIN_COL, skyCol, pow(skyFog, 2.11)) + res.z * 0.2;
+    return mix(shadowCol, terrainCol, shadow);
   }
 
-  // Clouds: normals pushed to catch a hard highlight along the top edge.
   if(m < MAT_CLOUD + 0.1){
     vec3 cn = normalize(nor + vec3(0.26, -0.13, 1.22));
     float spec = (1.0 - clamp(pow(dot(cn, vec3(1.0, -3.5, 1.0)), 24.04), 0.0, 1.0)) * 2.0;
-    float cloudL = 0.86 + spec * 0.1 + clouds_react * 0.25;
-    return mix(cloudL, skyL, skyFog * 0.5);
+    vec3 cloudCol = spec * CLOUD_SPEC + CLOUD_COL * (1.0 + clouds_react * 0.3);
+    return mix(cloudCol, skyCol, skyFog * 0.5);
   }
 
-  // Standing stones and their cables.
   if(m < MAT_STONE_CABLE + 0.1){
     float diff = clamp(dot(nor, LIGHT_DIR) + 1.0, 0.0, 1.0);
-    float base = m > MAT_STONE + 0.5 ? 0.72 : 0.46; // cables read brighter
-    return mix(diff * base, skyL, skyFog);
+    vec3 col = m > MAT_STONE + 0.5 ? STONE_CABLE * 2.0 : STONE_COL;
+    return mix(diff * col, skyCol, skyFog);
   }
 
-  // The creature and its cables.
+  // Creature and its cables.
   float diff = 1.5 * clamp(dot(nor, LIGHT_DIR), 0.0, 1.0);
   vec3 fn = normalize(nor + vec3(0.3, -0.1, 1.0));
   fn.y *= 0.3;
   float fres = pow(clamp(1.0 + dot(fn, rd) + 0.75, 0.0, 1.0), 3.84) * 1.77;
 
-  float base = 0.30;
+  vec3 col;
   if(m > MAT_CREATURE_CABLE - 0.1){
-    // Cables: banded, with a bright travelling pulse.
+    // Cables: banded, with a bright pulse travelling along them.
     float band = step(0.55, fract(pos.z * 6.0 + iTime * 0.8));
-    base = mix(0.55, 0.95, band);
-    base += smoothstep(0.6, 1.0, sin(pos.z * 2.0 - iTime * 2.0)) * (0.3 + cables_react * 0.7);
+    col = mix(CABLE_COL, vec3(1.0), band * 0.45);
+    col += smoothstep(0.6, 1.0, sin(pos.z * 2.0 - iTime * 2.0)) * (0.25 + cables_react * 0.6);
   } else {
-    // Creature: darker underside, lighter back.
-    base = mix(0.18, 0.46, clamp(nor.y * 0.5 + 0.5, 0.0, 1.0));
-    base += creature_react * 0.15;
+    // Creature: legs pick up sand colour, back stays warm.
+    float up = clamp(nor.y * 0.5 + 0.5, 0.0, 1.0);
+    col = mix(CREATURE_LEG, CREATURE_COL, up);
+    col += creature_react * 0.15;
   }
-  return mix((fres + diff) * base, skyL, skyFog * 4.55);
+  return mix((fres + diff) * col, skyCol, skyFog * 12.47);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
@@ -449,12 +475,23 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec2 sc = screenCoord * vec2(1.038 * 1.35, 0.78984) * (iCamFov / 60.0);
   vec3 rd = normalize(sc.x * uu + sc.y * vv + 1.0 * ww);
 
-  float L = render(ro, rd);
+  vec3 col = render(ro, rd);
 
   float vig = min(pow(1.0 - 0.4 * dot(screenCoord, screenCoord), 0.6) * 1.25, 1.0);
-  L *= vig;
+  col *= vig;
 
-  fragColor = vec4(vec3(clamp(L, 0.0, 1.0)), 1.0);
+  // Desaturate last, so the grey inherits the original palette's tonal
+  // relationships. Hide the element for the original colour; the level sets
+  // how far toward grey it goes.
+  if(grey_visible > 0.5){
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(lum), clamp(grey_react, 0.0, 1.0));
+  }
+  // Exposure lift + gentle contrast so grey does not read flat or dark.
+  col *= 1.0 + grey_react * 0.15;
+  col = clamp((col - 0.5) * 1.08 + 0.5 + 0.04, 0.0, 1.0);
+
+  fragColor = vec4(col, 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
 `;
@@ -471,7 +508,7 @@ export const journey: ShaderDef = {
   id: 'journey',
   name: 'Journey',
   description:
-    'A small animal crossing a monochrome desert — dunes, a vast prism mountain, cloud banks and standing stones, with cables trailing behind it.',
+    'A small animal crossing a grey desert — dunes, a vast prism mountain, cloud banks and standing stones, with cables trailing behind it. Grey is dialable back to colour.',
   bufferShader,
   imageShader,
   elements: [
@@ -519,6 +556,17 @@ export const journey: ShaderDef = {
       defaultBand: 'low',
       defaultAmount: 1.0,
       canHide: false,
+      defaultVisible: true,
+    },
+    {
+      id: 'grey',
+      name: 'Grey',
+      description:
+        'How far the picture is drained toward grey. Level 1 is fully monochrome, lower keeps some of the warm desert colour; hide for the original palette.',
+      defaultBand: 'none',
+      defaultAmount: 1.0,
+      defaultLevel: 1.0,
+      canHide: true,
       defaultVisible: true,
     },
   ],
