@@ -44,6 +44,8 @@ import { embong } from './shaders/embong';
 import { journey } from './shaders/journey';
 import { polyframe } from './shaders/polyframe';
 import { beacon } from './shaders/beacon';
+import { verdigris } from './shaders/verdigris';
+import { maelstrom } from './shaders/maelstrom';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -80,6 +82,8 @@ export const SHADERS: ShaderDef[] = [
   journey,
   polyframe,
   beacon,
+  verdigris,
+  maelstrom,
 ];
 
 /** Fresh camera / motion rig defaults. */
