@@ -216,43 +216,114 @@ float sdSegOd(vec2 p, vec2 a, vec2 b, float r){
   return length(pa - ba * h) - r;
 }
 
+float sminOd(float a, float b, float k){
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
 /*
- * The traveller: a side-on silhouette mid-stride with a greatsword raised.
- * p is figure-space — feet at y = 0, crown near y = 1 — so a scene only has
- * to decide where the figure stands and how tall it is. ph is the stride phase
- * in radians. sw scales the sword alone, so it can be made absurd without
- * inflating the body with it.
+ * The traveller. p is figure-space — feet at y = 0, crown at y = 1 — so a scene
+ * only has to decide where the figure stands and how tall it is. ph is the
+ * stride phase in radians; sw scales the sword alone, so it can be made absurd
+ * without inflating the body with it.
+ *
+ * Built to read as a designed character rather than a stick figure, which for a
+ * silhouette comes down to four things:
+ *
+ *   Proportion. Eight heads tall, not the five-and-a-half a naive build gives
+ *     you. Nothing else matters as much: a big head reads as a cartoon toy at
+ *     any size, and no amount of costume detail fixes it.
+ *   A trailing coat. The largest single silhouette gain available — it fills
+ *     the space behind the figure, swings against the stride, and is what makes
+ *     a walking outline look like it is moving through air.
+ *   Hair with a direction. A swept mass off the back of the skull, so the head
+ *     is a shape rather than a circle.
+ *   Interior line. The body is a black cut-out, so costume detail can only live
+ *     as light: walkerOd leaves piping in gTrimOd for the scene to draw inside
+ *     the silhouette in its own key colour.
  */
+float gTrimOd = 1e5;
+
 float walkerOd(vec2 p, float ph, float sw){
   float s = sin(ph);
   float c = cos(ph);
-  p.y -= abs(s) * 0.03;                      // the bob of a walk cycle
+  p.y -= abs(s) * 0.028;                       // the bob of a walk cycle
   float d = 1e5;
+  float tr = 1e5;
 
-  vec2 hip = vec2(0.0, 0.44);
-  vec2 kF = hip + vec2( 0.11 * s + 0.02, -0.21);
-  vec2 fF = kF  + vec2( 0.09 * s + 0.03, -0.23);
-  vec2 kB = hip + vec2(-0.11 * s + 0.02, -0.21);
-  vec2 fB = kB  + vec2(-0.09 * s + 0.03, -0.23);
-  d = min(d, sdSegOd(p, hip, kF, 0.055));
-  d = min(d, sdSegOd(p, kF,  fF, 0.042));
-  d = min(d, sdSegOd(p, hip, kB, 0.055));
-  d = min(d, sdSegOd(p, kB,  fB, 0.042));
+  // Eight heads: hip at half height, shoulders at 0.80, crown at 1.0.
+  vec2 hip = vec2(0.0, 0.50);
+  vec2 sh  = vec2(0.025 + c * 0.014, 0.80);    // shoulders counter-rotate
+  vec2 hd  = sh + vec2(0.035, 0.137);
 
-  vec2 sh = vec2(0.02 + c * 0.015, 0.78);    // shoulders counter-rotate
-  d = min(d, sdSegOd(p, hip, sh, 0.088));
-  d = min(d, length(p - (sh + vec2(0.03, 0.12))) - 0.088);
+  vec2 kF = hip + vec2( 0.115 * s + 0.02, -0.23);
+  vec2 fF = kF  + vec2( 0.100 * s + 0.03, -0.25);
+  vec2 kB = hip + vec2(-0.115 * s + 0.02, -0.23);
+  vec2 fB = kB  + vec2(-0.100 * s + 0.03, -0.25);
 
-  vec2 grip = sh + vec2(0.17, -0.05);        // both hands on the grip
-  d = min(d, sdSegOd(p, sh,                     grip,                     0.040));
-  d = min(d, sdSegOd(p, sh + vec2(0.0, -0.06), grip + vec2(0.0, 0.04), 0.036));
+  // Coat. It has to stay narrow and stop around mid-thigh: reaching further
+  // back and wider reads as a fin rather than as cloth, and it swallows the
+  // stride, which is the one part of the silhouette that has to stay legible.
+  float sway = s * 0.09;
+  vec2 c0 = sh + vec2(-0.045, 0.015);
+  vec2 c1 = c0 + vec2(-0.075 - abs(s) * 0.03, -0.20 + sway * 0.5);
+  vec2 c2 = c1 + vec2(-0.075, -0.17 - sway);
+  d = min(d, sdSegOd(p, c0, c1, 0.072));
+  d = min(d, sdSegOd(p, c1, c2, 0.048));
+  d = min(d, sdSegOd(p, c2, c2 + vec2(-0.055, -0.075 - sway * 0.6), 0.021));
+
+  // Legs, with a boot on the end of each.
+  d = min(d, sdSegOd(p, hip, kF, 0.050));
+  d = min(d, sdSegOd(p, kF,  fF, 0.040));
+  d = min(d, sdSegOd(p, fF, fF + vec2(0.055, 0.0), 0.032));
+  d = min(d, sdSegOd(p, hip, kB, 0.050));
+  d = min(d, sdSegOd(p, kB,  fB, 0.040));
+  d = min(d, sdSegOd(p, fB, fB + vec2(0.055, 0.0), 0.032));
+
+  // Torso, tapering to the shoulders.
+  d = min(d, sdSegOd(p, hip, mix(hip, sh, 0.5), 0.068));
+  d = min(d, sdSegOd(p, mix(hip, sh, 0.5), sh, 0.078));
+
+  // Neck, so the head sits on the body instead of balancing on it.
+  d = min(d, sdSegOd(p, sh + vec2(0.020, 0.0), hd + vec2(-0.010, -0.030), 0.030));
+
+  // Head, and a swept mop that gives it a facing. One flick, not two — a
+  // second one turns the profile into a crest and the head reads as a bird.
+  // Smooth-unioned: a hard min leaves a notch where the hair meets the skull,
+  // and in profile that notch is exactly where a beak would be.
+  float head = length(p - hd) - 0.062;
+  head = sminOd(head,
+                length((p - hd - vec2(-0.028, 0.030)) * vec2(1.10, 1.0)) - 0.072, 0.035);
+  // Short and thick. A long thin flick off the back of a head this small is a
+  // bill, not hair, whatever it is unioned to.
+  head = sminOd(head,
+                sdSegOd(p, hd + vec2(-0.045, 0.046), hd + vec2(-0.092, 0.012), 0.029), 0.030);
+  d = min(d, head);
+
+  // Both arms on the grip, bent at the elbow.
+  vec2 grip = sh + vec2(0.175, -0.03);
+  vec2 e1 = sh + vec2(0.110, -0.135);
+  vec2 e2 = sh + vec2(0.055, -0.165);
+  d = min(d, sdSegOd(p, sh, e1, 0.036));
+  d = min(d, sdSegOd(p, e1, grip, 0.032));
+  d = min(d, sdSegOd(p, sh + vec2(-0.010, -0.05), e2, 0.033));
+  d = min(d, sdSegOd(p, e2, grip + vec2(0.0, -0.045), 0.030));
+
+  // Suit piping. Only meaningful inside the silhouette, where the scene draws
+  // it as light — outside it would just thicken the outline. Kept to three
+  // marks: a line down the centre of a limb reads as bone, not as costume, so
+  // these follow seams instead.
+  tr = min(tr, sdSegOd(p, sh + vec2(-0.050, -0.030), sh + vec2(0.060, -0.058), 0.005));
+  tr = min(tr, sdSegOd(p, sh + vec2(0.018, -0.080), hip + vec2(0.026, 0.020), 0.005));
+  tr = min(tr, length(p - (hd + vec2(0.042, 0.008))) - 0.014);   // the visor
+  gTrimOd = tr;
 
   // The sword, raised and leaning forward off the grip.
   vec2 q = (p - grip) * rotOd(-0.35);
   float bl = 1.15 * sw;
   d = min(d, sdSegOd(q, vec2(0.0, -0.13 * sw), vec2(0.0, 0.03), 0.030 * sw));
   d = min(d, length(q - vec2(0.0, -0.16 * sw)) - 0.042 * sw);
-  d = min(d, sdSegOd(q, vec2(-0.17 * sw, 0.055), vec2(0.17 * sw, 0.055), 0.026 * sw));
+  d = min(d, sdSegOd(q, vec2(-0.13 * sw, 0.055), vec2(0.13 * sw, 0.055), 0.024 * sw));
 
   // Tapered blade: a zero-radius segment less a width that narrows to the tip.
   float t = clamp(q.y / max(bl, 1e-3), 0.0, 1.0);
@@ -270,9 +341,11 @@ float travellerXOd(float spd){
 /* The traveller in frame units: signed distance, negative inside the figure.
  * Hidden returns a large positive, so a scene can call it unconditionally. */
 float travellerOd(vec2 uv, float wx, float gy, float h, float spd, float sw, float show){
-  if(show < 0.5) return 1e5;
+  if(show < 0.5){ gTrimOd = 1e5; return 1e5; }
   float ph = iTime * (1.6 + spd * 40.0);
-  return walkerOd((uv - vec2(wx, gy)) / h, ph, sw) * h;
+  float d = walkerOd((uv - vec2(wx, gy)) / h, ph, sw) * h;
+  gTrimOd *= h;   // piping comes back in figure units; scenes want frame units
+  return d;
 }
 
 /* A hunched, kneeling silhouette, in the same figure-space as walkerOd so the

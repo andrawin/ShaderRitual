@@ -118,6 +118,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
   col *= smoothstep(-px, px, d);
   col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.6 + walk_react * 0.8);
+  // Suit piping, drawn only where it falls inside the cut-out — outside it
+  // would read as a thicker outline rather than as costume.
+  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
+       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
 
   col *= 1.0 - 0.5 * pow(clamp(length(uv * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);

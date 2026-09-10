@@ -185,6 +185,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
   col *= smoothstep(-px, px, d);
   col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.7 + walk_react * 0.9);
+  // Suit piping, drawn only where it falls inside the cut-out — outside it
+  // would read as a thicker outline rather than as costume.
+  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
+       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
 
   // The fire line hugging the ground, and what it throws up.
   if(fire_visible > 0.5){
