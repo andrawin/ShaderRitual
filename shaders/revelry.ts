@@ -30,8 +30,63 @@ uniform float spires_react;
 uniform float spires_visible;
 uniform float motes_react;
 uniform float motes_visible;
+uniform float sky_react;
+uniform float sky_visible;
 
 ${odysseyLib}
+
+/*
+ * The sky: three painted planets, straight off the reference — the hanging
+ * globes in The Artful Escape's cavern. Each is an analytic sphere (no march;
+ * the z of the surface comes out of the circle equation), so the surface has a
+ * real normal to shade and real spherical coordinates to paint into. The paint
+ * is Mandala's kaleidoscope: the longitude is folded k ways and fract() bands
+ * the noise into the flat poster colours the reference uses rather than a
+ * smooth gradient.
+ */
+vec3 skyOrbsOd(vec2 uv, float react){
+  vec3 col = vec3(0.0);
+  vec3 lig = normalize(vec3(-0.45, 0.55, 0.70));
+  for(int i = 0; i < 3; i++){
+    float fi = float(i);
+    float h = hashOd(vec2(fi, 4.0));
+    float h2 = hashOd(vec2(fi, 9.0));
+    vec2 c = vec2(-0.62 + fi * 0.58 + sin(iTime * 0.05 + fi) * 0.04,
+                  0.34 - h * 0.16);
+    float r = (0.075 + h2 * 0.105) * (1.0 + react * 0.18);
+    vec2 q = uv - c;
+    float dd = length(q);
+
+    // Picked, not lerped: mixing magenta into cyan passes through a
+    // desaturated lavender, and every planet lands there.
+    vec3 tint = fi < 0.5 ? vec3(0.97, 0.18, 0.55)
+              : (fi < 1.5 ? vec3(0.15, 0.92, 0.86)
+                          : vec3(0.58, 0.28, 1.00));
+    col += tint * pow(max(0.0, 1.0 - dd / (r * 3.4)), 3.0) * (0.10 + react * 0.30);
+
+    if(dd < r){
+      vec3 n = vec3(q, sqrt(max(r * r - dd * dd, 0.0))) / r;
+      float lat = asin(clamp(n.y, -1.0, 1.0));
+      float lon = atan(n.x, n.z) + iTime * (0.05 + h * 0.06) + fi;
+      // k-fold kaleidoscope on the longitude
+      float k = 4.0 + floor(h * 4.0);
+      float a = abs(fract(lon * k * 0.15915) - 0.5) * 2.0;
+      float v = fbmOd(vec2(a * 4.0, lat * 4.0 + fi * 3.0))
+              + fbm3Od(vec2(lat * 8.0, a * 8.0 - iTime * 0.03)) * 0.5;
+      v = fract(v * 2.6 + react * 0.35);
+      // Saturated ground with dark linework cut through it and one accent
+      // band — the reference's planets are bold flat colour, not a gradient.
+      vec3 dark = vec3(0.05, 0.02, 0.11);
+      float line = smoothstep(0.44, 0.49, v) * smoothstep(0.64, 0.57, v)
+                 + smoothstep(0.05, 0.09, v) * smoothstep(0.21, 0.16, v);
+      vec3 paint = mix(tint, dark, clamp(line, 0.0, 1.0));
+      paint = mix(paint, vec3(0.98, 0.72, 0.14), smoothstep(0.86, 0.92, v));
+      paint *= 0.30 + 0.70 * clamp(dot(n, lig), 0.0, 1.0);
+      col = mix(col, paint * (0.7 + react * 0.7), smoothstep(r, r - 0.005, dd));
+    }
+  }
+  return col;
+}
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec2 uv = frameOd(fragCoord);
@@ -47,6 +102,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   float s = clamp(uv.y + 0.5, 0.0, 1.0);
   vec3 col = mix(vec3(0.55, 0.10, 0.45), vec3(0.10, 0.03, 0.30), s);
   col += vec3(0.9, 0.25, 0.6) * pow(max(0.0, 1.0 - abs(uv.y + 0.26) * 1.8), 4.0) * 0.5;
+
+  // Background, behind everything.
+  float gyx = groundOd(uv.x, scroll, 5.7, -0.26, 0.55);
+  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
+    col += skyOrbsOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
+  }
 
   if(aurora_visible > 0.5){
     float a = 0.0;
@@ -169,6 +230,17 @@ export const revelry: ShaderDef = {
       description: 'Drifting particles in the clean air. React brightens the whole field.',
       defaultBand: 'high',
       defaultAmount: 1.0,
+      defaultLevel: 0.3,
+      canHide: true,
+      defaultVisible: true,
+    },
+    {
+      id: 'sky',
+      name: 'Sky — Planets',
+      description:
+        'Three painted globes hanging behind the horizon, shaded as real spheres and painted with Mandala’s kaleidoscope. React swells them and pushes the paint bands around the surface. Hide for an empty sky.',
+      defaultBand: 'low',
+      defaultAmount: 0.7,
       defaultLevel: 0.3,
       canHide: true,
       defaultVisible: true,

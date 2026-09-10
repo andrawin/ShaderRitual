@@ -31,8 +31,51 @@ uniform float rigs_visible;
 uniform float smoke_react;
 uniform float smoke_visible;
 uniform float drain_react;
+uniform float sky_react;
+uniform float sky_visible;
 
 ${odysseyLib}
+
+/*
+ * The sky: Machina's fold, hung overhead as a machine the scene is being fed
+ * to. Space is folded abs()-and-rotate a few times and a box is measured in the
+ * folded coordinate, which turns one box into a lattice of them; accumulating
+ * 1/(1+d*d) along the ray renders it as edges of light rather than solid, which
+ * is both cheaper than shading it and closer to the scene's flat silhouettes.
+ *
+ * Machina drives its fold count from a band, and so does this: react adds folds
+ * as well as brightness, so the machinery genuinely restructures on the music.
+ */
+float machDeOd(vec3 p, float folds, float t){
+  p.xz *= rotOd(t * 0.12);
+  p.xy *= rotOd(sin(t * 0.09) * 0.4);
+  for(int i = 0; i < 6; i++){
+    if(float(i) >= folds) break;
+    p = abs(p) - 1.9 - float(i) * 0.35;
+    p.xy *= rotOd(0.34 + sin(t * 0.18) * 0.14);
+    p.yz *= rotOd(-0.27);
+  }
+  // Edges rather than faces. A folded box's *surface* is everywhere once it has
+  // been folded a few times, so accumulating against it renders as fog; its
+  // frame is a sparse set of struts, which is what reads as machinery.
+  vec3 q = abs(abs(p) - 1.5);
+  return min(min(max(q.x, q.y), max(q.y, q.z)), max(q.x, q.z)) - 0.06;
+}
+
+vec3 skyMachineOd(vec2 uv, float react){
+  vec3 rd = skyRayOd(uv, 0.85);
+  vec3 ro = vec3(0.0, 0.0, -11.0);
+  float folds = floor(3.0 + react * 1.6);
+  float g = 0.0;
+  float d = 0.0;
+  for(int i = 0; i < 28; i++){
+    float de = machDeOd(ro + rd * d, folds, iTime);
+    g += 0.010 / (0.010 + de * de);
+    d += max(abs(de) * 0.8, 0.09);
+    if(d > 20.0) break;
+  }
+  return vec3(0.74, 0.54, 0.32) * g * 0.045 * (0.4 + react * 1.0);
+}
 
 /* The hillside, cut into benches as the drain rises. */
 float mineOd(float x, float scroll, float dr){
@@ -58,6 +101,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec3 col = mix(skyA, skyB, dr);
   col += mix(vec3(0.9, 0.25, 0.6), vec3(0.55, 0.38, 0.14), dr)
        * pow(max(0.0, 1.0 - abs(uv.y + 0.25) * 1.8), 4.0) * 0.45;
+
+  // Background, behind everything.
+  float gyx = mineOd(uv.x, scroll, dr);
+  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
+    col += skyMachineOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
+  }
 
   // A far ridge, already grey.
   col = mix(col * mix(vec3(0.40, 0.22, 0.45), vec3(0.30, 0.28, 0.26), dr), col,
@@ -183,6 +232,17 @@ export const extraction: ShaderDef = {
       defaultAmount: 0.4,
       defaultLevel: 0.5,
       canHide: false,
+      defaultVisible: true,
+    },
+    {
+      id: 'sky',
+      name: 'Sky — Machine',
+      description:
+        'Machina’s folded lattice hung overhead as the machine this landscape is being fed to, rendered as edges of light. React adds folds as well as brightness, so it restructures on the music. Hide for an empty sky.',
+      defaultBand: 'mid',
+      defaultAmount: 0.9,
+      defaultLevel: 0.35,
+      canHide: true,
       defaultVisible: true,
     },
   ],

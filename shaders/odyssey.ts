@@ -71,6 +71,44 @@ float fbmOd(vec2 p){
   return v;
 }
 
+/* Three-octave fbm. The sky backgrounds evaluate noise inside a march loop,
+ * where five octaves per step is the difference between running and not. */
+float fbm3Od(vec2 p){
+  float v = 0.0;
+  float a = 0.5;
+  for(int i = 0; i < 3; i++){
+    v += a * noiseOd(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return v;
+}
+
+/* Box, in the max form Machina uses — cheap, and its exterior distance is what
+ * the glow accumulators want. */
+float sbOd(vec3 p, vec3 s){
+  p = abs(p) - s;
+  return max(max(p.x, p.y), p.z);
+}
+
+/*
+ * A ray into the sky dome, from the same uv the flat layers are drawn in, so a
+ * background with real depth still tracks the rig (frameOd has already folded
+ * in orbit, height, fov and distance).
+ */
+vec3 skyRayOd(vec2 uv, float z){
+  return normalize(vec3(uv, z));
+}
+
+/*
+ * How much of a sky background survives at this pixel: nothing below the
+ * ground line, and eased in above it so the background does not fight the
+ * horizon glow every scene puts there.
+ */
+float skyFadeOd(float y, float gy){
+  return smoothstep(gy - 0.01, gy + 0.18, y);
+}
+
 /* The frame every scene shares: centred, aspect-corrected, rig-driven. */
 vec2 frameOd(vec2 fragCoord){
   vec2 uv = fragCoord / iResolution.xy - 0.5;

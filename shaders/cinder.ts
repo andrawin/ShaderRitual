@@ -36,8 +36,47 @@ uniform float embers_visible;
 uniform float trees_react;
 uniform float trees_visible;
 uniform float burn_react;
+uniform float sky_react;
+uniform float sky_visible;
 
 ${odysseyLib}
+
+/*
+ * The sky: Thunder's bolt, flattened onto the sky plane. Thunder builds its
+ * lightning by giving every integer step along an axis a random lateral offset
+ * and joining consecutive offsets with a segment — a chain of segments whose
+ * kinks are hashed, which is why it looks jagged rather than wobbly. Only the
+ * three segments around this pixel can be nearest, so three is all it checks.
+ *
+ * Firestorms really do make their own lightning, so this is the one sky in the
+ * suite the scene would have produced on its own.
+ */
+float boltOd(vec2 p, float seed, float amp){
+  float id = floor(p.x);
+  float d = 1e5;
+  for(int i = 0; i < 3; i++){
+    float k = id + float(i) - 1.0;
+    float y0 = (hashOd(vec2(k, seed)) - 0.5) * amp;
+    float y1 = (hashOd(vec2(k + 1.0, seed)) - 0.5) * amp;
+    d = min(d, sdSegOd(p, vec2(k, y0), vec2(k + 1.0, y1), 0.0));
+  }
+  return d;
+}
+
+vec3 skyStormOd(vec2 uv, float react){
+  // A strike every couple of seconds, decaying fast; react can force one.
+  float slot = floor(iTime / 2.2);
+  float ph = fract(iTime / 2.2);
+  float flash = exp(-ph * 9.0) * step(0.35, hashOd(vec2(slot, 3.0)));
+  flash = max(flash, clamp(react - 0.65, 0.0, 1.0));
+  if(flash < 0.004) return vec3(0.0);
+  float sx = hashOd(vec2(slot, 7.0)) * 1.3 - 0.65;
+  vec2 bp = vec2((0.5 - uv.y) * 6.0, (uv.x - sx) * 6.0);
+  float d = boltOd(bp, slot, 1.0 + react * 0.8);
+  vec3 c = vec3(1.00, 0.74, 0.44);
+  return c * (0.045 / (0.045 + d * d)) * flash * (0.5 + react * 0.8)
+       + c * flash * 0.05;
+}
 
 /* Forest ridge crossfading into dunes as the burn advances. */
 float landOd(float x, float scroll, float bn){
@@ -63,6 +102,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
                  mix(vec3(0.10, 0.05, 0.06), vec3(0.28, 0.20, 0.16), bn), s);
   col += vec3(1.0, 0.45, 0.10) * pow(max(0.0, 1.0 - abs(uv.y + 0.24) * 1.5), 3.0)
        * 0.5 * (1.0 - bn * 0.6);
+
+  // Background, behind everything — under the smoke, so the smoke veils it.
+  float gyx = landOd(uv.x, scroll, bn);
+  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
+    col += skyStormOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
+  }
 
   // Smoke lying across the sky.
   float sm = fbmOd(vec2(uv.x * 1.6 + scroll * 1.3, uv.y * 1.5 - iTime * 0.07));
@@ -197,6 +242,17 @@ export const cinder: ShaderDef = {
       defaultAmount: 0.4,
       defaultLevel: 0.4,
       canHide: false,
+      defaultVisible: true,
+    },
+    {
+      id: 'sky',
+      name: 'Sky — Firestorm',
+      description:
+        'Thunder’s bolt striking through the smoke — firestorms make their own lightning. Strikes fire on their own every couple of seconds; push react past about 0.65 and the band fires them instead, so it cracks on the beat. Hide for smoke alone.',
+      defaultBand: 'low',
+      defaultAmount: 1.0,
+      defaultLevel: 0.3,
+      canHide: true,
       defaultVisible: true,
     },
   ],

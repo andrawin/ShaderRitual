@@ -31,8 +31,36 @@ uniform float fallen_react;
 uniform float fallen_visible;
 uniform float sun_react;
 uniform float sun_visible;
+uniform float sky_react;
+uniform float sky_visible;
 
 ${odysseyLib}
+
+/*
+ * The sky: Plasma's globe filaments, turned loose in the open air. The trick
+ * there is that thin arcs fall out of a thick noise field for free — take the
+ * distance from a single iso-value and raise it to a power, and everything but
+ * a hairline shell of the field goes to zero. Twisting the sample plane by
+ * depth is what bends them into arcs rather than sheets.
+ *
+ * In a plasma globe that reads as electricity in glass. Over a poisoned
+ * landscape, in green, it reads as the air itself discharging.
+ */
+vec3 skyFilamentOd(vec2 uv, float react){
+  vec3 rd = skyRayOd(uv, 0.90);
+  vec3 acc = vec3(0.0);
+  float t = 0.5;
+  for(int i = 0; i < 22; i++){
+    vec3 p = rd * t;
+    p.xy *= rotOd(p.z * 0.55 + iTime * 0.12);
+    float n = fbm3Od(p.xy * 2.1 + vec2(p.z * 1.3, iTime * 0.22));
+    float fil = pow(max(0.0, 1.0 - abs(n - 0.5) * 8.5), 4.0);
+    acc += mix(vec3(0.30, 0.52, 0.08), vec3(0.78, 0.88, 0.28), fil)
+         * fil * (0.05 + react * 0.11) * exp(-t * 0.32);
+    t += 0.14;
+  }
+  return acc;
+}
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec2 uv = frameOd(fragCoord);
@@ -48,6 +76,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   float s = clamp(uv.y + 0.5, 0.0, 1.0);
   vec3 col = mix(vec3(0.46, 0.46, 0.14), vec3(0.09, 0.13, 0.07), s);
   col += vec3(0.40, 0.36, 0.10) * pow(max(0.0, 1.0 - abs(uv.y + 0.24) * 1.6), 3.0) * 0.6;
+
+  // Background, behind everything.
+  float gyx = groundOd(uv.x, scroll, 12.4, -0.25, 0.55);
+  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
+    col += skyFilamentOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
+  }
 
   // A sun that cannot get through.
   if(sun_visible > 0.5){
@@ -170,6 +204,17 @@ export const miasma: ShaderDef = {
       description: 'The dimmed disc and its bloom behind the haze.',
       defaultBand: 'low',
       defaultAmount: 0.6,
+      defaultLevel: 0.35,
+      canHide: true,
+      defaultVisible: true,
+    },
+    {
+      id: 'sky',
+      name: 'Sky — Discharge',
+      description:
+        'Plasma’s filaments let loose in the open air: thin green arcs falling out of a twisted noise field, so the sky itself reads as discharging. React drives how hard they burn. Hide for an empty sky.',
+      defaultBand: 'high',
+      defaultAmount: 0.9,
       defaultLevel: 0.35,
       canHide: true,
       defaultVisible: true,

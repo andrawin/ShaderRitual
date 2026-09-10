@@ -31,8 +31,41 @@ uniform float moon_react;
 uniform float moon_visible;
 uniform float blast_react;
 uniform float blast_visible;
+uniform float sky_react;
+uniform float sky_visible;
 
 ${odysseyLib}
+
+/*
+ * The sky: a volumetric nebula, marched rather than painted, using Plasma's
+ * approach of accumulating emission along the ray instead of finding a surface.
+ * Density is three-octave noise sampled in a plane that slides with depth, which
+ * is enough to read as real volume once it is integrated over 20 steps, and far
+ * cheaper than a true 3D field.
+ *
+ * It also takes the blast: b lights the cloud from underneath and warms it, so
+ * the detonation reads as something happening inside the sky rather than in
+ * front of it.
+ */
+vec3 skyNebulaOd(vec2 uv, float react, float b){
+  vec3 rd = skyRayOd(uv, 0.90);
+  vec3 acc = vec3(0.0);
+  float t = 0.55;
+  for(int i = 0; i < 20; i++){
+    vec3 p = rd * t;
+    float dns = fbm3Od(p.xy * 1.7 + vec2(p.z * 0.7, iTime * 0.012))
+              - 0.40 - float(i) * 0.004;
+    if(dns > 0.0){
+      vec3 c = mix(vec3(0.14, 0.20, 0.56), vec3(0.52, 0.36, 0.82), dns * 2.4);
+      // lit from below by the detonation
+      c = mix(c, vec3(1.00, 0.86, 0.62), clamp(b * 0.8, 0.0, 1.0)
+                                       * smoothstep(0.5, -0.2, p.y));
+      acc += c * dns * (0.10 + react * 0.24) * exp(-t * 0.20);
+    }
+    t += 0.17;
+  }
+  return acc;
+}
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec2 uv = frameOd(fragCoord);
@@ -55,6 +88,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec3 col = mix(vec3(0.06, 0.10, 0.26), vec3(0.01, 0.02, 0.09), s);
   col += vec3(0.10, 0.18, 0.34) * pow(max(0.0, 1.0 - abs(uv.y + 0.25) * 2.0), 3.0);
   col += vec3(0.05, 0.09, 0.20) * fbmOd(vec2(uv.x * 1.1 + scroll, uv.y * 2.2 + 4.0)) * 0.5;
+
+  // Background, behind everything.
+  float gyx = groundOd(uv.x, scroll, 7.9, -0.25, 0.60);
+  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
+    col += skyNebulaOd(uv, sky_react, b) * skyFadeOd(uv.y, gyx);
+  }
 
   if(stars_visible > 0.5){
     float st = starsOd(uv + vec2(scroll * 0.25, 0.0), 34.0, 0.7)
@@ -177,10 +216,21 @@ export const lullaby: ShaderDef = {
       id: 'blast',
       name: 'Blast',
       description:
-        'The detonation: column, core, shock rings and a sky flash, with the traveller backlit by it. Carries a slow automatic swell; assign it to the kick to land it on the beat. Hide to keep the night silent.',
+        'The detonation: column, core, shock rings and a sky flash, with the traveller backlit by it and the nebula lit from underneath. Carries a slow automatic swell; assign it to the kick to land it on the beat. Hide to keep the night silent.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.0,
+      canHide: true,
+      defaultVisible: true,
+    },
+    {
+      id: 'sky',
+      name: 'Sky — Nebula',
+      description:
+        'A volumetric cloud marched through the night sky, emission accumulated along the ray the way Plasma does it. The blast lights it from below. React drives its density. Hide for stars on bare sky.',
+      defaultBand: 'mid',
+      defaultAmount: 0.7,
+      defaultLevel: 0.4,
       canHide: true,
       defaultVisible: true,
     },
