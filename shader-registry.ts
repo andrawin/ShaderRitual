@@ -46,6 +46,12 @@ import { polyframe } from './shaders/polyframe';
 import { beacon } from './shaders/beacon';
 import { verdigris } from './shaders/verdigris';
 import { maelstrom } from './shaders/maelstrom';
+import { awakening } from './shaders/awakening';
+import { revelry } from './shaders/revelry';
+import { extraction } from './shaders/extraction';
+import { lullaby } from './shaders/lullaby';
+import { miasma } from './shaders/miasma';
+import { cinder } from './shaders/cinder';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -84,6 +90,13 @@ export const SHADERS: ShaderDef[] = [
   beacon,
   verdigris,
   maelstrom,
+  // The Odyssey suite — six scenes of one story, in order.
+  awakening,
+  revelry,
+  extraction,
+  lullaby,
+  miasma,
+  cinder,
 ];
 
 /** Fresh camera / motion rig defaults. */
