@@ -42,23 +42,29 @@ uniform float sky_visible;
 ${odysseyLib}
 
 /*
- * The sky: Thunder's bolt, flattened onto the sky plane. Thunder builds its
- * lightning by giving every integer step along an axis a random lateral offset
- * and joining consecutive offsets with a segment — a chain of segments whose
- * kinks are hashed, which is why it looks jagged rather than wobbly. Only the
- * three segments around this pixel can be nearest, so three is all it checks.
+ * The sky: a pyrocumulus cell with the bolt inside it. Firestorms really do
+ * make their own lightning, so this is the one sky in the suite the scene would
+ * have produced on its own.
  *
- * Firestorms really do make their own lightning, so this is the one sky in the
- * suite the scene would have produced on its own.
+ * Thunder builds a bolt by giving every integer step along an axis a hashed
+ * lateral offset and joining consecutive offsets with a segment — a chain whose
+ * kinks are random, which is why it reads as jagged rather than wobbly. Only
+ * the three segments around a point can be its nearest, so three is all it
+ * checks. Here that chain is kept in 3D and marched together with the cloud, so
+ * the strike is *behind* the smoke it lights rather than painted over it: the
+ * cloud in front of the bolt goes bright, the cloud behind it stays dark, and
+ * the whole cell flickers from inside.
  */
-float boltOd(vec2 p, float seed, float amp){
+float bolt3Od(vec3 p, float seed, float amp){
   float id = floor(p.x);
   float d = 1e5;
   for(int i = 0; i < 3; i++){
     float k = id + float(i) - 1.0;
-    float y0 = (hashOd(vec2(k, seed)) - 0.5) * amp;
-    float y1 = (hashOd(vec2(k + 1.0, seed)) - 0.5) * amp;
-    d = min(d, sdSegOd(p, vec2(k, y0), vec2(k + 1.0, y1), 0.0));
+    vec3 a = vec3(k,       (hashOd(vec2(k,       seed)) - 0.5) * amp,
+                           (hashOd(vec2(k,       seed + 13.0)) - 0.5) * amp);
+    vec3 b = vec3(k + 1.0, (hashOd(vec2(k + 1.0, seed)) - 0.5) * amp,
+                           (hashOd(vec2(k + 1.0, seed + 13.0)) - 0.5) * amp);
+    d = min(d, sdSeg3Od(p, a, b));
   }
   return d;
 }
@@ -67,15 +73,52 @@ vec3 skyStormOd(vec2 uv, float react){
   // A strike every couple of seconds, decaying fast; react can force one.
   float slot = floor(iTime / 2.2);
   float ph = fract(iTime / 2.2);
-  float flash = exp(-ph * 9.0) * step(0.35, hashOd(vec2(slot, 3.0)));
+  float flash = exp(-ph * 8.0) * step(0.35, hashOd(vec2(slot, 3.0)));
   flash = max(flash, clamp(react - 0.65, 0.0, 1.0));
-  if(flash < 0.004) return vec3(0.0);
-  float sx = hashOd(vec2(slot, 7.0)) * 1.3 - 0.65;
-  vec2 bp = vec2((0.5 - uv.y) * 6.0, (uv.x - sx) * 6.0);
-  float d = boltOd(bp, slot, 1.0 + react * 0.8);
-  vec3 c = vec3(1.00, 0.74, 0.44);
-  return c * (0.045 / (0.045 + d * d)) * flash * (0.5 + react * 0.8)
-       + c * flash * 0.05;
+
+  vec3 rd = skyRayOd(uv, 0.90);
+  vec3 acc = vec3(0.0);
+  float trans = 1.0;
+  float bx = hashOd(vec2(slot, 7.0)) * 3.0 - 1.5;
+  float minBd = 1e5;   // closest the ray ever gets to the bolt
+  float coreT = 1.0;   // and how much smoke was in front of it there
+  float t = 0.9;
+  for(int i = 0; i < 18; i++){
+    vec3 p = rd * t;
+
+    float bd = 1e5;
+    if(flash > 0.01){
+      // The chain runs down the world y axis, so bolt-space x is -y.
+      vec3 lp = vec3((3.4 - p.y) * 1.25, (p.x - bx) * 1.25, (p.z - 2.6) * 0.9);
+      bd = bolt3Od(lp, slot, 1.1 + react * 0.7) / 1.25;
+      if(bd < minBd){ minBd = bd; coreT = trans; }
+      // Wide scatter into the smoke around it, only partly occluded — fully
+      // occluded is what physics wants and it loses the strike in its own cell.
+      acc += vec3(1.00, 0.82, 0.58) * (0.05 / (0.05 + bd * bd))
+           * flash * (0.25 + trans * 0.75) * 0.09;
+    }
+
+    float dns = fbmVolOd((p + vec3(iTime * 0.05, 0.0, 0.0)) * 0.70) - 0.50;
+    if(dns > 0.0){
+      float dd = clamp(dns * 0.60, 0.0, 0.5);
+      vec3 c = mix(vec3(0.18, 0.08, 0.05), vec3(1.00, 0.44, 0.12),
+                   clamp(dns * 2.6, 0.0, 1.0));
+      c += vec3(1.00, 0.76, 0.46) * flash * exp(-bd * 1.1) * 1.3;
+      acc += c * dd * trans * (0.45 + react * 0.8);
+      trans *= 1.0 - dd;
+      if(trans < 0.04) break;
+    }
+    t += 0.26;
+  }
+
+  // The channel itself, from the ray's closest approach rather than from
+  // whichever steps happened to land near it — at 0.26 per step a curve this
+  // thin is sampled two or three times, and summing those gives a smear.
+  if(flash > 0.01){
+    acc += vec3(1.00, 0.93, 0.80) * (0.004 / (0.004 + minBd * minBd))
+         * flash * (0.35 + coreT * 0.65);
+  }
+  return acc;
 }
 
 /* Forest ridge crossfading into dunes as the burn advances. */
@@ -248,7 +291,7 @@ export const cinder: ShaderDef = {
       id: 'sky',
       name: 'Sky — Firestorm',
       description:
-        'Thunder’s bolt striking through the smoke — firestorms make their own lightning. Strikes fire on their own every couple of seconds; push react past about 0.65 and the band fires them instead, so it cracks on the beat. Hide for smoke alone.',
+        'A pyrocumulus cell with Thunder’s bolt marched inside it, so the strike lights the smoke from within instead of over it. Strikes fire on their own every couple of seconds; push react past about 0.65 and the band fires them instead, so it cracks on the beat. Hide for a clear sky.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.3,

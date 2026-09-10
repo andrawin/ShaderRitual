@@ -37,34 +37,44 @@ uniform float sky_visible;
 ${odysseyLib}
 
 /*
- * The sky: a volumetric nebula, marched rather than painted, using Plasma's
- * approach of accumulating emission along the ray instead of finding a surface.
- * Density is three-octave noise sampled in a plane that slides with depth, which
- * is enough to read as real volume once it is integrated over 20 steps, and far
- * cheaper than a true 3D field.
+ * The sky: a real volumetric cloud. Density is three octaves of 3D value noise
+ * sampled at the marched position, integrated front to back with a running
+ * transmittance, so nearer cloud actually occludes further cloud instead of
+ * summing with it — that occlusion is what gives it body.
  *
- * It also takes the blast: b lights the cloud from underneath and warms it, so
- * the detonation reads as something happening inside the sky rather than in
- * front of it.
+ * The march also carries the blast: b lights the underside and warms it, so the
+ * detonation happens inside the sky rather than in front of it, and the cloud
+ * above it goes bright while the cloud behind stays cold.
  */
-vec3 skyNebulaOd(vec2 uv, float react, float b){
+vec3 skyCloudOd(vec2 uv, float react, float b){
   vec3 rd = skyRayOd(uv, 0.90);
+  vec3 ro = vec3(0.0, 0.0, iTime * 0.05);
   vec3 acc = vec3(0.0);
-  float t = 0.55;
+  float trans = 1.0;
+  float t = 0.8;
   for(int i = 0; i < 20; i++){
-    vec3 p = rd * t;
-    float dns = fbm3Od(p.xy * 1.7 + vec2(p.z * 0.7, iTime * 0.012))
-              - 0.40 - float(i) * 0.004;
+    vec3 p = ro + rd * t;
+    float dns = fbmVolOd(p * 0.85) - 0.44 - t * 0.010;
     if(dns > 0.0){
-      vec3 c = mix(vec3(0.14, 0.20, 0.56), vec3(0.52, 0.36, 0.82), dns * 2.4);
-      // lit from below by the detonation
-      c = mix(c, vec3(1.00, 0.86, 0.62), clamp(b * 0.8, 0.0, 1.0)
-                                       * smoothstep(0.5, -0.2, p.y));
-      acc += c * dns * (0.10 + react * 0.24) * exp(-t * 0.20);
+      float dd = clamp(dns * 0.55 * (0.5 + react * 1.0), 0.0, 0.6);
+      // Thin cloud is the lit edge and thick cloud is the shadowed core —
+      // a free stand-in for a light march, and what stops the integral
+      // averaging out to one flat grey.
+      float edge = smoothstep(0.16, 0.0, dns);
+      vec3 c = mix(vec3(0.09, 0.13, 0.40), vec3(0.26, 0.22, 0.58),
+                   clamp(dns * 3.0, 0.0, 1.0));
+      c += vec3(0.55, 0.64, 0.98) * edge * 0.42;
+      c = mix(c, vec3(1.00, 0.88, 0.66),
+              clamp(b, 0.0, 1.0) * smoothstep(1.6, -0.4, p.y));
+      acc += c * dd * trans;
+      trans *= 1.0 - dd;
+      if(trans < 0.03) break;
     }
-    t += 0.17;
+    t += 0.22;
   }
-  return acc;
+  // Kept low by default: it is a silent night, and cloud that lifts the whole
+  // sky off black takes the quiet out of the scene.
+  return acc * (0.30 + react * 0.55);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
@@ -92,7 +102,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   // Background, behind everything.
   float gyx = groundOd(uv.x, scroll, 7.9, -0.25, 0.60);
   if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyNebulaOd(uv, sky_react, b) * skyFadeOd(uv.y, gyx);
+    col += skyCloudOd(uv, sky_react, b) * skyFadeOd(uv.y, gyx);
   }
 
   if(stars_visible > 0.5){
@@ -227,7 +237,7 @@ export const lullaby: ShaderDef = {
       id: 'sky',
       name: 'Sky — Nebula',
       description:
-        'A volumetric cloud marched through the night sky, emission accumulated along the ray the way Plasma does it. The blast lights it from below. React drives its density. Hide for stars on bare sky.',
+        'A real volumetric cloud marched through the night sky — 3D noise integrated front to back, so nearer cloud occludes further cloud rather than summing with it. The blast lights its underside. React drives density. Hide for stars on bare sky.',
       defaultBand: 'mid',
       defaultAmount: 0.7,
       defaultLevel: 0.4,

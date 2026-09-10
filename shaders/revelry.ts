@@ -36,56 +36,46 @@ uniform float sky_visible;
 ${odysseyLib}
 
 /*
- * The sky: three painted planets, straight off the reference — the hanging
- * globes in The Artful Escape's cavern. Each is an analytic sphere (no march;
- * the z of the surface comes out of the circle equation), so the surface has a
- * real normal to shade and real spherical coordinates to paint into. The paint
- * is Mandala's kaleidoscope: the longitude is folded k ways and fract() bands
- * the noise into the flat poster colours the reference uses rather than a
- * smooth gradient.
+ * The sky: Beacon's cage, raymarched into the distance. A three-fold polar fold
+ * of the xy plane turns one cyan light-tube into a cage of them, and a magenta
+ * halo is repeated along the centre line, so the whole thing recedes with real
+ * perspective — halos get smaller and dimmer the further back they sit, which
+ * is the one thing flat discs cannot do.
+ *
+ * Rendered by accumulating 1/(eps + d*d) along the ray rather than stopping at
+ * a surface. Beacon does the same, and it is why the structure reads as light
+ * rather than as painted geometry: the march passes straight through it.
  */
-vec3 skyOrbsOd(vec2 uv, float react){
-  vec3 col = vec3(0.0);
-  vec3 lig = normalize(vec3(-0.45, 0.55, 0.70));
-  for(int i = 0; i < 3; i++){
-    float fi = float(i);
-    float h = hashOd(vec2(fi, 4.0));
-    float h2 = hashOd(vec2(fi, 9.0));
-    vec2 c = vec2(-0.62 + fi * 0.58 + sin(iTime * 0.05 + fi) * 0.04,
-                  0.34 - h * 0.16);
-    float r = (0.075 + h2 * 0.105) * (1.0 + react * 0.18);
-    vec2 q = uv - c;
-    float dd = length(q);
+vec3 skyCageOd(vec2 uv, float react){
+  vec3 rd = skyRayOd(uv, 0.90);
+  vec3 ro = vec3(0.0, -1.1, 0.0);
+  float flow = iTime * (0.7 + react * 1.3);
+  float g1 = 0.0;
+  float g2 = 0.0;
+  float t = 0.4;
+  for(int i = 0; i < 32; i++){
+    vec3 p = ro + rd * t;
+    p.z += flow;
+    vec3 q = p;
 
-    // Picked, not lerped: mixing magenta into cyan passes through a
-    // desaturated lavender, and every planet lands there.
-    vec3 tint = fi < 0.5 ? vec3(0.97, 0.18, 0.55)
-              : (fi < 1.5 ? vec3(0.15, 0.92, 0.86)
-                          : vec3(0.58, 0.28, 1.00));
-    col += tint * pow(max(0.0, 1.0 - dd / (r * 3.4)), 3.0) * (0.10 + react * 0.30);
+    p.xy = pSFoldOd(-p.xy, 3.0);
+    p.y -= 2.6;
+    p.xz = mod(p.xz, 3.4) - 1.7;
+    float d1 = length(p.yz) - 0.26;             // the tube cage
 
-    if(dd < r){
-      vec3 n = vec3(q, sqrt(max(r * r - dd * dd, 0.0))) / r;
-      float lat = asin(clamp(n.y, -1.0, 1.0));
-      float lon = atan(n.x, n.z) + iTime * (0.05 + h * 0.06) + fi;
-      // k-fold kaleidoscope on the longitude
-      float k = 4.0 + floor(h * 4.0);
-      float a = abs(fract(lon * k * 0.15915) - 0.5) * 2.0;
-      float v = fbmOd(vec2(a * 4.0, lat * 4.0 + fi * 3.0))
-              + fbm3Od(vec2(lat * 8.0, a * 8.0 - iTime * 0.03)) * 0.5;
-      v = fract(v * 2.6 + react * 0.35);
-      // Saturated ground with dark linework cut through it and one accent
-      // band — the reference's planets are bold flat colour, not a gradient.
-      vec3 dark = vec3(0.05, 0.02, 0.11);
-      float line = smoothstep(0.44, 0.49, v) * smoothstep(0.64, 0.57, v)
-                 + smoothstep(0.05, 0.09, v) * smoothstep(0.21, 0.16, v);
-      vec3 paint = mix(tint, dark, clamp(line, 0.0, 1.0));
-      paint = mix(paint, vec3(0.98, 0.72, 0.14), smoothstep(0.86, 0.92, v));
-      paint *= 0.30 + 0.70 * clamp(dot(n, lig), 0.0, 1.0);
-      col = mix(col, paint * (0.7 + react * 0.7), smoothstep(r, r - 0.005, dd));
-    }
+    q.z = q.z - 2.6 * floor(q.z / 2.6 + 0.5);   // halos, odd-repeated
+    float d0 = max(abs(length(q.xy) - 0.85) - 0.06, abs(q.z) - 0.06);
+
+    // Tight kernels. A wide one turns the whole lattice into haze, which over
+    // a sky this bright is indistinguishable from nothing.
+    g1 += 0.005 / (0.005 + d1 * d1);
+    g2 += 0.006 / (0.006 + d0 * d0);
+
+    t += max(min(abs(d1), abs(d0)) * 0.75, 0.05);
+    if(t > 18.0) break;
   }
-  return col;
+  return (vec3(0.18, 0.85, 1.00) * g1 * 0.030
+        + vec3(1.00, 0.24, 0.72) * g2 * 0.038) * (0.4 + react * 1.1);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
@@ -106,7 +96,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   // Background, behind everything.
   float gyx = groundOd(uv.x, scroll, 5.7, -0.26, 0.55);
   if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyOrbsOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
+    col += skyCageOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
   }
 
   if(aurora_visible > 0.5){
@@ -236,12 +226,12 @@ export const revelry: ShaderDef = {
     },
     {
       id: 'sky',
-      name: 'Sky — Planets',
+      name: 'Sky — Cage',
       description:
-        'Three painted globes hanging behind the horizon, shaded as real spheres and painted with Mandala’s kaleidoscope. React swells them and pushes the paint bands around the surface. Hide for an empty sky.',
+        'Beacon’s folded light cage raymarched into the distance: cyan tubes and magenta halos receding with real perspective. React drives how fast you fly through it and how hard it burns. Hide for an empty sky.',
       defaultBand: 'low',
       defaultAmount: 0.7,
-      defaultLevel: 0.3,
+      defaultLevel: 0.35,
       canHide: true,
       defaultVisible: true,
     },

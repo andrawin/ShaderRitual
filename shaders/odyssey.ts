@@ -92,6 +92,68 @@ float sbOd(vec3 p, vec3 s){
 }
 
 /*
+ * Real 3D value noise. Sampling 2D noise in a plane that slides with depth is
+ * cheaper and looks like volume from a fixed camera, but it shears the moment
+ * anything moves through it — a true lattice is what lets a cloud hold its
+ * shape while the ray, the camera and the cloud all move independently.
+ */
+float hash3Od(vec3 p){
+  p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+float noise3Od(vec3 p){
+  vec3 c = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash3Od(c),                      hash3Od(c + vec3(1.0, 0.0, 0.0)), f.x),
+        mix(hash3Od(c + vec3(0.0, 1.0, 0.0)), hash3Od(c + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+    mix(mix(hash3Od(c + vec3(0.0, 0.0, 1.0)), hash3Od(c + vec3(1.0, 0.0, 1.0)), f.x),
+        mix(hash3Od(c + vec3(0.0, 1.0, 1.0)), hash3Od(c + vec3(1.0, 1.0, 1.0)), f.x), f.y),
+    f.z);
+}
+
+/* Three octaves is the ceiling for a density sampled inside a march: each one
+ * is eight hashes, and this runs twenty-odd times per pixel. */
+float fbmVolOd(vec3 p){
+  float v = 0.0;
+  float a = 0.5;
+  for(int i = 0; i < 3; i++){
+    v += a * noise3Od(p);
+    p *= 2.03;
+    a *= 0.5;
+  }
+  return v;
+}
+
+float sdSeg3Od(vec3 p, vec3 a, vec3 b){
+  vec3 pa = p - a;
+  vec3 ba = b - a;
+  float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+  return length(pa - ba * h);
+}
+
+/*
+ * Beacon's polar smooth fold. Folding the space rather than the geometry is
+ * what turns a single tube into a cage of them; the loop bound came from the
+ * argument in the original, so it runs to a constant cap and breaks.
+ */
+vec2 pSFoldOd(vec2 p, float n){
+  float h = floor(log2(n));
+  float a = 6.2831 * exp2(h) / n;
+  for(int i = 0; i < 6; i++){
+    if(float(i) >= h + 2.0) break;
+    vec2 v = vec2(-cos(a), sin(a));
+    float g = dot(p, v);
+    p -= (g - sqrt(g * g + 5e-3)) * v;
+    a *= 0.5;
+  }
+  return p;
+}
+
+/*
  * A ray into the sky dome, from the same uv the flat layers are drawn in, so a
  * background with real depth still tracks the rig (frameOd has already folded
  * in orbit, height, fov and distance).
