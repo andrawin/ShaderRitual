@@ -53,6 +53,7 @@ import { blight } from './shaders/blight';
 import { ember } from './shaders/ember';
 import { bloom } from './shaders/bloom';
 import { fallout } from './shaders/fallout';
+import { wrath } from './shaders/wrath';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -100,6 +101,7 @@ export const SHADERS: ShaderDef[] = [
   fallout,
   blight,
   ember,
+  wrath,
 ];
 
 /** Fresh camera / motion rig defaults. */

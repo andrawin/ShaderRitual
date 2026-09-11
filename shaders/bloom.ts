@@ -101,9 +101,13 @@ float map(vec3 p){
   // Pralina's tubes are length(p.xz) and friends, which are already
   // rotationally symmetric, so folding them changes almost nothing. This is a
   // shape that only exists on the axis, so the fold makes n copies of it.
-  vec3 pl = p;
-  pl.x -= 3.4;
-  d = min(d, length(pl * vec3(0.60, 1.70, 1.05)) - 1.45);
+  //
+  // Measured in the L1 norm rather than L2 — an ellipsoid has no edge anywhere
+  // on it, so it reads as a lozenge however it is lit. This has a point at the
+  // tip, a ridge down the spine and a crease at the base: places for light to
+  // break, which is the whole difference between a petal and a blob.
+  vec3 pl = abs((p - vec3(3.4, 0.0, 0.0)) * vec3(0.60, 1.70, 1.05));
+  d = min(d, (pl.x + pl.y + pl.z) * 0.5773 - 0.88);
 
   // Pollen. Pure glow — never min'd into d.
   if(pollen_visible > 0.5){
@@ -135,12 +139,14 @@ float map(vec3 p){
       p.yz *= rot(0.6);
     }
 
+    // Tight kernels. Pralina's 0.15 spreads each plane into a haze that fills
+    // the gaps between forms, which is most of why it reads soft.
     vec3 p4 = repeat(p + time * 3.5, vec3(8));
     float s = 1. + slices_react * 1.3;
-    float d4 = max(abs(p4.x) - 0.1, d);
-    aco += vec3(1.8, 0.45, 1.4) * 0.022 * s / (0.15 + abs(d4));
-    float d5 = max(abs(p4.y) - 0.1, d);
-    aco += vec3(0.35, 1.5, 1.7) * 0.016 * s / (0.15 + abs(d5));
+    float d4 = max(abs(p4.x) - 0.06, d);
+    aco += vec3(1.8, 0.45, 1.4) * 0.010 * s / (0.05 + abs(d4));
+    float d5 = max(abs(p4.y) - 0.06, d);
+    aco += vec3(0.35, 1.5, 1.7) * 0.007 * s / (0.05 + abs(d5));
     d = min(d, min(d4, d5));
   }
 
@@ -184,31 +190,58 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   vec2 off = vec2(0.01, 0);
   vec3 n = normalize(map(p) - vec3(map(p - off.xyy), map(p - off.yxy), map(p - off.yyx)));
 
+  // Floored. Pralina's AO goes to zero inside a cavity, which is correct and
+  // crushes the middle of the flower to black — the petals are what is lit,
+  // and without a floor there is nothing between them.
   float ao = gao(p, n, 0.35);
   ao *= gao(p, n, 1.0) * .5 + .5;
+  ao = 0.25 + 0.75 * ao;
 
+  // Half the ambient bleed the rest of the family carries. That loop is a
+  // distance-field haze that smears outward from every surface, and past a
+  // certain strength it is the only thing you can see.
   for(float i = 1.; i < 15.; ++i){
     float dd = 0.2 * i;
-    col += map(p + r * dd) * fog * 0.075 * vec3(0.95, 0.40, 0.95 + dd * .2) * ao;
+    col += map(p + r * dd) * fog * 0.042 * vec3(0.95, 0.40, 0.95 + dd * .2) * ao;
   }
 
-  float fre = pow(1. - abs(dot(n, r)), 3.);
-  col += fre * vec3(1.2, 0.5, 1.1) * 1.4 * (0.5 - 0.5 * n.y) * ao * fog;
-  col += (1. - fog) * mix(vec3(0), vec3(0.34, 0.12, 0.36), pow(abs(r.x), 4.)) * 2.;
-  col += (1. - fog) * mix(vec3(0), vec3(0.14, 0.26, 0.40), pow(abs(r.z), 4.)) * 2.;
+  // Real lighting, which Pralina has none of — it is glow, fresnel and AO, so
+  // its forms have no shading to separate them and they melt together. A key
+  // light gives every facet its own value, and the specular finds the ridges.
+  //
+  // The key rides with the camera rather than sitting in world space. The mass
+  // tumbles, so a fixed light leaves whichever face is turned toward us unlit
+  // through most of the rotation, and the frame goes dark for no reason the
+  // audience can see. The fill keeps the cavities off black.
+  vec3 lig = normalize(-r + vec3(0.45, 0.75, 0.0));
+  float dif = clamp(dot(n, lig), 0., 1.);
+  float fill = 0.35 + 0.65 * clamp(dot(n, -r), 0., 1.);
+  float spe = pow(clamp(dot(reflect(-lig, n), -r), 0., 1.), 40.);
+  col += vec3(1.15, 0.28, 0.95) * dif * ao * fog * 1.45;
+  col += vec3(0.45, 0.12, 0.55) * fill * ao * fog * 0.60;
+  col += vec3(1.00, 0.88, 1.00) * spe * fog * 1.7;
+
+  // A tight rim in the opposite hue. At Pralina's power of 3 this is a halo
+  // around the whole silhouette; at 6 it is an edge, and cyan against magenta
+  // is what actually makes the petals cut apart.
+  float fre = pow(1. - abs(dot(n, r)), 6.);
+  col += fre * vec3(0.40, 1.35, 1.25) * 2.2 * ao * fog;
+  col += (1. - fog) * mix(vec3(0), vec3(0.20, 0.07, 0.22), pow(abs(r.x), 4.)) * 2.;
+  col += (1. - fog) * mix(vec3(0), vec3(0.08, 0.16, 0.26), pow(abs(r.z), 4.)) * 2.;
 
   // Pralina's channel-rotating rainbow, reached through hot pink.
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   if(tint_visible < 0.5){
     col = vec3(lum);
   } else {
+    // A hue cycle, not Pralina's channel rotation. Rotating the colour vector
+    // mixes the channels toward each other, so at some phases all three land on
+    // the same value and the frame washes out to grey — survivable in a piece
+    // that is chaotic by design, useless when the palette is the point.
     float k = clamp(tint_react, 0., 2.);
     vec3 hot = vec3(lum) * vec3(1.55, 0.40, 1.25);
-    float t5 = time * .45;
-    vec3 rb = col;
-    rb.xz *= rot(t5);
-    rb.xy *= rot(t5 * .7);
-    rb = abs(rb);
+    vec3 w = max(vec3(0.15), 0.55 + 0.70 * cos(time * 0.8 + vec3(0.0, 2.094, 4.188)));
+    vec3 rb = col * w * 1.25;
     col = mix(mix(vec3(lum), hot, smoothstep(0.0, 0.5, k)), rb, smoothstep(0.9, 1.7, k));
   }
 
