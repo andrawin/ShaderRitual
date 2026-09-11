@@ -52,6 +52,10 @@ import { extraction } from './shaders/extraction';
 import { lullaby } from './shaders/lullaby';
 import { miasma } from './shaders/miasma';
 import { cinder } from './shaders/cinder';
+import { nucleus } from './shaders/nucleus';
+import { quarry } from './shaders/quarry';
+import { blight } from './shaders/blight';
+import { ember } from './shaders/ember';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -97,6 +101,11 @@ export const SHADERS: ShaderDef[] = [
   lullaby,
   miasma,
   cinder,
+  // Pralina variants — the abstract companions to four of those scenes.
+  nucleus,
+  quarry,
+  blight,
+  ember,
 ];
 
 /** Fresh camera / motion rig defaults. */
