@@ -183,6 +183,7 @@ export function defaultModel(): ModelConfig {
       opacity: 0.85,
       scale: 1.0,
       mode: 'background',
+      blend: 'normal',
       reactive: true,
       reactiveBand: 'low',
       visible: true,

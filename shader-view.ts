@@ -20,6 +20,12 @@ import type { Bands, PartInfo, ShaderRitualConfig } from './types';
 
 const BLEND_INDEX: Record<string, number> = { add: 0, screen: 1, mix: 2 };
 
+/** Must match blendCap() in the capture composite shader. */
+const CAPTURE_BLEND_INDEX: Record<string, number> = {
+  normal: 0, screen: 1, add: 2, multiply: 3,
+  overlay: 4, difference: 5, lighten: 6, darken: 7,
+};
+
 const compositeShader = `
 precision highp float;
 varying vec2 vUv;
@@ -299,7 +305,7 @@ export class ShaderRitualView extends LitElement {
   private modelMats: THREE.Material[] = [];
   private modelBaseScale = 1;
   private modelPhase = 0; // elapsed beats, drives the tempo-locked motion
-  private modelRadius = 1; // model-local bounding radius (physics + capture scaling)
+  private modelRadius = 1; // model-local bounding radius (physics + framing)
 
   // MeshRitual engine: per-mesh parts + fracture shards + physics.
   private modelParts: Part[] = [];
@@ -324,8 +330,15 @@ export class ShaderRitualView extends LitElement {
   private lastAppliedOpacity = -1; // skip the material opacity loop when unchanged
   private opacityMatCount = -1;
 
-  // Screen-capture projection (shared window -> textured plane).
-  private captureMesh!: THREE.Mesh;
+  // Screen capture. Composited as its own full-screen pass rather than as a
+  // plane in the 3D scene: a blend mode has to be evaluated against the
+  // finished shader image, and inside the overlay scene the only thing behind
+  // it is a transparent target, against which screen/multiply/overlay all
+  // collapse back to normal. This also keeps the capture at full resolution
+  // when the 3D layer is running reduced.
+  private captureSrc!: THREE.WebGLRenderTarget;
+  private captureScene!: THREE.Scene;
+  private captureUniforms!: Record<string, { value: any }>;
   private captureTexture: THREE.Texture | null = null;
   private captureVideo: HTMLVideoElement | null = null;
   private _captureStream: MediaStream | null = null;
@@ -358,18 +371,24 @@ export class ShaderRitualView extends LitElement {
     return this.lastBands;
   }
 
-  /* ---- Live-coding delegates to the base layer ---- */
+  /* ----------------- Live-coding delegates to the base layer -----------------
+   * Guarded: baseLayer is only built in firstUpdated(), and the controller's
+   * own updated() can reach these before this element has ever rendered. The
+   * callers already fall back to the registry's source when they get nothing,
+   * so returning undefined is the right answer — throwing here aborts the
+   * controller's render and takes the canvas with it.
+   */
   getActiveSource() {
-    return this.baseLayer.getActiveSource();
+    return this.baseLayer?.getActiveSource();
   }
   applySource(buffer: string, image: string) {
-    return this.baseLayer.applySource(buffer, image, this.camera);
+    return this.baseLayer?.applySource(buffer, image, this.camera) ?? null;
   }
   resetSource() {
-    this.baseLayer.resetSource(this.camera);
+    this.baseLayer?.resetSource(this.camera);
   }
   getUniformSnapshot() {
-    return this.baseLayer.getUniformSnapshot();
+    return this.baseLayer?.getUniformSnapshot();
   }
 
   protected firstUpdated() {
@@ -431,6 +450,82 @@ precision highp float;
 varying vec2 vUv;
 uniform sampler2D tSrc;
 void main(){ gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.); }`,
+        }),
+      ),
+    );
+
+    // Screen capture: the finished image goes into captureSrc, and this pass
+    // blends the captured frame over it and writes the result to the screen.
+    this.captureSrc = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.captureUniforms = {
+      tScreen: { value: this.captureSrc.texture },
+      tCap: { value: null },
+      uOpacity: { value: 1 },
+      uBlend: { value: 0 },
+      uScale: { value: 1 },
+      uPlace: { value: 0 },
+      uCapAspect: { value: 16 / 9 },
+      uScreenAspect: { value: 16 / 9 },
+    };
+    this.captureScene = new THREE.Scene();
+    this.captureScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.captureUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tScreen;
+uniform sampler2D tCap;
+uniform float uOpacity;
+uniform float uScale;
+uniform float uPlace;
+uniform float uCapAspect;
+uniform float uScreenAspect;
+uniform int uBlend;
+
+/* Per-channel compositing operators, capture (b) over the shader image (a). */
+vec3 blendCap(vec3 a, vec3 b, int m){
+  if(m == 1) return 1. - (1. - a) * (1. - b);                    // screen
+  if(m == 2) return a + b;                                        // add
+  if(m == 3) return a * b;                                        // multiply
+  if(m == 4) return mix(2. * a * b,                               // overlay
+                        1. - 2. * (1. - a) * (1. - b),
+                        step(vec3(0.5), a));
+  if(m == 5) return abs(a - b);                                   // difference
+  if(m == 6) return max(a, b);                                    // lighten
+  if(m == 7) return min(a, b);                                    // darken
+  return b;                                                       // normal
+}
+
+void main(){
+  vec3 base = texture2D(tScreen, vUv).rgb;
+
+  vec2 cuv;
+  float mask;
+  if(uPlace < 0.5){
+    // Fills the frame, scaled about the centre. Above 1 it crops in; below 1
+    // it pulls back and the surround is left as shader.
+    cuv = (vUv - 0.5) / max(uScale, 0.001) + 0.5;
+    mask = step(0., cuv.x) * step(cuv.x, 1.) * step(0., cuv.y) * step(cuv.y, 1.);
+  } else {
+    // A centred inset at the capture's own aspect, so a 16:9 share is not
+    // stretched to whatever the projector happens to be.
+    float hh = clamp(uScale * 0.22, 0.03, 0.5);
+    float hw = hh * uCapAspect / max(uScreenAspect, 0.001);
+    vec2 d = abs(vUv - 0.5);
+    mask = step(d.x, hw) * step(d.y, hh);
+    cuv = (vUv - 0.5) / vec2(2. * hw, 2. * hh) + 0.5;
+  }
+
+  vec3 cap = texture2D(tCap, cuv).rgb;
+  vec3 mixed = clamp(blendCap(base, cap, uBlend), 0., 1.);
+  gl_FragColor = vec4(mix(base, mixed, uOpacity * mask), 1.);
+}`,
+          depthTest: false,
+          depthWrite: false,
         }),
       ),
     );
@@ -525,19 +620,6 @@ void main(){
     rim.position.set(-3, -1, -2);
     this.modelScene.add(amb, key, rim);
 
-    // Screen-capture plane (background = camera-attached rear wall, or floating).
-    this.captureMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({
-        transparent: true,
-        opacity: 1,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    );
-    this.captureMesh.visible = false;
-    this.modelScene.add(this.captureMesh);
-
     // Support Draco- and Meshopt-compressed GLBs (very common in exports).
     const draco = new DRACOLoader();
     draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/libs/draco/');
@@ -581,6 +663,7 @@ void main(){
     const ph = Math.floor(h * dpr);
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
+    this.captureSrc.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
     this.feedRead.setSize(pw, ph);
     this.feedWrite.setSize(pw, ph);
@@ -821,9 +904,17 @@ void main(){
     const baseCfg = this.config.shaders[baseDef.id]?.elements || {};
     this.baseLayer.setUniforms(time, cam, this.lastBands, baseCfg);
 
+    // Screen capture is composited last, and it needs the finished image as a
+    // texture to blend against — so while it is up, every pass that would
+    // normally end at the screen ends in captureSrc instead. Decided here
+    // because it changes the destination of all of them.
+    const mdl = this.config.model;
+    const capOn = !!this.captureTexture && !!mdl?.capture?.visible && mdl.capture.opacity > 0;
+    const outRT = capOn ? this.captureSrc : (null as any);
+
     if (!needComposite && !anyPost) {
-      // Fast path: base image straight to the screen.
-      this.baseLayer.render(this.camera, null as any);
+      // Fast path: base image straight out.
+      this.baseLayer.render(this.camera, outRT);
     } else if (!needComposite) {
       // Post only: base -> sceneTarget -> post -> screen.
       this.baseLayer.render(this.camera, this.sceneTarget);
@@ -839,7 +930,7 @@ void main(){
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
       // Composite -> sceneTarget (if post follows) or straight to screen.
-      this.renderer.setRenderTarget(anyPost ? this.sceneTarget : null);
+      this.renderer.setRenderTarget(anyPost ? this.sceneTarget : outRT);
       this.renderer.render(this.compositeScene, this.camera);
     }
 
@@ -860,24 +951,32 @@ void main(){
         this.postUniforms.tPrev.value = this.feedRead.texture;
         this.renderer.setRenderTarget(this.feedWrite);
         this.renderer.render(this.postScene, this.camera);
-        this.renderer.setRenderTarget(null);
+        this.renderer.setRenderTarget(outRT);
         this.copyUniforms.tSrc.value = this.feedWrite.texture;
         this.renderer.render(this.copyScene, this.camera);
         const tmp = this.feedRead;
         this.feedRead = this.feedWrite;
         this.feedWrite = tmp;
       } else {
-        this.renderer.setRenderTarget(null);
+        this.renderer.setRenderTarget(outRT);
         this.renderer.render(this.postScene, this.camera);
       }
     }
 
-    // 3D overlay scene, drawn on top of the post-processed image. It holds both
-    // the uploaded model and the screen-capture plane — either one alone is
-    // reason to render it, and all per-frame work is skipped when neither is up.
+    // Capture over the finished image, in its own blend mode, at full
+    // resolution regardless of what the 3D layer is running at. The model
+    // overlay draws on top of this.
+    if (capOn) {
+      this.applyCapture(this.lastBands);
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.captureScene, this.camera);
+    }
+
+    // 3D overlay scene, drawn on top of the post-processed image and on top of
+    // the capture layer. Only the uploaded model lives here now — capture is
+    // its own full-screen pass — and all per-frame work is skipped without one.
     const md = this.config.model;
     const modelUp = !!this.modelHolder && !!md && md.visible && md.opacity > 0.004;
-    const captureUp = !!this.captureTexture && !!md?.capture?.visible && md.capture.opacity > 0;
 
     if (modelUp) {
       // Rebuild fracture shards if the mode / fragment count changed — or if
@@ -955,10 +1054,7 @@ void main(){
       this.modelHolder.visible = false;
     }
 
-    // Screen capture is independent of the model — it renders on its own.
-    if (modelUp || captureUp) {
-      this.applyCapture(this.lastBands);
-
+    if (modelUp) {
       const mq = Math.min(1, Math.max(0.25, md?.quality ?? 1));
       if (mq !== this.lastModelQuality) this.resize();
 
@@ -1229,8 +1325,6 @@ void main(){
   }
 
   private async initCapture() {
-    if (!this.captureMesh) return;
-    const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
     this.captureFrameReady = false;
     if (this.captureVideo) {
       this.captureVideo.pause();
@@ -1261,8 +1355,7 @@ void main(){
       tex.magFilter = THREE.LinearFilter;
       tex.generateMipmaps = false;
       this.captureTexture = tex;
-      mat.map = tex;
-      mat.needsUpdate = true;
+      this.captureUniforms.tCap.value = tex;
 
       // requestVideoFrameCallback tells us a genuinely new frame arrived, so a
       // static shared window costs nothing. Without it, fall back to the
@@ -1290,9 +1383,7 @@ void main(){
         tex.needsUpdate = true;
       };
     } else {
-      mat.map = null;
-      mat.needsUpdate = true;
-      this.captureMesh.visible = false;
+      this.captureUniforms.tCap.value = null;
     }
   }
 
@@ -1302,35 +1393,18 @@ void main(){
     return h > 0 ? w / h : 16 / 9;
   }
 
+  /** Feed the capture pass its framing, opacity and blend for this frame. */
   private applyCapture(bands: Bands) {
-    if (!this.captureMesh) return;
     const c = this.config.model.capture;
     if (!c) return;
-    const mat = this.captureMesh.material as THREE.MeshBasicMaterial;
-    // Independent of the model's own Visible toggle — capture is its own layer.
-    this.captureMesh.visible = !!this.captureTexture && c.visible && c.opacity > 0;
-    if (!this.captureMesh.visible) return;
-
-    mat.opacity = c.opacity;
     const react = c.reactive ? 1 + ((bands as any)[c.reactiveBand] || 0) * 0.2 : 1;
-
-    if (c.mode === 'background') {
-      if (this.captureMesh.parent !== this.modelCamera) this.modelCamera.add(this.captureMesh);
-      const dist = this.modelCamera.far * 0.5;
-      const h = 2 * Math.tan((this.modelCamera.fov * Math.PI) / 360) * dist;
-      const w = h * this.modelCamera.aspect;
-      this.captureMesh.position.set(0, 0, -dist);
-      this.captureMesh.quaternion.identity();
-      this.captureMesh.scale.set(w * c.scale * react, h * c.scale * react, 1);
-    } else {
-      if (this.captureMesh.parent !== this.modelScene) this.modelScene.add(this.captureMesh);
-      // Use the on-screen (normalised) radius so the plane is a sane size.
-      const dr = Math.max(0.4, this.modelRadius * this.modelBaseScale);
-      const base = dr * 2.2 * c.scale * react;
-      this.captureMesh.position.set(0, 0, 0);
-      this.captureMesh.quaternion.copy(this.modelCamera.quaternion); // billboard
-      this.captureMesh.scale.set(base, base / this.captureAspect(), 1);
-    }
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.captureUniforms.uOpacity.value = c.opacity;
+    this.captureUniforms.uScale.value = Math.max(0.05, c.scale * react);
+    this.captureUniforms.uPlace.value = c.mode === 'floating' ? 1 : 0;
+    this.captureUniforms.uBlend.value = CAPTURE_BLEND_INDEX[c.blend] ?? 0;
+    this.captureUniforms.uCapAspect.value = this.captureAspect();
+    this.captureUniforms.uScreenAspect.value = size.y > 0 ? size.x / size.y : 16 / 9;
   }
 
   protected render() {

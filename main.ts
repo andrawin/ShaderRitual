@@ -992,6 +992,8 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'model.mode') return ['none', 'parts', 'fracture'];
     if (path === 'model.motion') return ['none', 'spin', 'bob', 'sway', 'orbit', 'tumble'];
     if (path === 'model.capture.mode') return ['background', 'floating'];
+    if (path === 'model.capture.blend')
+      return ['normal', 'screen', 'add', 'multiply', 'overlay', 'difference', 'lighten', 'darken'];
     if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
     if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
     if (path === 'model.capture.fps') return [60, 30, 15, 8];
@@ -1579,13 +1581,34 @@ export class ShaderRitualApp extends LitElement {
           sharing feels heavy — re-share the window to apply the new rate.
         </div>
         <div class="control-row">
-          <label>Projection</label>
+          <label>Placement</label>
           ${this.learnDot('model.capture.mode')}
           <select .value=${live(c.mode)}
             @change=${(e: any) => this.updateConfig('model.capture.mode', e.target.value)}>
-            <option value="background">Rear Wall</option>
-            <option value="floating">Floating Plane</option>
+            <option value="background">Full Frame</option>
+            <option value="floating">Inset</option>
           </select>
+        </div>
+        <div class="control-row">
+          <label>Blend</label>
+          ${this.learnDot('model.capture.blend')}
+          <select .value=${live(c.blend)}
+            @change=${(e: any) => this.updateConfig('model.capture.blend', e.target.value)}>
+            <option value="normal">Normal</option>
+            <option value="screen">Screen</option>
+            <option value="add">Add</option>
+            <option value="multiply">Multiply</option>
+            <option value="overlay">Overlay</option>
+            <option value="difference">Difference</option>
+            <option value="lighten">Lighten</option>
+            <option value="darken">Darken</option>
+          </select>
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          How the capture mixes with the shader under it. Screen and Add keep
+          the shader visible through the dark parts of the share; Multiply and
+          Darken keep it through the bright parts; Difference inverts where
+          they overlap. Opacity still fades the whole thing on top.
         </div>
         <div class="control-row">
           <label>Audio reactive</label>

@@ -145,10 +145,27 @@ export interface FractureConfig {
 export type ModelMotion = 'none' | 'spin' | 'bob' | 'sway' | 'orbit' | 'tumble';
 
 /** Shared-window screen-capture projection. */
+/**
+ * How the captured screen is mixed with the shader underneath it. `normal` is
+ * a plain cross-fade at the layer's opacity; the rest are the usual compositing
+ * operators, evaluated per channel against the finished shader image.
+ */
+export type CaptureBlend =
+  | 'normal'
+  | 'screen'
+  | 'add'
+  | 'multiply'
+  | 'overlay'
+  | 'difference'
+  | 'lighten'
+  | 'darken';
+
 export interface CaptureConfig {
   opacity: number;
   scale: number;
+  /** Where the capture sits: filling the frame, or a centred inset. */
   mode: 'background' | 'floating';
+  blend: CaptureBlend;
   reactive: boolean;
   reactiveBand: Band;
   visible: boolean;
