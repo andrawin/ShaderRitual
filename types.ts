@@ -189,6 +189,15 @@ export type VideoSliceMode = 'off' | 'retrigger' | 'jump' | 'ladder';
 export type VideoFit = 'cover' | 'contain' | 'stretch';
 
 /**
+ * How the clip is matted into the shader under it.
+ *   off     -> the clip covers its whole rectangle
+ *   luma    -> it shows only where the shader is bright, so it lands on the
+ *              lit form and the background stays shader
+ *   lumaInv -> the inverse: the clip fills the empty space around the form
+ */
+export type VideoSurface = 'off' | 'luma' | 'lumaInv';
+
+/**
  * A user-loaded video clip, composited with the shader *before* global post-FX
  * so every filter applies to it. The file itself is never read into memory —
  * it is held as an object URL and streamed off disk by the browser, which is
@@ -200,6 +209,17 @@ export interface VideoConfig {
   opacity: number;
   blend: CaptureBlend;
   fit: VideoFit;
+  /** Matte the clip into the shader's own image instead of over it. */
+  surface: VideoSurface;
+  /** Luminance the matte cuts at, and how soft that cut is. */
+  surfaceThreshold: number;
+  surfaceSoftness: number;
+  /**
+   * How far the shader image's own gradient bends the clip's UVs. Without it
+   * the clip is a flat cut-out of the form; with it, it runs along the
+   * contours and reads as painted on the surface.
+   */
+  warp: number;
   /** Zoom around the centre, on top of the fit. */
   scale: number;
   loop: boolean;

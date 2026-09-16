@@ -132,6 +132,12 @@ export class ShaderRitualApp extends LitElement {
     this.post({ type: 'videoStatus', name: this.videoName, info: this.videoInfo });
   };
 
+  /** Fire one slice trigger now, whatever the auto mode is doing. */
+  private fireVideo(kind: string) {
+    if (this.isController) this.post({ type: 'command', name: 'vid:' + kind });
+    else this.viewEl?.videoTrigger?.(kind);
+  }
+
   private clearVideoClip = () => {
     if (this.isController) {
       this.post({ type: 'command', name: 'removeVideo' });
@@ -871,6 +877,7 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'scanMidi') this.initMidi();
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
+    else if (name.startsWith('vid:')) this.viewEl?.videoTrigger?.(name.slice(4));
     else if (name === 'removeVideo') {
       this.viewEl?.clearVideo?.();
       this.videoName = '';
@@ -1026,6 +1033,9 @@ export class ShaderRitualApp extends LitElement {
       'video.scale': { min: 0.25, max: 3 },
       'video.speed': { min: 0.1, max: 4 },
       'video.speedAmount': { min: 0, max: 3 },
+      'video.surfaceThreshold': { min: 0, max: 1 },
+      'video.surfaceSoftness': { min: 0.01, max: 0.6 },
+      'video.warp': { min: 0, max: 0.35 },
       'model.capture.opacity': { min: 0, max: 1 },
       'model.capture.scale': { min: 0.1, max: 4 },
       'model.fracture.physics.gravity': { min: 0, max: 4 },
@@ -1063,6 +1073,7 @@ export class ShaderRitualApp extends LitElement {
       return ['normal', 'screen', 'add', 'multiply', 'overlay', 'difference', 'lighten', 'darken'];
     if (path === 'video.fit') return ['cover', 'contain', 'stretch'];
     if (path === 'video.sliceMode') return ['off', 'retrigger', 'jump', 'ladder'];
+    if (path === 'video.surface') return ['off', 'luma', 'lumaInv'];
     if (path === 'video.sliceDiv') return [0.25, 0.5, 1, 2, 4];
     if (path === 'video.slices') return [2, 4, 8, 16, 32];
     if (path === 'video.fps') return [60, 30, 15, 8];
@@ -1101,6 +1112,18 @@ export class ShaderRitualApp extends LitElement {
     '!audio': () => this.toggleAudio(),
     '!capture': () => this.toggleCapture(),
     '!videoPlay': () => this.updateConfig('video.playing', !this.config.video.playing),
+    // Hand-fired slice triggers. Each is its own action, so a pad hits one
+    // thing rather than cycling a dropdown to reach it.
+    '!vidRetrig': () => this.fireVideo('retrigger'),
+    '!vidJump': () => this.fireVideo('jump'),
+    '!vidNext': () => this.fireVideo('next'),
+    '!vidPrev': () => this.fireVideo('prev'),
+    '!vidHome': () => this.fireVideo('home'),
+    // And the auto mode, one action per mode for the same reason.
+    '!vidAutoOff': () => this.updateConfig('video.sliceMode', 'off'),
+    '!vidAutoRetrig': () => this.updateConfig('video.sliceMode', 'retrigger'),
+    '!vidAutoJump': () => this.updateConfig('video.sliceMode', 'jump'),
+    '!vidAutoLadder': () => this.updateConfig('video.sliceMode', 'ladder'),
     '!nextShader': () => this.stepShader(1),
     '!prevShader': () => this.stepShader(-1),
   };
@@ -1623,6 +1646,21 @@ export class ShaderRitualApp extends LitElement {
     `;
   }
 
+  /** A momentary trigger: learn dot plus a button that fires on press. */
+  private vidTrigBtn = (action: string, kind: string, label: string) => html`
+    ${this.learnDot(action)}
+    <button class="mini" style="margin-right:4px;"
+      @click=${() => this.fireVideo(kind)}>${label}</button>
+  `;
+
+  /** A latching auto-mode button, lit when it is the active mode. */
+  private vidModeBtn = (mode: string, action: string, label: string) => html`
+    ${this.learnDot(action)}
+    <button class="mini ${this.config.video.sliceMode === mode ? 'on' : ''}"
+      style="margin-right:4px;"
+      @click=${() => this.updateConfig('video.sliceMode', mode)}>${label}</button>
+  `;
+
   private renderVideoSection() {
     const v = this.config.video;
     return html`
@@ -1674,6 +1712,24 @@ export class ShaderRitualApp extends LitElement {
         ])}
         ${this.renderSlider('Zoom', 'video.scale', 0.25, 3, 0.05)}
 
+        <span class="group-title" style="margin-top:10px;">Surface · clip onto the shader's form</span>
+        ${this.renderSelect('Matte', 'video.surface', [
+          { value: 'off', label: 'Off — clip over everything' },
+          { value: 'luma', label: 'On the form — where the shader is lit' },
+          { value: 'lumaInv', label: 'Around it — where the shader is dark' },
+        ])}
+        ${this.renderSlider('Cut at', 'video.surfaceThreshold', 0, 1, 0.01)}
+        ${this.renderSlider('Edge softness', 'video.surfaceSoftness', 0.01, 0.6, 0.01)}
+        ${this.renderSlider('Warp', 'video.warp', 0, 0.35, 0.005)}
+        <div class="element-desc" style="margin-bottom:8px;">
+          The shader's own brightness is the matte — there is no depth buffer to
+          use, and these shaders are lit forms on near black, so luminance is a
+          good stand-in for the form. Cut at sets where the edge falls and
+          softness how hard it is. Warp bends the clip along the image gradient,
+          which is what makes it look painted on rather than punched out; it
+          costs four extra texture reads, so it is free at 0.
+        </div>
+
         <span class="group-title" style="margin-top:10px;">Speed</span>
         ${this.renderSlider('Rate', 'video.speed', 0.1, 4, 0.05)}
         <div class="control-row">
@@ -1688,12 +1744,26 @@ export class ShaderRitualApp extends LitElement {
         </div>
 
         <span class="group-title" style="margin-top:10px;">Beat Slicing</span>
-        ${this.renderSelect('Trigger', 'video.sliceMode', [
-          { value: 'off', label: 'Off — play through' },
-          { value: 'retrigger', label: 'Retrigger — stutter in place' },
-          { value: 'jump', label: 'Jump — random slice' },
-          { value: 'ladder', label: 'Ladder — next slice in order' },
-        ])}
+        <div class="control-row">
+          <label>Fire</label>
+          ${this.vidTrigBtn('!vidRetrig', 'retrigger', 'RETRIG')}
+          ${this.vidTrigBtn('!vidJump', 'jump', 'JUMP')}
+          ${this.vidTrigBtn('!vidNext', 'next', 'NEXT')}
+          ${this.vidTrigBtn('!vidPrev', 'prev', 'PREV')}
+          ${this.vidTrigBtn('!vidHome', 'home', 'HOME')}
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          One-shots — they move the playhead the moment you hit them, whatever
+          the auto mode is doing. Each has its own learn dot, so a pad maps to
+          one trigger instead of cycling a list to reach it.
+        </div>
+        <div class="control-row">
+          <label>Auto</label>
+          ${this.vidModeBtn('off', '!vidAutoOff', 'OFF')}
+          ${this.vidModeBtn('retrigger', '!vidAutoRetrig', 'RETRIG')}
+          ${this.vidModeBtn('jump', '!vidAutoJump', 'JUMP')}
+          ${this.vidModeBtn('ladder', '!vidAutoLadder', 'LADDER')}
+        </div>
         <div class="control-row">
           <label>Slices</label>
           ${this.learnDot('video.slices')}

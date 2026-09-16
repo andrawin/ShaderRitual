@@ -561,6 +561,11 @@ void main(){
       uFit: { value: 0 },
       uVidAspect: { value: 16 / 9 },
       uScreenAspect: { value: 16 / 9 },
+      uSurface: { value: 0 },
+      uThresh: { value: 0.35 },
+      uSoft: { value: 0.25 },
+      uWarp: { value: 0 },
+      uTexel: { value: new THREE.Vector2(1 / 1920, 1 / 1080) },
     };
     this.videoScene = new THREE.Scene();
     this.videoScene.add(
@@ -579,8 +584,16 @@ uniform float uScale;
 uniform float uFit;
 uniform float uVidAspect;
 uniform float uScreenAspect;
+uniform float uSurface;
+uniform float uThresh;
+uniform float uSoft;
+uniform float uWarp;
+uniform vec2 uTexel;
 uniform int uBlend;
 ${blendGLSL}
+
+float lumaOf(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+
 void main(){
   vec3 base = texture2D(tScene, vUv).rgb;
 
@@ -594,7 +607,28 @@ void main(){
   sc /= max(uScale, 0.01);
 
   vec2 vuv = (vUv - 0.5) * sc + 0.5;
+
+  // Warp: push the sampling point along the shader image's own gradient, so
+  // the clip runs with the form's contours instead of lying flat across them.
+  // Four extra taps, so it is skipped entirely at zero.
+  if(uWarp > 0.0001){
+    float lx = lumaOf(texture2D(tScene, vUv + vec2(uTexel.x, 0.)).rgb)
+             - lumaOf(texture2D(tScene, vUv - vec2(uTexel.x, 0.)).rgb);
+    float ly = lumaOf(texture2D(tScene, vUv + vec2(0., uTexel.y)).rgb)
+             - lumaOf(texture2D(tScene, vUv - vec2(0., uTexel.y)).rgb);
+    vuv += vec2(lx, ly) * uWarp;
+  }
+
   float mask = step(0., vuv.x) * step(vuv.x, 1.) * step(0., vuv.y) * step(vuv.y, 1.);
+
+  // Surface: matte the clip into the shader rather than over it. The shader's
+  // own luminance is the only shape information available here — there is no
+  // depth or id buffer — and for these shaders, which are lit forms on near
+  // black, it is a good stand-in for the form itself.
+  if(uSurface > 0.5){
+    float m = smoothstep(uThresh - uSoft, uThresh + uSoft, lumaOf(base));
+    mask *= uSurface > 1.5 ? 1.0 - m : m;
+  }
 
   vec3 clip = texture2D(tVid, vuv).rgb;
   vec3 mixed = clamp(blendLayer(base, clip, uBlend), 0., 1.);
@@ -1614,37 +1648,66 @@ void main(){
       } catch (e) {}
     }
 
-    if (cfg.sliceMode === 'off') return;
-
-    const dur = v.duration;
-    if (!isFinite(dur) || dur <= 0) return;
-
+    // The beat clock keeps running even with the auto trigger off, so turning
+    // it on lands on the next division rather than wherever the phase happens
+    // to be — and hand-fired triggers do not disturb it.
     const bpm = this.config.camera?.bpm > 0 ? this.config.camera.bpm : 120;
     this.videoBeat += dt * (bpm / 60);
     const div = Math.max(0.0625, cfg.sliceDiv || 1);
     const tick = Math.floor(this.videoBeat / div);
-    if (tick === this.lastSliceTick) return;
+    const crossed = tick !== this.lastSliceTick;
     this.lastSliceTick = tick;
 
-    // A seek that is still in flight is not worth stacking another on top of —
-    // on a large file that is how the playhead ends up permanently behind.
-    if (v.seeking) return;
+    if (cfg.sliceMode === 'off' || !crossed) return;
+    this.videoTrigger(cfg.sliceMode, true);
+  }
+
+  /**
+   * Move the playhead one slice. Shared by the beat clock and by the hand-fired
+   * trigger buttons, so a pad and the automatic mode do exactly the same thing.
+   *
+   *   retrigger -> back to the start of the slice the playhead is in (stutter)
+   *   jump      -> a slice at random
+   *   next/prev -> step through them in order
+   *   home      -> back to the top of the clip
+   */
+  videoTrigger(
+    kind: 'retrigger' | 'jump' | 'next' | 'prev' | 'ladder' | 'home',
+    fromClock = false,
+  ) {
+    const v = this.videoEl;
+    const cfg = this.config.video;
+    if (!v || !cfg) return;
+    const dur = v.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+    // The beat clock will not stack a seek on top of one still in flight — on a
+    // large file that is how the playhead ends up permanently behind the music.
+    // A hand-fired trigger overrides instead: someone hitting a pad expects it
+    // to do something, and retargeting a seek that has not landed is cheap.
+    if (fromClock && v.seeking) return;
 
     const n = Math.max(1, Math.round(cfg.slices || 1));
     const len = dur / n;
-    if (cfg.sliceMode === 'jump') {
+    const here = Math.min(n - 1, Math.floor(v.currentTime / len));
+
+    if (kind === 'home') {
+      this.sliceIndex = 0;
+    } else if (kind === 'jump') {
       this.sliceIndex = Math.floor(Math.random() * n);
-    } else if (cfg.sliceMode === 'ladder') {
+    } else if (kind === 'next' || kind === 'ladder') {
       this.sliceIndex = (this.sliceIndex + 1) % n;
+    } else if (kind === 'prev') {
+      this.sliceIndex = (this.sliceIndex - 1 + n) % n;
     } else {
-      // retrigger: stay in the slice the playhead is actually in, so the
+      // retrigger stays in the slice the playhead is actually in, so the
       // stutter follows the clip rather than pinning it to wherever it started.
-      this.sliceIndex = Math.min(n - 1, Math.floor(v.currentTime / len));
+      this.sliceIndex = here;
     }
+
     const target = Math.min(dur - 0.05, this.sliceIndex * len);
     // fastSeek lands on the nearest keyframe instead of decoding to an exact
-    // frame. For beat slicing that is the right trade — it is the difference
-    // between a tight trigger and a visible hitch on a big file.
+    // frame. For slicing that is the right trade — the difference between a
+    // tight trigger and a visible hitch on a big file.
     const anyV = v as any;
     if (typeof anyV.fastSeek === 'function') anyV.fastSeek(target);
     else v.currentTime = target;
@@ -1663,6 +1726,12 @@ void main(){
     this.videoUniforms.uBlend.value = CAPTURE_BLEND_INDEX[cfg.blend] ?? 0;
     this.videoUniforms.uVidAspect.value = va;
     this.videoUniforms.uScreenAspect.value = size.y > 0 ? size.x / size.y : 16 / 9;
+    this.videoUniforms.uSurface.value =
+      cfg.surface === 'lumaInv' ? 2 : cfg.surface === 'luma' ? 1 : 0;
+    this.videoUniforms.uThresh.value = cfg.surfaceThreshold;
+    this.videoUniforms.uSoft.value = Math.max(0.001, cfg.surfaceSoftness);
+    this.videoUniforms.uWarp.value = cfg.warp;
+    this.videoUniforms.uTexel.value.set(1 / Math.max(1, size.x), 1 / Math.max(1, size.y));
   }
 
   /* ----------------------- Screen capture ------------------------ */
