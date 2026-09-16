@@ -20,11 +20,27 @@ import type { Bands, PartInfo, ShaderRitualConfig } from './types';
 
 const BLEND_INDEX: Record<string, number> = { add: 0, screen: 1, mix: 2 };
 
-/** Must match blendCap() in the capture composite shader. */
+/** Must match blendLayer() below. Shared by the capture and video layers. */
 const CAPTURE_BLEND_INDEX: Record<string, number> = {
   normal: 0, screen: 1, add: 2, multiply: 3,
   overlay: 4, difference: 5, lighten: 6, darken: 7,
 };
+
+/* Per-channel compositing operators, layer (b) over what is under it (a). */
+const blendGLSL = `
+vec3 blendLayer(vec3 a, vec3 b, int m){
+  if(m == 1) return 1. - (1. - a) * (1. - b);                    // screen
+  if(m == 2) return a + b;                                        // add
+  if(m == 3) return a * b;                                        // multiply
+  if(m == 4) return mix(2. * a * b,                               // overlay
+                        1. - 2. * (1. - a) * (1. - b),
+                        step(vec3(0.5), a));
+  if(m == 5) return abs(a - b);                                   // difference
+  if(m == 6) return max(a, b);                                    // lighten
+  if(m == 7) return min(a, b);                                    // darken
+  return b;                                                       // normal
+}
+`;
 
 const compositeShader = `
 precision highp float;
@@ -336,6 +352,21 @@ export class ShaderRitualView extends LitElement {
   // it is a transparent target, against which screen/multiply/overlay all
   // collapse back to normal. This also keeps the capture at full resolution
   // when the 3D layer is running reduced.
+  // Video clip layer. Composited before global post-FX so every filter applies
+  // to it, and driven by its own beat clock for slicing.
+  private videoSrc!: THREE.WebGLRenderTarget;
+  private videoScene!: THREE.Scene;
+  private videoUniforms!: Record<string, { value: any }>;
+  private videoTexture: THREE.Texture | null = null;
+  private videoEl: HTMLVideoElement | null = null;
+  private videoUrl: string | null = null;
+  private videoFrameReady = false;
+  private videoPlayPending = false;
+  private lastVideoUpload = 0;
+  private videoBeat = 0;        // elapsed beats on the tempo clock
+  private lastSliceTick = -1;   // which trigger window we are in
+  private sliceIndex = 0;       // the slice currently being played
+
   private captureSrc!: THREE.WebGLRenderTarget;
   private captureScene!: THREE.Scene;
   private captureUniforms!: Record<string, { value: any }>;
@@ -485,20 +516,7 @@ uniform float uPlace;
 uniform float uCapAspect;
 uniform float uScreenAspect;
 uniform int uBlend;
-
-/* Per-channel compositing operators, capture (b) over the shader image (a). */
-vec3 blendCap(vec3 a, vec3 b, int m){
-  if(m == 1) return 1. - (1. - a) * (1. - b);                    // screen
-  if(m == 2) return a + b;                                        // add
-  if(m == 3) return a * b;                                        // multiply
-  if(m == 4) return mix(2. * a * b,                               // overlay
-                        1. - 2. * (1. - a) * (1. - b),
-                        step(vec3(0.5), a));
-  if(m == 5) return abs(a - b);                                   // difference
-  if(m == 6) return max(a, b);                                    // lighten
-  if(m == 7) return min(a, b);                                    // darken
-  return b;                                                       // normal
-}
+${blendGLSL}
 
 void main(){
   vec3 base = texture2D(tScreen, vUv).rgb;
@@ -521,7 +539,65 @@ void main(){
   }
 
   vec3 cap = texture2D(tCap, cuv).rgb;
-  vec3 mixed = clamp(blendCap(base, cap, uBlend), 0., 1.);
+  vec3 mixed = clamp(blendLayer(base, cap, uBlend), 0., 1.);
+  gl_FragColor = vec4(mix(base, mixed, uOpacity * mask), 1.);
+}`,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      ),
+    );
+
+    // Video clip: the shader image goes into videoSrc and this pass blends the
+    // clip over it. It runs *before* post-FX — that is the whole point, and the
+    // reason it is a separate pass from capture rather than sharing one.
+    this.videoSrc = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.videoUniforms = {
+      tScene: { value: this.videoSrc.texture },
+      tVid: { value: null },
+      uOpacity: { value: 1 },
+      uBlend: { value: 0 },
+      uScale: { value: 1 },
+      uFit: { value: 0 },
+      uVidAspect: { value: 16 / 9 },
+      uScreenAspect: { value: 16 / 9 },
+    };
+    this.videoScene = new THREE.Scene();
+    this.videoScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.videoUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tScene;
+uniform sampler2D tVid;
+uniform float uOpacity;
+uniform float uScale;
+uniform float uFit;
+uniform float uVidAspect;
+uniform float uScreenAspect;
+uniform int uBlend;
+${blendGLSL}
+void main(){
+  vec3 base = texture2D(tScene, vUv).rgb;
+
+  // How much of the clip the screen shows, per axis. r < 1 is a clip narrower
+  // than the frame; cover fills and crops the long axis, contain fits the
+  // whole thing and leaves the shader showing in the bars.
+  float r = uVidAspect / max(uScreenAspect, 0.001);
+  vec2 sc = vec2(1.0);
+  if(uFit < 0.5)      sc = r < 1.0 ? vec2(1.0, r) : vec2(1.0 / r, 1.0);
+  else if(uFit < 1.5) sc = r < 1.0 ? vec2(1.0 / r, 1.0) : vec2(1.0, r);
+  sc /= max(uScale, 0.01);
+
+  vec2 vuv = (vUv - 0.5) * sc + 0.5;
+  float mask = step(0., vuv.x) * step(vuv.x, 1.) * step(0., vuv.y) * step(vuv.y, 1.);
+
+  vec3 clip = texture2D(tVid, vuv).rgb;
+  vec3 mixed = clamp(blendLayer(base, clip, uBlend), 0., 1.);
   gl_FragColor = vec4(mix(base, mixed, uOpacity * mask), 1.);
 }`,
           depthTest: false,
@@ -664,6 +740,7 @@ void main(){
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
     this.captureSrc.setSize(pw, ph);
+    this.videoSrc.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
     this.feedRead.setSize(pw, ph);
     this.feedWrite.setSize(pw, ph);
@@ -912,12 +989,21 @@ void main(){
     const capOn = !!this.captureTexture && !!mdl?.capture?.visible && mdl.capture.opacity > 0;
     const outRT = capOn ? this.captureSrc : (null as any);
 
+    // The clip sits between the shader and post-FX, so post applies to it.
+    // afterVideo is where the clip pass writes; beforeVideo is where the
+    // shader has to land so the clip pass has something to read.
+    const vcfg = this.config.video;
+    const vidOn = !!this.videoTexture && !!vcfg?.visible && vcfg.opacity > 0;
+    const afterVideo = anyPost ? this.sceneTarget : outRT;
+    const beforeVideo = vidOn ? this.videoSrc : afterVideo;
+    if (this.videoEl) this.driveVideo(dt, this.lastBands);
+
     if (!needComposite && !anyPost) {
       // Fast path: base image straight out.
-      this.baseLayer.render(this.camera, outRT);
+      this.baseLayer.render(this.camera, beforeVideo);
     } else if (!needComposite) {
-      // Post only: base -> sceneTarget -> post -> screen.
-      this.baseLayer.render(this.camera, this.sceneTarget);
+      // Post only: base -> post -> out.
+      this.baseLayer.render(this.camera, beforeVideo);
     } else {
       // Overlay compositing needed: base + overlay -> composite.
       this.baseLayer.render(this.camera, this.baseTarget);
@@ -930,8 +1016,15 @@ void main(){
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
       // Composite -> sceneTarget (if post follows) or straight to screen.
-      this.renderer.setRenderTarget(anyPost ? this.sceneTarget : outRT);
+      this.renderer.setRenderTarget(beforeVideo);
       this.renderer.render(this.compositeScene, this.camera);
+    }
+
+    // Clip over the shader, before post-FX picks the result up.
+    if (vidOn) {
+      this.applyVideo();
+      this.renderer.setRenderTarget(afterVideo);
+      this.renderer.render(this.videoScene, this.camera);
     }
 
     // Global post-FX -> screen (only when a filter is active).
@@ -1313,6 +1406,263 @@ void main(){
     }
 
     if (this.imploding && active === 0) this.imploding = false;
+  }
+
+  /* ------------------------- Video clip -------------------------- */
+
+  /**
+   * Load a clip. The file is handed to the video element as an object URL, not
+   * read into an ArrayBuffer: the browser then streams it off disk, so the cost
+   * is independent of file size and a multi-gigabyte clip is no different from
+   * a small one. Reading it into memory — which is how the GLB path works — is
+   * what would put a ceiling on this.
+   */
+  async setVideoFile(file: File): Promise<string> {
+    this.clearVideo();
+    const url = URL.createObjectURL(file);
+    this.videoUrl = url;
+    const v = document.createElement('video');
+    v.muted = true;            // the audio rig is the analyser's, not the clip's
+    v.playsInline = true;
+    v.loop = this.config?.video?.loop ?? true;
+    v.preload = 'auto';
+    v.src = url;
+    // Deliberately NOT published to this.videoEl yet. The render loop drives
+    // whatever is in there every frame, and driving an element that is still
+    // loading means play() races the load and the metadata events never land.
+
+    // Bounded. A container the browser will neither decode nor reject fires
+    // neither event, and without a deadline the caller waits on it forever —
+    // the panel sits on "Loading…" with no way back.
+    const ok = await new Promise<string>((resolve) => {
+      let settled = false;
+      const done = (err: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        v.removeEventListener('loadedmetadata', onOk);
+        v.removeEventListener('error', onErr);
+        resolve(err);
+      };
+      const onOk = () => done('');
+      const onErr = () =>
+        done(v.error?.message || 'Could not decode this file — try H.264 MP4 or WebM');
+      const timer = setTimeout(
+        () => done('Timed out reading this file — the browser may not support its codec'),
+        20000,
+      );
+      v.addEventListener('loadedmetadata', onOk);
+      v.addEventListener('error', onErr);
+      // Metadata can already be in before the listeners attach on a fast local
+      // file, and loadedmetadata does not re-fire for a late subscriber.
+      if (v.readyState >= 1) done('');
+    });
+    if (ok) {
+      URL.revokeObjectURL(url);
+      this.videoUrl = null;
+      return ok;
+    }
+
+    await this.resolveDuration(v);
+    this.videoEl = v;   // loaded and measured: safe for the render loop now
+
+    try {
+      if (this.config?.video?.playing !== false) await v.play();
+    } catch (e) {}
+
+    // Same throttled-upload trick as capture: Three re-uploads a VideoTexture
+    // on every render by default, which for a full-resolution clip is the most
+    // expensive thing in the frame.
+    const tex = new THREE.VideoTexture(v);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    this.videoTexture = tex;
+    this.videoUniforms.tVid.value = tex;
+
+    const anyV = v as any;
+    const hasRvfc = typeof anyV.requestVideoFrameCallback === 'function';
+    this.videoFrameReady = !hasRvfc;
+    if (hasRvfc) {
+      const onFrame = () => {
+        if (this.videoEl !== v) return; // clip replaced
+        this.videoFrameReady = true;
+        anyV.requestVideoFrameCallback(onFrame);
+      };
+      anyV.requestVideoFrameCallback(onFrame);
+    }
+    (tex as any).update = () => {
+      if (v.readyState < v.HAVE_CURRENT_DATA) return;
+      if (hasRvfc && !this.videoFrameReady) return;
+      const fps = Math.min(60, Math.max(1, this.config?.video?.fps || 30));
+      const nowMs = performance.now();
+      if (nowMs - this.lastVideoUpload < 1000 / fps) return;
+      this.lastVideoUpload = nowMs;
+      this.videoFrameReady = false;
+      tex.needsUpdate = true;
+    };
+    return '';
+  }
+
+  /**
+   * Some containers carry no duration in their header and report Infinity
+   * until the playhead has actually been to the end — everything MediaRecorder
+   * writes, and plenty of WebM in the wild. Beat slicing needs a real duration,
+   * so it is forced out once here rather than failing silently later. MP4
+   * carries it in the moov atom, so this costs nothing for the common case.
+   */
+  private async resolveDuration(v: HTMLVideoElement): Promise<void> {
+    if (isFinite(v.duration) && v.duration > 0) return;
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(poll);
+        v.removeEventListener('durationchange', onChange);
+        resolve();
+      };
+      const onChange = () => {
+        if (isFinite(v.duration) && v.duration > 0) finish();
+      };
+      const timer = setTimeout(finish, 2000);
+      // Polled too, for the same reason the metadata wait is.
+      const poll = setInterval(onChange, 100);
+      v.addEventListener('durationchange', onChange);
+      try {
+        v.currentTime = 1e7; // seeks to the end, which is what publishes it
+      } catch (e) {
+        finish();
+      }
+    });
+    try {
+      v.currentTime = 0;
+    } catch (e) {}
+  }
+
+  clearVideo() {
+    if (this.videoEl) {
+      this.videoEl.pause();
+      this.videoEl.removeAttribute('src');
+      this.videoEl.load();
+      this.videoEl = null;
+    }
+    if (this.videoTexture) {
+      this.videoTexture.dispose();
+      this.videoTexture = null;
+    }
+    if (this.videoUrl) {
+      // Without this the browser keeps the whole file alive for the life of
+      // the document, which for a 4 GB clip matters.
+      URL.revokeObjectURL(this.videoUrl);
+      this.videoUrl = null;
+    }
+    if (this.videoUniforms) this.videoUniforms.tVid.value = null;
+    this.lastSliceTick = -1;
+    this.sliceIndex = 0;
+    this.videoPlayPending = false;
+  }
+
+  /** Duration / dimensions for the UI, or null when nothing is loaded. */
+  videoInfo(): { duration: number; width: number; height: number } | null {
+    const v = this.videoEl;
+    if (!v) return null;
+    return {
+      duration: isFinite(v.duration) ? v.duration : 0,
+      width: v.videoWidth,
+      height: v.videoHeight,
+    };
+  }
+
+  /**
+   * Per-frame clip driving: playback rate from a band, and the beat-locked
+   * slice trigger.
+   *
+   * The beat clock runs on real time rather than the audio-gated animation
+   * clock, for the same reason the model's movement does — a tempo the user
+   * typed should run at that tempo whether or not sound is coming in.
+   */
+  private driveVideo(dt: number, bands: Bands) {
+    const v = this.videoEl;
+    const cfg = this.config.video;
+    if (!v || !cfg) return;
+
+    // One play() attempt in flight at a time. A clip that cannot start — no
+    // decodable frames, autoplay refused — otherwise gets a fresh rejected
+    // promise every frame, which is enough on its own to wedge the tab.
+    if (cfg.playing && v.paused && !this.videoPlayPending) {
+      this.videoPlayPending = true;
+      v.play()
+        .catch(() => {})
+        .then(() => {
+          this.videoPlayPending = false;
+        });
+    } else if (!cfg.playing && !v.paused) {
+      v.pause();
+    }
+    if (v.loop !== cfg.loop) v.loop = cfg.loop;
+
+    // Rate. Browsers refuse rates outside roughly 0.06..16 and behave badly at
+    // the extremes, so this is clamped well inside that.
+    const band = cfg.speedBand !== 'none' ? (bands as any)[cfg.speedBand] || 0 : 0;
+    const rate = Math.min(4, Math.max(0.1, (cfg.speed || 1) + band * (cfg.speedAmount || 0)));
+    if (Math.abs(v.playbackRate - rate) > 0.01) {
+      try {
+        v.playbackRate = rate;
+      } catch (e) {}
+    }
+
+    if (cfg.sliceMode === 'off') return;
+
+    const dur = v.duration;
+    if (!isFinite(dur) || dur <= 0) return;
+
+    const bpm = this.config.camera?.bpm > 0 ? this.config.camera.bpm : 120;
+    this.videoBeat += dt * (bpm / 60);
+    const div = Math.max(0.0625, cfg.sliceDiv || 1);
+    const tick = Math.floor(this.videoBeat / div);
+    if (tick === this.lastSliceTick) return;
+    this.lastSliceTick = tick;
+
+    // A seek that is still in flight is not worth stacking another on top of —
+    // on a large file that is how the playhead ends up permanently behind.
+    if (v.seeking) return;
+
+    const n = Math.max(1, Math.round(cfg.slices || 1));
+    const len = dur / n;
+    if (cfg.sliceMode === 'jump') {
+      this.sliceIndex = Math.floor(Math.random() * n);
+    } else if (cfg.sliceMode === 'ladder') {
+      this.sliceIndex = (this.sliceIndex + 1) % n;
+    } else {
+      // retrigger: stay in the slice the playhead is actually in, so the
+      // stutter follows the clip rather than pinning it to wherever it started.
+      this.sliceIndex = Math.min(n - 1, Math.floor(v.currentTime / len));
+    }
+    const target = Math.min(dur - 0.05, this.sliceIndex * len);
+    // fastSeek lands on the nearest keyframe instead of decoding to an exact
+    // frame. For beat slicing that is the right trade — it is the difference
+    // between a tight trigger and a visible hitch on a big file.
+    const anyV = v as any;
+    if (typeof anyV.fastSeek === 'function') anyV.fastSeek(target);
+    else v.currentTime = target;
+  }
+
+  /** Feed the video pass its framing, opacity and blend for this frame. */
+  private applyVideo() {
+    const cfg = this.config.video;
+    const v = this.videoEl;
+    if (!cfg || !v) return;
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const va = v.videoHeight > 0 ? v.videoWidth / v.videoHeight : 16 / 9;
+    this.videoUniforms.uOpacity.value = cfg.opacity;
+    this.videoUniforms.uScale.value = Math.max(0.05, cfg.scale || 1);
+    this.videoUniforms.uFit.value = cfg.fit === 'stretch' ? 2 : cfg.fit === 'contain' ? 1 : 0;
+    this.videoUniforms.uBlend.value = CAPTURE_BLEND_INDEX[cfg.blend] ?? 0;
+    this.videoUniforms.uVidAspect.value = va;
+    this.videoUniforms.uScreenAspect.value = size.y > 0 ? size.x / size.y : 16 / 9;
   }
 
   /* ----------------------- Screen capture ------------------------ */

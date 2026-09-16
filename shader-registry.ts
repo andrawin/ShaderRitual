@@ -8,6 +8,7 @@ import type {
   MotionConfig,
   PostFXConfig,
   ShaderDef,
+  VideoConfig,
   ShaderRitualConfig,
   ShaderSetting,
 } from './types';
@@ -192,6 +193,29 @@ export function defaultModel(): ModelConfig {
   };
 }
 
+/**
+ * Fresh video-clip defaults. Slicing is off and the rate is flat: a clip
+ * should play as itself until it is asked not to.
+ */
+export function defaultVideo(): VideoConfig {
+  return {
+    visible: true,
+    opacity: 1,
+    blend: 'normal',
+    fit: 'cover',
+    scale: 1,
+    loop: true,
+    playing: true,
+    speed: 1,
+    speedBand: 'none',
+    speedAmount: 0.6,
+    slices: 8,
+    sliceMode: 'off',
+    sliceDiv: 1,
+    fps: 30,
+  };
+}
+
 /** Fresh global post-FX defaults (all off). */
 export function defaultPostFX(): PostFXConfig {
   return {
@@ -253,6 +277,7 @@ export function defaultConfig(): ShaderRitualConfig {
     camera: defaultCamera(),
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
+    video: defaultVideo(),
     postfx: defaultPostFX(),
     model: defaultModel(),
     shaders,
@@ -275,6 +300,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     camera: { ...base.camera, ...(saved.camera || {}) },
     motion: { ...base.motion, ...(saved.motion || {}) },
     overlay: { ...base.overlay, ...(saved.overlay || {}) },
+    video: { ...base.video, ...(saved.video || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },

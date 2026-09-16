@@ -66,6 +66,8 @@ export class ShaderRitualApp extends LitElement {
   );
   @state() midiPulse = false;
   @state() modelName = '';
+  @state() videoName = '';
+  @state() videoInfo = '';
 
   // MeshRitual engine: parts surfaced from the loaded model + screen capture.
   @state() partInfos: PartInfo[] = [];
@@ -93,6 +95,54 @@ export class ShaderRitualApp extends LitElement {
       this.post({ type: 'modelStatus', name: this.modelName });
     }
   };
+  /**
+   * Open a clip. The file is handed straight to the renderer, which turns it
+   * into an object URL — it is never read into an ArrayBuffer, so size is not
+   * a factor and a multi-gigabyte clip loads as fast as a small one.
+   *
+   * An object URL is only valid in the document that created it, so unlike a
+   * GLB this cannot be relayed to the render window: a detached panel has no
+   * way to hand its file over, and says so rather than appearing to work.
+   */
+  private onVideoFile = async (e: any) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (this.isController) {
+      this.videoName = '⚠ Open the clip in the main window — a file cannot be sent over the relay';
+      return;
+    }
+    this.videoName = 'Loading…';
+    this.videoInfo = '';
+    try {
+      const err = await this.viewEl?.setVideoFile?.(file);
+      if (err) {
+        this.videoName = `⚠ ${err}`;
+      } else {
+        this.videoName = file.name;
+        const i = this.viewEl?.videoInfo?.();
+        if (i) {
+          const mm = Math.floor(i.duration / 60);
+          const ss = Math.floor(i.duration % 60).toString().padStart(2, '0');
+          this.videoInfo = `${i.width}×${i.height} · ${mm}:${ss}`;
+        }
+      }
+    } catch (err: any) {
+      this.videoName = `⚠ ${err?.message || 'Failed to load'}`;
+    }
+    this.post({ type: 'videoStatus', name: this.videoName, info: this.videoInfo });
+  };
+
+  private clearVideoClip = () => {
+    if (this.isController) {
+      this.post({ type: 'command', name: 'removeVideo' });
+    } else {
+      this.viewEl?.clearVideo?.();
+    }
+    this.videoName = '';
+    this.videoInfo = '';
+    this.post({ type: 'videoStatus', name: '', info: '' });
+  };
+
   private clearModel = () => {
     if (this.isController) {
       this.post({ type: 'command', name: 'removeModel' });
@@ -723,6 +773,14 @@ export class ShaderRitualApp extends LitElement {
         // Controller mirrors the render window's load result.
         if (!this.isMain) this.modelName = msg.name || '';
         break;
+      case 'videoStatus':
+        // A clip lives in the window that opened it, so a detached panel has
+        // to be told what the render window actually has loaded.
+        if (!this.isMain) {
+          this.videoName = msg.name || '';
+          this.videoInfo = msg.info || '';
+        }
+        break;
       case 'config': {
         // sanitizeConfig always clears model.parts (they belong to whichever
         // model is loaded, not to saved settings). Carry them across the sync
@@ -813,6 +871,12 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'scanMidi') this.initMidi();
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
+    else if (name === 'removeVideo') {
+      this.viewEl?.clearVideo?.();
+      this.videoName = '';
+      this.videoInfo = '';
+      this.post({ type: 'videoStatus', name: '', info: '' });
+    }
     else if (name === 'removeModel') {
       this.viewEl?.removeModel?.();
       this.modelName = '';
@@ -958,6 +1022,10 @@ export class ShaderRitualApp extends LitElement {
       'model.motionAmount': { min: 0, max: 3 },
       'model.quality': { min: 0.25, max: 1 },
       'model.fracture.fragments': { min: 2, max: 250 },
+      'video.opacity': { min: 0, max: 1 },
+      'video.scale': { min: 0.25, max: 3 },
+      'video.speed': { min: 0.1, max: 4 },
+      'video.speedAmount': { min: 0, max: 3 },
       'model.capture.opacity': { min: 0, max: 1 },
       'model.capture.scale': { min: 0.1, max: 4 },
       'model.fracture.physics.gravity': { min: 0, max: 4 },
@@ -991,9 +1059,14 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'camera.mode') return ['manual', 'bpm', 'audio'];
     if (path === 'model.mode') return ['none', 'parts', 'fracture'];
     if (path === 'model.motion') return ['none', 'spin', 'bob', 'sway', 'orbit', 'tumble'];
-    if (path === 'model.capture.mode') return ['background', 'floating'];
-    if (path === 'model.capture.blend')
+    if (path === 'video.blend' || path === 'model.capture.blend')
       return ['normal', 'screen', 'add', 'multiply', 'overlay', 'difference', 'lighten', 'darken'];
+    if (path === 'video.fit') return ['cover', 'contain', 'stretch'];
+    if (path === 'video.sliceMode') return ['off', 'retrigger', 'jump', 'ladder'];
+    if (path === 'video.sliceDiv') return [0.25, 0.5, 1, 2, 4];
+    if (path === 'video.slices') return [2, 4, 8, 16, 32];
+    if (path === 'video.fps') return [60, 30, 15, 8];
+    if (path === 'model.capture.mode') return ['background', 'floating'];
     if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
     if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
     if (path === 'model.capture.fps') return [60, 30, 15, 8];
@@ -1027,6 +1100,7 @@ export class ShaderRitualApp extends LitElement {
     '!reset': () => this.triggerPhysics('reset'),
     '!audio': () => this.toggleAudio(),
     '!capture': () => this.toggleCapture(),
+    '!videoPlay': () => this.updateConfig('video.playing', !this.config.video.playing),
     '!nextShader': () => this.stepShader(1),
     '!prevShader': () => this.stepShader(-1),
   };
@@ -1549,6 +1623,126 @@ export class ShaderRitualApp extends LitElement {
     `;
   }
 
+  private renderVideoSection() {
+    const v = this.config.video;
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Video Clip · plays under the post filters</span>
+        <div class="control-row">
+          <label>Open clip</label>
+          <input type="file" accept="video/*" @change=${this.onVideoFile} />
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          ${this.videoName || 'No clip loaded'}
+          ${this.videoInfo ? html`· ${this.videoInfo}` : ''}
+          ${this.videoName && !this.videoName.startsWith('⚠')
+            ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.clearVideoClip}>remove</a>`
+            : ''}
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          The file is streamed off disk rather than read into memory, so size is
+          not a limit — a 4 GB clip opens as fast as a small one. It has to be
+          opened in this window though: a detached panel cannot hand a file
+          across. H.264 MP4 seeks best, which is what beat slicing needs.
+        </div>
+
+        ${this.renderToggle('Visible', 'video.visible')}
+        <div class="control-row">
+          <label>Playing</label>
+          ${this.learnDot('!videoPlay')}
+          ${this.learnDot('video.playing')}
+          <button class="mini ${v.playing ? 'on' : ''}"
+            @click=${() => this.updateConfig('video.playing', !v.playing)}>
+            ${v.playing ? 'PLAYING' : 'PAUSED'}</button>
+        </div>
+        ${this.renderToggle('Loop', 'video.loop')}
+        ${this.renderSlider('Opacity', 'video.opacity', 0, 1, 0.02)}
+        ${this.renderSelect('Blend', 'video.blend', [
+          { value: 'normal', label: 'Normal' },
+          { value: 'screen', label: 'Screen' },
+          { value: 'add', label: 'Add' },
+          { value: 'multiply', label: 'Multiply' },
+          { value: 'overlay', label: 'Overlay' },
+          { value: 'difference', label: 'Difference' },
+          { value: 'lighten', label: 'Lighten' },
+          { value: 'darken', label: 'Darken' },
+        ])}
+        ${this.renderSelect('Fit', 'video.fit', [
+          { value: 'cover', label: 'Cover (crop)' },
+          { value: 'contain', label: 'Contain (bars)' },
+          { value: 'stretch', label: 'Stretch' },
+        ])}
+        ${this.renderSlider('Zoom', 'video.scale', 0.25, 3, 0.05)}
+
+        <span class="group-title" style="margin-top:10px;">Speed</span>
+        ${this.renderSlider('Rate', 'video.speed', 0.1, 4, 0.05)}
+        <div class="control-row">
+          <label>Audio drive</label>
+          ${this.renderBandSelect('video.speedBand', v.speedBand)}
+        </div>
+        ${this.renderSlider('Drive amount', 'video.speedAmount', 0, 3, 0.05)}
+        <div class="element-desc" style="margin-bottom:8px;">
+          Rate is the resting speed; the band adds to it, so the clip runs fast
+          on hits and falls back between them. Clamped to 0.1–4× — outside that
+          browsers drop frames rather than play slower.
+        </div>
+
+        <span class="group-title" style="margin-top:10px;">Beat Slicing</span>
+        ${this.renderSelect('Trigger', 'video.sliceMode', [
+          { value: 'off', label: 'Off — play through' },
+          { value: 'retrigger', label: 'Retrigger — stutter in place' },
+          { value: 'jump', label: 'Jump — random slice' },
+          { value: 'ladder', label: 'Ladder — next slice in order' },
+        ])}
+        <div class="control-row">
+          <label>Slices</label>
+          ${this.learnDot('video.slices')}
+          <select .value=${live(String(v.slices))}
+            @change=${(e: any) => this.updateConfig('video.slices', parseFloat(e.target.value))}>
+            <option value="2">2</option>
+            <option value="4">4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+            <option value="32">32</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <label>Every</label>
+          ${this.learnDot('video.sliceDiv')}
+          <select .value=${live(String(v.sliceDiv))}
+            @change=${(e: any) => this.updateConfig('video.sliceDiv', parseFloat(e.target.value))}>
+            <option value="0.25">1/16 note</option>
+            <option value="0.5">1/8 note</option>
+            <option value="1">1 beat</option>
+            <option value="2">1/2 bar</option>
+            <option value="4">1 bar</option>
+          </select>
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          The clip is cut into equal slices and the playhead is moved on the
+          beat, at the tempo in Camera · Motion. Retrigger stutters the slice
+          you are already in; Jump picks at random; Ladder walks them in order.
+        </div>
+
+        <div class="control-row">
+          <label>Upload rate</label>
+          ${this.learnDot('video.fps')}
+          <select .value=${live(String(v.fps))}
+            @change=${(e: any) => this.updateConfig('video.fps', parseFloat(e.target.value))}>
+            <option value="60">60 fps</option>
+            <option value="30">30 fps</option>
+            <option value="15">15 fps</option>
+            <option value="8">8 fps</option>
+          </select>
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          Frames pushed to the GPU per second. Every one is a full texture
+          upload, so drop this first if a big clip feels heavy.
+        </div>
+      </div>
+    `;
+  }
+
   private renderCaptureSection() {
     const c = this.config.model.capture;
     return html`
@@ -1990,6 +2184,9 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderFx('glitch', 'Glitch (block swap)')}
           ${this.renderFx('mosaic', 'Mosaic Shuffle')}
         </div>
+
+        <!-- VIDEO CLIP -->
+        ${this.renderVideoSection()}
 
         <!-- 3D MODEL -->
         ${this.renderModelSection()}

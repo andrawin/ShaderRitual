@@ -177,6 +177,51 @@ export interface CaptureConfig {
 }
 
 /**
+ * What a beat trigger does to the playhead.
+ *   off       -> the clip plays straight through
+ *   retrigger -> jumps back to the start of the slice it is in (a stutter)
+ *   jump      -> jumps to the start of a randomly chosen slice
+ *   ladder    -> steps to the next slice in order, wrapping at the end
+ */
+export type VideoSliceMode = 'off' | 'retrigger' | 'jump' | 'ladder';
+
+/** How a clip is fitted to a frame of a different shape. */
+export type VideoFit = 'cover' | 'contain' | 'stretch';
+
+/**
+ * A user-loaded video clip, composited with the shader *before* global post-FX
+ * so every filter applies to it. The file itself is never read into memory —
+ * it is held as an object URL and streamed off disk by the browser, which is
+ * what makes multi-gigabyte clips workable — so it lives only in the window
+ * that opened it and is not persisted or relayed.
+ */
+export interface VideoConfig {
+  visible: boolean;
+  opacity: number;
+  blend: CaptureBlend;
+  fit: VideoFit;
+  /** Zoom around the centre, on top of the fit. */
+  scale: number;
+  loop: boolean;
+  playing: boolean;
+  /** Playback rate before audio is added. 1 is the clip's own speed. */
+  speed: number;
+  /** Band that pushes the rate, and how hard. */
+  speedBand: Band;
+  speedAmount: number;
+  /** The clip is cut into this many equal slices for beat triggering. */
+  slices: number;
+  sliceMode: VideoSliceMode;
+  /** Beats between triggers. 0.25 = sixteenths, 4 = one bar. */
+  sliceDiv: number;
+  /**
+   * Max frames uploaded to the GPU per second. Each upload is a full-resolution
+   * texture transfer, so this is the layer's main cost knob — same as capture.
+   */
+  fps: number;
+}
+
+/**
  * A user-uploaded GLB model rendered as a 3D overlay, with the MeshRitual
  * engine (per-part allocation / fracture / physics / capture). The model data
  * and the per-part map live only in memory; the rest persists.
@@ -220,6 +265,7 @@ export interface ShaderRitualConfig {
   camera: CameraConfig;
   motion: MotionConfig;
   overlay: LayerConfig;
+  video: VideoConfig;
   postfx: PostFXConfig;
   model: ModelConfig;
   shaders: Record<string, ShaderSetting>;
