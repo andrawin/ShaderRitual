@@ -1791,7 +1791,10 @@ export class ShaderRitualApp extends LitElement {
         <div class="element-desc" style="margin-bottom:8px;">
           The clip is cut into equal slices and the playhead is moved on the
           beat, at the tempo in Camera · Motion. Retrigger stutters the slice
-          you are already in; Jump picks at random; Ladder walks them in order.
+          you are already in. Jump and Ladder both deal from a shuffled bag —
+          every slice plays once per pass, reshuffled on each loop, so the clip
+          is covered evenly without running the same sequence every time. Use
+          NEXT if you want the straight 1-2-3 run instead.
         </div>
 
         <div class="control-row">

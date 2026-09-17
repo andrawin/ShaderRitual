@@ -180,8 +180,12 @@ export interface CaptureConfig {
  * What a beat trigger does to the playhead.
  *   off       -> the clip plays straight through
  *   retrigger -> jumps back to the start of the slice it is in (a stutter)
- *   jump      -> jumps to the start of a randomly chosen slice
- *   ladder    -> steps to the next slice in order, wrapping at the end
+ *   jump      -> draws the next slice from a shuffled bag
+ *   ladder    -> walks that same bag as a run
+ *
+ * Jump and Ladder both draw without replacement: a pass plays every slice
+ * exactly once, and the order is reshuffled on each loop, so the clip is
+ * covered evenly without repeating the same sequence every time round.
  */
 export type VideoSliceMode = 'off' | 'retrigger' | 'jump' | 'ladder';
 

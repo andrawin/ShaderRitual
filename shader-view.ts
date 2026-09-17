@@ -366,6 +366,8 @@ export class ShaderRitualView extends LitElement {
   private videoBeat = 0;        // elapsed beats on the tempo clock
   private lastSliceTick = -1;   // which trigger window we are in
   private sliceIndex = 0;       // the slice currently being played
+  private sliceBag: number[] = []; // shuffled draw order for jump / ladder
+  private sliceBagAt = 0;       // how far through that order we are
 
   private captureSrc!: THREE.WebGLRenderTarget;
   private captureScene!: THREE.Scene;
@@ -1596,6 +1598,8 @@ void main(){
     if (this.videoUniforms) this.videoUniforms.tVid.value = null;
     this.lastSliceTick = -1;
     this.sliceIndex = 0;
+    this.sliceBag = [];
+    this.sliceBagAt = 0;
     this.videoPlayPending = false;
   }
 
@@ -1663,13 +1667,49 @@ void main(){
   }
 
   /**
+   * Draw the next slice from a shuffled bag. A pass plays every slice exactly
+   * once, and the order is reshuffled the moment the bag runs dry — so the clip
+   * keeps covering all of itself without settling into one fixed sequence, and
+   * the next time round it comes out in a different order.
+   *
+   * `avoidRepeat` stops a pass opening on the slice the previous one closed
+   * with: back to back, the same slice twice reads as a trigger that missed
+   * rather than as a new figure. Jump leaves that off — an occasional double is
+   * part of its character; Ladder, which is meant to read as a walk, does not.
+   */
+  private nextBagSlice(n: number, avoidRepeat: boolean): number {
+    if (this.sliceBag.length !== n || this.sliceBagAt >= this.sliceBag.length) {
+      const last = this.sliceBag.length
+        ? this.sliceBag[this.sliceBag.length - 1]
+        : -1;
+      const bag: number[] = [];
+      for (let i = 0; i < n; i++) bag.push(i);
+      for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = bag[i];
+        bag[i] = bag[j];
+        bag[j] = t;
+      }
+      if (avoidRepeat && n > 1 && bag[0] === last) {
+        const t = bag[0];
+        bag[0] = bag[n - 1];
+        bag[n - 1] = t;
+      }
+      this.sliceBag = bag;
+      this.sliceBagAt = 0;
+    }
+    return this.sliceBag[this.sliceBagAt++];
+  }
+
+  /**
    * Move the playhead one slice. Shared by the beat clock and by the hand-fired
    * trigger buttons, so a pad and the automatic mode do exactly the same thing.
    *
    *   retrigger -> back to the start of the slice the playhead is in (stutter)
-   *   jump      -> a slice at random
-   *   next/prev -> step through them in order
-   *   home      -> back to the top of the clip
+   *   jump      -> the next slice out of a shuffled bag
+   *   ladder    -> the same bag, walked as a run and reshuffled every loop
+   *   next/prev -> step through them in strict order (the deterministic run)
+   *   home      -> back to the top of the clip, and a fresh shuffle
    */
   videoTrigger(
     kind: 'retrigger' | 'jump' | 'next' | 'prev' | 'ladder' | 'home',
@@ -1691,10 +1731,15 @@ void main(){
     const here = Math.min(n - 1, Math.floor(v.currentTime / len));
 
     if (kind === 'home') {
+      // Home means start over, so the shuffle starts over with it.
       this.sliceIndex = 0;
+      this.sliceBag = [];
+      this.sliceBagAt = 0;
     } else if (kind === 'jump') {
-      this.sliceIndex = Math.floor(Math.random() * n);
-    } else if (kind === 'next' || kind === 'ladder') {
+      this.sliceIndex = this.nextBagSlice(n, false);
+    } else if (kind === 'ladder') {
+      this.sliceIndex = this.nextBagSlice(n, true);
+    } else if (kind === 'next') {
       this.sliceIndex = (this.sliceIndex + 1) % n;
     } else if (kind === 'prev') {
       this.sliceIndex = (this.sliceIndex - 1 + n) % n;
