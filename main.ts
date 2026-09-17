@@ -1036,6 +1036,7 @@ export class ShaderRitualApp extends LitElement {
       'video.surfaceThreshold': { min: 0, max: 1 },
       'video.surfaceSoftness': { min: 0.01, max: 0.6 },
       'video.warp': { min: 0, max: 0.35 },
+      'video.sliceDrift': { min: 0, max: 1 },
       'model.capture.opacity': { min: 0, max: 1 },
       'model.capture.scale': { min: 0.1, max: 4 },
       'model.fracture.physics.gravity': { min: 0, max: 4 },
@@ -1788,13 +1789,15 @@ export class ShaderRitualApp extends LitElement {
             <option value="4">1 bar</option>
           </select>
         </div>
+        ${this.renderSlider('Drift', 'video.sliceDrift', 0, 1, 0.01)}
         <div class="element-desc" style="margin-bottom:8px;">
           The clip is cut into equal slices and the playhead is moved on the
           beat, at the tempo in Camera · Motion. Retrigger stutters the slice
-          you are already in. Jump and Ladder both deal from a shuffled bag —
-          every slice plays once per pass, reshuffled on each loop, so the clip
-          is covered evenly without running the same sequence every time. Use
-          NEXT if you want the straight 1-2-3 run instead.
+          you are already in. Jump and Ladder deal from a shuffled bag — every
+          slice plays once per pass, reshuffled on each loop. Drift slides the
+          cut points along the clip each pass, so a pass is cut out of new
+          material instead of replaying the same fragments in a new order; at 0
+          the cuts stay fixed. NEXT is the straight 1-2-3 run.
         </div>
 
         <div class="control-row">

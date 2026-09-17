@@ -214,6 +214,7 @@ export function defaultVideo(): VideoConfig {
     speedBand: 'none',
     speedAmount: 0.6,
     slices: 8,
+    sliceDrift: 1,
     sliceMode: 'off',
     sliceDiv: 1,
     fps: 30,

@@ -235,6 +235,13 @@ export interface VideoConfig {
   speedAmount: number;
   /** The clip is cut into this many equal slices for beat triggering. */
   slices: number;
+  /**
+   * How far the cut points slide each pass, as a fraction of a slice. At 0 the
+   * clip is always chopped in the same places, so a pass replays the same
+   * fragments in a new order; above that, every pass is cut out of different
+   * material. Reseeded whenever Jump / Ladder reshuffle.
+   */
+  sliceDrift: number;
   sliceMode: VideoSliceMode;
   /** Beats between triggers. 0.25 = sixteenths, 4 = one bar. */
   sliceDiv: number;

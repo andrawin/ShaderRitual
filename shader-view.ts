@@ -368,6 +368,7 @@ export class ShaderRitualView extends LitElement {
   private sliceIndex = 0;       // the slice currently being played
   private sliceBag: number[] = []; // shuffled draw order for jump / ladder
   private sliceBagAt = 0;       // how far through that order we are
+  private slicePhase = 0;       // 0..1 of a slice: where the cuts fall this pass
 
   private captureSrc!: THREE.WebGLRenderTarget;
   private captureScene!: THREE.Scene;
@@ -1600,6 +1601,7 @@ void main(){
     this.sliceIndex = 0;
     this.sliceBag = [];
     this.sliceBagAt = 0;
+    this.slicePhase = 0;
     this.videoPlayPending = false;
   }
 
@@ -1697,8 +1699,29 @@ void main(){
       }
       this.sliceBag = bag;
       this.sliceBagAt = 0;
+      // Move the cuts too. Shuffling the order alone replays the same handful
+      // of fragments forever — only their sequence changes, which after a loop
+      // or two reads as the same thing again. Sliding the grid means each pass
+      // is cut out of different material.
+      this.slicePhase = Math.random();
     }
     return this.sliceBag[this.sliceBagAt++];
+  }
+
+  /**
+   * Where slice `i` starts, in seconds. The grid is offset by the pass's drift
+   * and wraps at the end of the clip — the material is continuous, so a slice
+   * that runs off the end simply picks up again at the top.
+   */
+  private sliceStart(i: number, n: number, dur: number): number {
+    const len = dur / n;
+    return ((i * len + this.sliceOffset(len)) % dur + dur) % dur;
+  }
+
+  /** How far this pass's cuts have slid, in seconds. */
+  private sliceOffset(len: number): number {
+    const drift = Math.min(1, Math.max(0, this.config.video?.sliceDrift ?? 0));
+    return this.slicePhase * drift * len;
   }
 
   /**
@@ -1728,13 +1751,18 @@ void main(){
 
     const n = Math.max(1, Math.round(cfg.slices || 1));
     const len = dur / n;
-    const here = Math.min(n - 1, Math.floor(v.currentTime / len));
+    // Which slice the playhead is in, measured on the drifted grid rather than
+    // on the clip — otherwise a stutter would cut somewhere the pass never does.
+    const rel = (((v.currentTime - this.sliceOffset(len)) % dur) + dur) % dur;
+    const here = Math.min(n - 1, Math.floor(rel / len));
 
     if (kind === 'home') {
-      // Home means start over, so the shuffle starts over with it.
+      // Home means start over: the top of the clip, on the unshifted grid, with
+      // a fresh shuffle behind it.
       this.sliceIndex = 0;
       this.sliceBag = [];
       this.sliceBagAt = 0;
+      this.slicePhase = 0;
     } else if (kind === 'jump') {
       this.sliceIndex = this.nextBagSlice(n, false);
     } else if (kind === 'ladder') {
@@ -1749,7 +1777,7 @@ void main(){
       this.sliceIndex = here;
     }
 
-    const target = Math.min(dur - 0.05, this.sliceIndex * len);
+    const target = Math.min(dur - 0.05, this.sliceStart(this.sliceIndex, n, dur));
     // fastSeek lands on the nearest keyframe instead of decoding to an exact
     // frame. For slicing that is the right trade — the difference between a
     // tight trigger and a visible hitch on a big file.
