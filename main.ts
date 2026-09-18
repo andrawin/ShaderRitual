@@ -66,6 +66,7 @@ export class ShaderRitualApp extends LitElement {
   );
   @state() midiPulse = false;
   @state() modelName = '';
+  @state() modelInfo = '';
   @state() videoName = '';
   @state() videoInfo = '';
   /** Watchdog for a clip handed to the render window from a detached panel. */
@@ -82,6 +83,7 @@ export class ShaderRitualApp extends LitElement {
     const file = e.target.files?.[0];
     if (!file) return;
     this.modelName = 'Loading…';
+    this.modelInfo = '';
     try {
       const buf = await file.arrayBuffer();
       if (this.isController) {
@@ -89,14 +91,30 @@ export class ShaderRitualApp extends LitElement {
         this.post({ type: 'modelUpload', buffer: buf, name: file.name });
         return;
       }
-      const err = await this.viewEl?.loadModel?.(buf);
+      const view = this.viewEl;
+      if (!view?.loadModel) {
+        // Optional chaining here would resolve undefined and read as success,
+        // leaving the panel showing a filename for a model nothing ever loaded.
+        this.modelName = '⚠ Renderer not ready — try again in a moment';
+        return;
+      }
+      const err = await view.loadModel(buf);
       this.modelName = err ? `⚠ ${err}` : file.name;
-      this.post({ type: 'modelStatus', name: this.modelName });
+      this.modelInfo = err ? '' : this.describeModel();
+      this.post({ type: 'modelStatus', name: this.modelName, info: this.modelInfo });
     } catch (e: any) {
       this.modelName = `⚠ ${e?.message || 'Failed to load'}`;
-      this.post({ type: 'modelStatus', name: this.modelName });
+      this.post({ type: 'modelStatus', name: this.modelName, info: '' });
     }
   };
+
+  /** "12 meshes · 34.2k tris", so a load that found nothing is obvious. */
+  private describeModel(): string {
+    const i = this.viewEl?.modelInfo?.();
+    if (!i) return '';
+    const t = i.tris >= 1000 ? `${(i.tris / 1000).toFixed(1)}k` : String(i.tris);
+    return `${i.meshes} mesh${i.meshes === 1 ? '' : 'es'} · ${t} tris`;
+  }
   /**
    * Open a clip. The file is handed straight to the renderer, which turns it
    * into an object URL — it is never read into an ArrayBuffer, so size is not
@@ -171,14 +189,33 @@ export class ShaderRitualApp extends LitElement {
     this.post({ type: 'videoStatus', name: '', info: '' });
   };
 
+  /**
+   * Put the model back where it can be seen. A saved config carries mode,
+   * opacity, scale and position across sessions, so a model can load correctly
+   * and still be invisible because of how the last one was left — shattered
+   * with fragments hidden, at zero opacity, or pushed out of frame.
+   */
+  private resetModelView = () => {
+    this.updateConfig('model.visible', true);
+    this.updateConfig('model.opacity', 1);
+    this.updateConfig('model.scale', 1);
+    this.updateConfig('model.posX', 0);
+    this.updateConfig('model.posY', 0);
+    this.updateConfig('model.posZ', 0);
+    this.updateConfig('model.quality', 1);
+    this.updateConfig('model.mode', 'none');
+    this.updateConfig('model.fracture.visible', true);
+  };
+
   private clearModel = () => {
     if (this.isController) {
       this.post({ type: 'command', name: 'removeModel' });
     } else {
       this.viewEl?.removeModel?.();
-      this.post({ type: 'modelStatus', name: '' });
+      this.post({ type: 'modelStatus', name: '', info: '' });
     }
     this.modelName = '';
+    this.modelInfo = '';
     this.partInfos = [];
   };
 
@@ -789,22 +826,29 @@ export class ShaderRitualApp extends LitElement {
         // Render window loads a model uploaded from the detached controller.
         if (this.isMain) {
           this.modelName = 'Loading…';
+          this.modelInfo = '';
           (async () => {
             let name = msg.name || 'model';
+            let info = '';
             try {
               const err = await this.viewEl?.loadModel?.(msg.buffer);
               name = err ? `⚠ ${err}` : name;
+              info = err ? '' : this.describeModel();
             } catch (e: any) {
               name = `⚠ ${e?.message || 'Failed to load'}`;
             }
             this.modelName = name;
-            this.post({ type: 'modelStatus', name });
+            this.modelInfo = info;
+            this.post({ type: 'modelStatus', name, info });
           })();
         }
         break;
       case 'modelStatus':
         // Controller mirrors the render window's load result.
-        if (!this.isMain) this.modelName = msg.name || '';
+        if (!this.isMain) {
+          this.modelName = msg.name || '';
+          this.modelInfo = msg.info || '';
+        }
         break;
       case 'videoUpload':
         // Render window opens a clip picked in the detached panel. The File
@@ -949,7 +993,8 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'removeModel') {
       this.viewEl?.removeModel?.();
       this.modelName = '';
-      this.post({ type: 'modelStatus', name: '' });
+      this.modelInfo = '';
+      this.post({ type: 'modelStatus', name: '', info: '' });
     }
   }
 
@@ -1493,9 +1538,19 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="element-desc" style="margin-bottom:8px;">
           ${this.modelName || 'No models loaded'}
+          ${this.modelInfo ? html`· ${this.modelInfo}` : ''}
           ${this.modelName
-            ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.clearModel}>remove</a>`
+            ? html`· <a style="color:#a855f7;cursor:pointer;" @click=${this.resetModelView}>reset view</a>
+                   · <a style="color:#a855f7;cursor:pointer;" @click=${this.clearModel}>remove</a>`
             : ''}
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          The model is centred and scaled to fit the frame, so it appears whatever
+          size it was built at. If the name shows but nothing does, check the mesh
+          count above — a file with no meshes says so — then hit reset view, which
+          puts visibility, opacity, scale, position and mode back where a model can
+          be seen. Draco and Meshopt compression are handled offline; KTX2 textures
+          are not.
         </div>
         ${this.renderToggle('Visible', 'model.visible')}
         ${this.renderSlider('Scale', 'model.scale', 0.1, 5, 0.05)}

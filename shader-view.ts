@@ -320,6 +320,8 @@ export class ShaderRitualView extends LitElement {
   private modelRootObj: THREE.Object3D | null = null; // the loaded gltf scene (centred)
   private modelMats: THREE.Material[] = [];
   private modelBaseScale = 1;
+  private modelMeshCount = 0;
+  private modelTriCount = 0;
   private modelPhase = 0; // elapsed beats, drives the tempo-locked motion
   private modelRadius = 1; // model-local bounding radius (physics + framing)
 
@@ -740,8 +742,11 @@ void main(){
     this.modelScene.add(amb, key, rim);
 
     // Support Draco- and Meshopt-compressed GLBs (very common in exports).
+    // The decoder ships with the app rather than coming off a CDN: a laptop at
+    // a venue is routinely offline, and a missing decoder means a Draco model
+    // simply never appears.
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.176.0/examples/jsm/libs/draco/');
+    draco.setDecoderPath(new URL('draco/', document.baseURI).href);
     this.gltfLoader.setDRACOLoader(draco);
     this.gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 
@@ -812,6 +817,37 @@ void main(){
             try {
               this.disposeModel();
               const root = gltf.scene;
+
+              // Count what actually arrived, and clear the two ways a model
+              // loads fine yet never draws.
+              let meshes = 0;
+              let tris = 0;
+              root.traverse((o: any) => {
+                if (!o.isMesh || !o.geometry) return;
+                meshes++;
+                const g = o.geometry;
+                const n = g.index ? g.index.count : g.attributes?.position?.count || 0;
+                tris += Math.floor(n / 3);
+                // A bounding volume that is wrong in the file is enough for
+                // three to cull the mesh out of frame. Recompute it — and for a
+                // single centred overlay there is nothing to gain by culling at
+                // all, so stop doing it.
+                g.computeBoundingSphere?.();
+                g.computeBoundingBox?.();
+                o.frustumCulled = false;
+                // Inverted winding is common in exports, and back-face culling
+                // then hides the model completely. One overlay model can afford
+                // to be double-sided.
+                const mats = Array.isArray(o.material) ? o.material : [o.material];
+                for (const m of mats) if (m) m.side = THREE.DoubleSide;
+              });
+              if (!meshes) {
+                resolve('No meshes in this file — it may hold only cameras, lights or empty nodes');
+                return;
+              }
+              this.modelMeshCount = meshes;
+              this.modelTriCount = tris;
+
               // Centre at origin and record a normalising base scale (fit ~1.6 units).
               const box = new THREE.Box3().setFromObject(root);
               const center = box.getCenter(new THREE.Vector3());
@@ -862,6 +898,12 @@ void main(){
 
   removeModel() {
     this.disposeModel();
+  }
+
+  /** What the loaded model actually contains, for the UI. */
+  modelInfo(): { meshes: number; tris: number } | null {
+    if (!this.modelHolder) return null;
+    return { meshes: this.modelMeshCount, tris: this.modelTriCount };
   }
 
   private disposeModel() {
