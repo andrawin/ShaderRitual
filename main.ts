@@ -68,6 +68,8 @@ export class ShaderRitualApp extends LitElement {
   @state() modelName = '';
   @state() videoName = '';
   @state() videoInfo = '';
+  /** Watchdog for a clip handed to the render window from a detached panel. */
+  private videoRelayTimer: any = null;
 
   // MeshRitual engine: parts surfaced from the loaded model + screen capture.
   @state() partInfos: PartInfo[] = [];
@@ -100,15 +102,35 @@ export class ShaderRitualApp extends LitElement {
    * into an object URL — it is never read into an ArrayBuffer, so size is not
    * a factor and a multi-gigabyte clip loads as fast as a small one.
    *
-   * An object URL is only valid in the document that created it, so unlike a
-   * GLB this cannot be relayed to the render window: a detached panel has no
-   * way to hand its file over, and says so rather than appearing to work.
+   * An object URL is only valid in the document that created it, so a detached
+   * panel cannot make one and send it. It can send the File itself: a Blob is
+   * structured-cloneable and the browser passes it by reference rather than by
+   * value, so relaying a 4 GB clip over the channel costs nothing and the
+   * render window makes its own URL. That only works between windows of the
+   * same browser — a controller attached over the network relay has no such
+   * channel, and is told so rather than appearing to work.
    */
   private onVideoFile = async (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (this.isController) {
-      this.videoName = '⚠ Open the clip in the main window — a file cannot be sent over the relay';
+      if (!this.sync) {
+        this.videoName = '⚠ Open the clip in the render window — a remote panel cannot send a file';
+        return;
+      }
+      this.videoName = 'Loading…';
+      this.videoInfo = '';
+      this.post({ type: 'videoUpload', file, name: file.name });
+      // BroadcastChannel exists in every browser, but it only reaches windows
+      // on this machine — a controller on a phone has one that goes nowhere.
+      // Nothing comes back from that, so treat silence as a refusal rather
+      // than leaving the panel on "Loading…" for good.
+      clearTimeout(this.videoRelayTimer);
+      this.videoRelayTimer = setTimeout(() => {
+        if (this.videoName === 'Loading…') {
+          this.videoName = '⚠ No answer from the render window — open the clip there instead';
+        }
+      }, 6000);
       return;
     }
     this.videoName = 'Loading…';
@@ -708,6 +730,11 @@ export class ShaderRitualApp extends LitElement {
     this.sync?.postMessage(m);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
+        if (m.type === 'videoUpload') {
+          // A File has no JSON form, and the clip is deliberately never read
+          // into memory — so this one stays on the same-browser channel.
+          return;
+        }
         if (m.type === 'modelUpload' && m.buffer instanceof ArrayBuffer) {
           this.ws.send(JSON.stringify({ ...m, buffer: bufToB64(m.buffer), _b64: true }));
         } else {
@@ -779,10 +806,45 @@ export class ShaderRitualApp extends LitElement {
         // Controller mirrors the render window's load result.
         if (!this.isMain) this.modelName = msg.name || '';
         break;
+      case 'videoUpload':
+        // Render window opens a clip picked in the detached panel. The File
+        // arrived by reference over the channel, so the bytes never moved and
+        // the object URL is made here, in the document that will play it.
+        if (this.isMain && msg.file) {
+          this.videoName = 'Loading…';
+          this.videoInfo = '';
+          // Answer at once so the panel knows the file arrived; a large clip
+          // can take a while to report its duration.
+          this.post({ type: 'videoStatus', name: 'Loading…', info: '' });
+          (async () => {
+            let name = msg.name || 'clip';
+            let info = '';
+            try {
+              const err = await this.viewEl?.setVideoFile?.(msg.file);
+              if (err) {
+                name = `⚠ ${err}`;
+              } else {
+                const i = this.viewEl?.videoInfo?.();
+                if (i) {
+                  const mm = Math.floor(i.duration / 60);
+                  const ss = Math.floor(i.duration % 60).toString().padStart(2, '0');
+                  info = `${i.width}×${i.height} · ${mm}:${ss}`;
+                }
+              }
+            } catch (e: any) {
+              name = `⚠ ${e?.message || 'Failed to load'}`;
+            }
+            this.videoName = name;
+            this.videoInfo = info;
+            this.post({ type: 'videoStatus', name, info });
+          })();
+        }
+        break;
       case 'videoStatus':
         // A clip lives in the window that opened it, so a detached panel has
         // to be told what the render window actually has loaded.
         if (!this.isMain) {
+          clearTimeout(this.videoRelayTimer);
           this.videoName = msg.name || '';
           this.videoInfo = msg.info || '';
         }
@@ -1680,9 +1742,10 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="element-desc" style="margin-bottom:8px;">
           The file is streamed off disk rather than read into memory, so size is
-          not a limit — a 4 GB clip opens as fast as a small one. It has to be
-          opened in this window though: a detached panel cannot hand a file
-          across. H.264 MP4 seeks best, which is what beat slicing needs.
+          not a limit — a 4 GB clip opens as fast as a small one. A detached
+          panel can open one too: the file is passed to the render window by
+          reference, so nothing is copied. H.264 MP4 seeks best, which is what
+          beat slicing needs.
         </div>
 
         ${this.renderToggle('Visible', 'video.visible')}

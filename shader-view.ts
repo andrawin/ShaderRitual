@@ -661,7 +661,13 @@ uniform sampler2D tModel;
 void main(){
   vec4 c = texture2D(tModel, vUv);
   if(c.a <= 0.001) discard;
-  gl_FragColor = c;
+  // Lit materials are encoded to sRGB on the way out, but only when the
+  // renderer is drawing to the screen. Into a plain render target they land
+  // linear, and this pass is a raw shader that three converts nothing for — so
+  // without this the whole 3D layer came out dark at any quality below 1.
+  vec3 lo = c.rgb * 12.92;
+  vec3 hi = pow(c.rgb, vec3(0.41666)) * 1.055 - 0.055;
+  gl_FragColor = vec4(mix(hi, lo, step(c.rgb, vec3(0.0031308))), c.a);
 }`,
           transparent: true,
           depthTest: false,
