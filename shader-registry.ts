@@ -55,6 +55,7 @@ import { ember } from './shaders/ember';
 import { bloom } from './shaders/bloom';
 import { fallout } from './shaders/fallout';
 import { wrath } from './shaders/wrath';
+import { ocean } from './shaders/ocean';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -88,6 +89,7 @@ export const SHADERS: ShaderDef[] = [
   beacon,
   verdigris,
   maelstrom,
+  ocean,
   // The Odyssey suite — six scenes of one story, in order.
   awakening,
   revelry,
