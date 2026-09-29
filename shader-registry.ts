@@ -9,9 +9,11 @@ import type {
   PostFXConfig,
   ShaderDef,
   VideoConfig,
+  TextConfig,
   ShaderRitualConfig,
   ShaderSetting,
 } from './types';
+import { TEXT_MAX } from './types';
 import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
 import { phantom } from './shaders/phantom';
@@ -223,6 +225,32 @@ export function defaultVideo(): VideoConfig {
   };
 }
 
+/**
+ * Fresh text-layer defaults. Nothing is typed yet, so the layer draws nothing
+ * whatever its settings say; one bar per run is a sensible tempo to land on.
+ */
+export function defaultText(): TextConfig {
+  return {
+    visible: true,
+    content: '',
+    effect: 'type',
+    opacity: 1,
+    blend: 'normal',
+    size: 0.07,
+    color: '#ffffff',
+    align: 'center',
+    posX: 0,
+    posY: 0,
+    lineHeight: 1.35,
+    wrap: 0.8,
+    beats: 8,
+    loop: true,
+    hold: false,
+    band: 'none',
+    amount: 0.5,
+  };
+}
+
 /** Fresh global post-FX defaults (all off). */
 export function defaultPostFX(): PostFXConfig {
   return {
@@ -233,6 +261,7 @@ export function defaultPostFX(): PostFXConfig {
     scanlines: { on: false, amount: 0.5, band: 'none' },
     glitch: { on: false, amount: 0.5, band: 'none' },
     mosaic: { on: false, amount: 0.5, band: 'none' },
+    datamosh: { on: false, amount: 0.5, band: 'none' },
   };
 }
 
@@ -285,6 +314,7 @@ export function defaultConfig(): ShaderRitualConfig {
     motion: defaultMotion(),
     overlay: { enabled: false, shader: 'pulsar', blend: 'add', opacity: 1 },
     video: defaultVideo(),
+    text: defaultText(),
     postfx: defaultPostFX(),
     model: defaultModel(),
     shaders,
@@ -308,11 +338,15 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     motion: { ...base.motion, ...(saved.motion || {}) },
     overlay: { ...base.overlay, ...(saved.overlay || {}) },
     video: { ...base.video, ...(saved.video || {}) },
+    text: { ...base.text, ...(saved.text || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },
   };
   merged.renderScale = Math.min(1, Math.max(0.25, Number(merged.renderScale) || 1));
+  // A saved config is whatever was in storage, so the cap is enforced on the
+  // way in as well as in the editor.
+  merged.text.content = String(merged.text.content ?? '').slice(0, TEXT_MAX);
 
   for (const def of SHADERS) {
     const savedShader = saved.shaders?.[def.id];

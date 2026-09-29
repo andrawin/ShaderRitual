@@ -93,7 +93,8 @@ export type FxName =
   | 'rgbShift'
   | 'scanlines'
   | 'glitch'
-  | 'mosaic';
+  | 'mosaic'
+  | 'datamosh';
 
 export type PostFXConfig = Record<FxName, FxSetting>;
 
@@ -284,6 +285,60 @@ export interface ModelConfig {
   capture: CaptureConfig;
 }
 
+/** Longest paragraph the text layer will take. */
+export const TEXT_MAX = 800;
+
+/**
+ * How a paragraph arrives on screen. All six run off one progress value, so
+ * they can be beat-locked or driven by hand the same way.
+ *   type   -> typed out a character at a time, with a caret
+ *   word   -> a word at a time
+ *   fade   -> the whole block fades up, holds, and fades out
+ *   wipe   -> revealed by a soft edge travelling across it
+ *   scroll -> a credits roll, bottom to top
+ *   glitch -> lines tear and split into colour, then settle
+ */
+export type TextEffect = 'type' | 'word' | 'fade' | 'wipe' | 'scroll' | 'glitch';
+
+export type TextAlign = 'left' | 'center' | 'right';
+
+/**
+ * A paragraph composited over the shader, in front of the video clip and
+ * *before* the post filters — so datamosh, glitch and the rest chew on the
+ * text as well as the image.
+ *
+ * The glyphs are laid out once into an offscreen canvas and uploaded only when
+ * the words or their layout change. Everything that moves is a uniform, so a
+ * paragraph typing itself out costs no more per frame than one standing still.
+ */
+export interface TextConfig {
+  visible: boolean;
+  /** The paragraph. Clamped to TEXT_MAX characters. */
+  content: string;
+  effect: TextEffect;
+  opacity: number;
+  blend: CaptureBlend;
+  /** Cap height as a fraction of frame height. */
+  size: number;
+  color: string;
+  align: TextAlign;
+  /** Centre of the block, -1..1 of the frame. */
+  posX: number;
+  posY: number;
+  lineHeight: number;
+  /** Width the paragraph wraps at, as a fraction of the frame. */
+  wrap: number;
+  /** How long one run takes, in beats, at the tempo in Camera · Motion. */
+  beats: number;
+  /** Run again from the start when it finishes. */
+  loop: boolean;
+  /** Hold at the end instead of clearing (ignored when looping). */
+  hold: boolean;
+  /** Band that pushes the effect along, and how hard. */
+  band: Band;
+  amount: number;
+}
+
 /** Top-level persisted configuration. */
 export interface ShaderRitualConfig {
   activeShader: string;
@@ -297,6 +352,7 @@ export interface ShaderRitualConfig {
   motion: MotionConfig;
   overlay: LayerConfig;
   video: VideoConfig;
+  text: TextConfig;
   postfx: PostFXConfig;
   model: ModelConfig;
   shaders: Record<string, ShaderSetting>;

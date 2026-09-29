@@ -26,6 +26,11 @@ const CAPTURE_BLEND_INDEX: Record<string, number> = {
   overlay: 4, difference: 5, lighten: 6, darken: 7,
 };
 
+/** Must match the uEffect chain in the text pass. */
+const TEXT_EFFECT_INDEX: Record<string, number> = {
+  type: 0, word: 1, fade: 2, wipe: 3, scroll: 4, glitch: 5,
+};
+
 /* Per-channel compositing operators, layer (b) over what is under it (a). */
 const blendGLSL = `
 vec3 blendLayer(vec3 a, vec3 b, int m){
@@ -78,6 +83,7 @@ uniform float uRgb;
 uniform float uScan;
 uniform float uGlitch;
 uniform float uMosaic;
+uniform float uMosh;
 
 /* ---------------------------------------------------------------
  * Glitch — block swap / static / colour banding, adapted from a
@@ -270,6 +276,51 @@ void main(){
     col = (spawn || cold) ? col : mix(col, prev, m);
   }
 
+  /* Datamosh: what a video file looks like when the I-frames are cut out and
+   * the P-frames are left to apply their motion vectors to whatever happens to
+   * be on screen. Blocks drag the previous frame along their own vector and
+   * never get corrected, so the picture bleeds and stretches until the next
+   * "keyframe" resets it. Needs the feedback texture, like Mosaic. */
+  if(uMosh > 0.001){
+    float d = clamp(uMosh, 0., 1.);
+    // Codec-sized macroblocks. Bigger blocks at low amounts read as a soft
+    // drift; small ones at high amounts as the picture coming apart.
+    float bs = mix(56.0, 14.0, d);
+    vec2 blocks = max(iResolution.xy / bs, vec2(2.0));
+    vec2 bid = floor(vUv * blocks);
+
+    // The group of pictures: every so often a keyframe lands and the smear
+    // starts over. Without this it washes out to a single colour within
+    // seconds, which is a mush rather than a mosh.
+    float gop = floor(iTime * mix(0.35, 1.8, d));
+    float keyed = hash12(bid * 0.37 + gop * 5.13);
+
+    float ang = 6.2831853 * hash12(bid * 1.7 + gop * 3.1);
+    float len = (0.35 + hash12(bid + gop * 13.7)) * d * 0.035;
+    vec2 mv = vec2(cos(ang), sin(ang)) * len;
+
+    vec3 prev = texture2D(tPrev, vUv + mv).rgb;
+    // Chroma lags luma — the tell that says codec damage rather than a trail.
+    float cl = d * 0.02;
+    vec3 bleed = vec3(texture2D(tPrev, vUv + mv * 1.0 + vec2(cl, 0.)).r,
+                      prev.g,
+                      texture2D(tPrev, vUv + mv * 1.0 - vec2(cl, 0.)).b);
+    prev = mix(prev, bleed, 0.75);
+
+    // Blocks below the threshold refuse to take the new frame at all: that is
+    // a P-frame with no I-frame behind it. The rest re-key from the live image.
+    //
+    // The ceilings matter more than they look. Push persistence to ~0.99 and
+    // the picture is technically still moshing but has bled almost all its
+    // light away within a second — each frame is mostly a resample of the last,
+    // and repeated resampling diffuses towards the scene mean, which on these
+    // shaders is nearly black. Holding it at 0.93 keeps enough of the live
+    // image coming through to stay projectable at full amount.
+    float keep = step(keyed, mix(0.35, 0.88, d)) * mix(0.5, 0.93, d);
+    bool cold2 = dot(prev, prev) < 1e-5;
+    col = cold2 ? col : mix(col, prev, keep);
+  }
+
   gl_FragColor = vec4(clamp(col, 0., 1.), 1.);
 }
 `;
@@ -358,6 +409,17 @@ export class ShaderRitualView extends LitElement {
   // to it, and driven by its own beat clock for slicing.
   private videoSrc!: THREE.WebGLRenderTarget;
   private videoScene!: THREE.Scene;
+
+  // Text layer. The glyphs live in a 2D canvas uploaded only when the words or
+  // their layout change; the effects are all uniforms over that one image.
+  private textSrc!: THREE.WebGLRenderTarget;
+  private textScene!: THREE.Scene;
+  private textUniforms!: Record<string, { value: any }>;
+  private textCanvas: HTMLCanvasElement | null = null;
+  private textCtx: CanvasRenderingContext2D | null = null;
+  private textTexture: THREE.CanvasTexture | null = null;
+  private textSig = '';
+  private textBeat = 0;
   private videoUniforms!: Record<string, { value: any }>;
   private videoTexture: THREE.Texture | null = null;
   private videoEl: HTMLVideoElement | null = null;
@@ -556,6 +618,108 @@ void main(){
     // Video clip: the shader image goes into videoSrc and this pass blends the
     // clip over it. It runs *before* post-FX — that is the whole point, and the
     // reason it is a separate pass from capture rather than sharing one.
+    // Text: sits between the clip and the post filters, so the filters chew on
+    // the words as well as the picture. Everything the effects do is a uniform
+    // over one uploaded image — see redrawText() for what the channels hold.
+    this.textSrc = new THREE.WebGLRenderTarget(1, 1, opts);
+    this.textUniforms = {
+      tScene: { value: this.textSrc.texture },
+      tText: { value: null },
+      uOpacity: { value: 1 },
+      uBlend: { value: 0 },
+      uColor: { value: new THREE.Color(1, 1, 1) },
+      uProg: { value: 0 },
+      uEffect: { value: 0 },
+      uHold: { value: 0 },
+      uTime: { value: 0 },
+      uOffset: { value: new THREE.Vector2(0, 0) },
+    };
+    this.textScene = new THREE.Scene();
+    this.textScene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.RawShaderMaterial({
+          uniforms: this.textUniforms,
+          vertexShader: commonVertex,
+          fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tScene;
+uniform sampler2D tText;
+uniform float uOpacity;
+uniform vec3 uColor;
+uniform float uProg;
+uniform float uEffect;
+uniform float uHold;
+uniform float uTime;
+uniform vec2 uOffset;
+uniform int uBlend;
+${blendGLSL}
+
+float rndT(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+
+void main(){
+  vec3 base = texture2D(tScene, vUv).rgb;
+  float prog = clamp(uProg, 0.0, 1.0);
+
+  vec2 uv = vUv - uOffset;
+  float alpha = 1.0;
+  float severity = 0.0;
+
+  // Scroll moves the sampling window rather than the glyphs, so the layout on
+  // screen is still exactly the one that was uploaded.
+  if(uEffect > 3.5 && uEffect < 4.5) uv.y -= prog * 2.0 - 1.0;
+
+  // Glitch tears whole lines sideways, and settles as the run completes.
+  if(uEffect > 4.5){
+    severity = 1.0 - smoothstep(0.5, 1.0, prog);
+    float ln = floor(uv.y * 28.0);
+    float j = rndT(vec2(ln, floor(uTime * 12.0)));
+    uv.x += (j - 0.5) * 0.22 * severity * step(0.45, j + severity * 0.4);
+  }
+
+  float inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+  vec4 t = texture2D(tText, uv);
+  // b is glyph coverage; r is the reveal ramp, flat per character or per word,
+  // recovered by dividing out the coverage the antialiasing multiplied in.
+  float cov = t.b;
+  float order = t.r / max(t.b, 0.004);
+  vec3 cov3 = vec3(cov);
+  vec3 tint = uColor;
+
+  if(uEffect < 1.5){
+    // type / word — same ramp, baked per character or per word on the canvas.
+    alpha = 1.0 - smoothstep(prog, prog + 0.008, order);
+    // The character at the cursor runs hot. That is what a caret is for, and it
+    // costs nothing next to drawing one.
+    tint = uColor * (1.0 + smoothstep(prog - 0.025, prog, order) * 1.9);
+  } else if(uEffect < 2.5){
+    alpha = smoothstep(0.0, 0.22, prog);
+  } else if(uEffect < 3.5){
+    alpha = smoothstep(uv.x - 0.07, uv.x + 0.07, prog * 1.15);
+  } else if(uEffect < 4.5){
+    alpha = 1.0;
+  } else {
+    // Channels split apart while it is torn, and come back together.
+    float sp = 0.012 * severity;
+    cov3 = vec3(texture2D(tText, uv + vec2(sp, 0.0)).b,
+                cov,
+                texture2D(tText, uv - vec2(sp, 0.0)).b);
+    alpha = 1.0 - step(0.93, rndT(vec2(floor(uv.y * 28.0), floor(uTime * 9.0) + 3.7))) * severity;
+  }
+
+  // Unless it is asked to hold, a run clears at the end — otherwise a looping
+  // paragraph snaps from full to empty on the restart.
+  if(uHold < 0.5) alpha *= 1.0 - smoothstep(0.9, 1.0, prog);
+
+  vec3 a3 = cov3 * (alpha * uOpacity * inside);
+  vec3 mixed = clamp(blendLayer(base, tint, uBlend), 0.0, 1.0);
+  gl_FragColor = vec4(mix(base, mixed, clamp(a3, 0.0, 1.0)), 1.0);
+}`,
+        }),
+      ),
+    );
+
     this.videoSrc = new THREE.WebGLRenderTarget(1, 1, opts);
     this.videoUniforms = {
       tScene: { value: this.videoSrc.texture },
@@ -715,6 +879,7 @@ void main(){
       uScan: { value: 0 },
       uGlitch: { value: 0 },
       uMosaic: { value: 0 },
+      uMosh: { value: 0 },
     };
     this.postScene = new THREE.Scene();
     this.postScene.add(
@@ -789,6 +954,7 @@ void main(){
     this.overlayTarget.setSize(pw, ph);
     this.captureSrc.setSize(pw, ph);
     this.videoSrc.setSize(pw, ph);
+    this.textSrc.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
     this.feedRead.setSize(pw, ph);
     this.feedWrite.setSize(pw, ph);
@@ -1059,7 +1225,8 @@ void main(){
     const sc = this.fxAmount('scanlines');
     const gl = this.fxAmount('glitch');
     const mo = this.fxAmount('mosaic');
-    const anyPost = px + ed + po + rg + sc + gl + mo > 0.001;
+    const dm = this.fxAmount('datamosh');
+    const anyPost = px + ed + po + rg + sc + gl + mo + dm > 0.001;
     const needComposite = ov.enabled;
 
     const baseDef = getShader(this.config.activeShader);
@@ -1077,9 +1244,15 @@ void main(){
     // The clip sits between the shader and post-FX, so post applies to it.
     // afterVideo is where the clip pass writes; beforeVideo is where the
     // shader has to land so the clip pass has something to read.
+    // The text layer sits between the clip and post-FX for the same reason, so
+    // the chain is: shader -> clip -> text -> post -> capture -> model, and
+    // each stage lands wherever the next one is going to read from.
     const vcfg = this.config.video;
+    const tcfg = this.config.text;
     const vidOn = !!this.videoTexture && !!vcfg?.visible && vcfg.opacity > 0;
-    const afterVideo = anyPost ? this.sceneTarget : outRT;
+    const txtOn = !!tcfg?.visible && tcfg.opacity > 0 && !!tcfg.content.trim();
+    const afterText = anyPost ? this.sceneTarget : outRT;
+    const afterVideo = txtOn ? this.textSrc : afterText;
     const beforeVideo = vidOn ? this.videoSrc : afterVideo;
     if (this.videoEl) this.driveVideo(dt, this.lastBands);
 
@@ -1112,6 +1285,14 @@ void main(){
       this.renderer.render(this.videoScene, this.camera);
     }
 
+    // Words over that, still before post-FX.
+    if (txtOn) {
+      const size = this.renderer.getSize(new THREE.Vector2());
+      this.applyText(dt, this.lastBands, size.x, size.y);
+      this.renderer.setRenderTarget(afterText);
+      this.renderer.render(this.textScene, this.camera);
+    }
+
     // Global post-FX -> screen (only when a filter is active).
     if (anyPost) {
       this.postUniforms.uPixelate.value = px;
@@ -1121,10 +1302,12 @@ void main(){
       this.postUniforms.uScan.value = sc;
       this.postUniforms.uGlitch.value = gl;
       this.postUniforms.uMosaic.value = mo;
+      this.postUniforms.uMosh.value = dm;
       this.postUniforms.iTime.value = time;
 
-      if (mo > 0.001) {
-        // Mosaic needs the previous post output: render into the write target,
+      if (mo > 0.001 || dm > 0.001) {
+        // Mosaic and datamosh need the previous post output: render into the
+        // write target,
         // copy that to the screen, then swap so it becomes next frame's source.
         this.postUniforms.tPrev.value = this.feedRead.texture;
         this.renderer.setRenderTarget(this.feedWrite);
@@ -1832,6 +2015,160 @@ void main(){
     const anyV = v as any;
     if (typeof anyV.fastSeek === 'function') anyV.fastSeek(target);
     else v.currentTime = target;
+  }
+
+  /** Restart the paragraph from the top. Shared by the button and MIDI. */
+  textTrigger() {
+    this.textBeat = 0;
+  }
+
+  /**
+   * Lay the paragraph out into the offscreen canvas.
+   *
+   * The canvas carries three things at once, which is what lets every effect
+   * run as a uniform afterwards:
+   *   b -> glyph coverage, the antialiased mask
+   *   r -> the reveal ramp, flat across a character (or a whole word, in word
+   *        mode), so the shader can ask "has this glyph's turn come yet"
+   *   g -> the same ramp per line, for effects that want to move line by line
+   *
+   * The background is opaque black rather than transparent, which is the trick
+   * that makes the ramp readable: an antialiased edge blends r and b toward
+   * zero by the same coverage factor, so r/b gives the flat value back exactly.
+   * With a transparent background the premultiplication would have to be
+   * guessed at.
+   */
+  private redrawText(w: number, h: number) {
+    const cfg = this.config.text;
+    if (!this.textCanvas) {
+      this.textCanvas = document.createElement('canvas');
+      this.textCtx = this.textCanvas.getContext('2d');
+    }
+    const ctx = this.textCtx;
+    if (!ctx) return;
+    if (this.textCanvas.width !== w || this.textCanvas.height !== h) {
+      this.textCanvas.width = w;
+      this.textCanvas.height = h;
+      this.textTexture?.dispose();
+      this.textTexture = null;
+    }
+
+    const px = Math.max(6, cfg.size * h);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    ctx.font = `600 ${px}px "Helvetica Neue", Arial, "Segoe UI", sans-serif`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+
+    // Wrap on words, honouring any newlines the user typed.
+    const maxW = Math.max(px * 2, cfg.wrap * w);
+    const lines: string[] = [];
+    for (const para of cfg.content.split('\n')) {
+      const words = para.split(' ');
+      let line = '';
+      for (const word of words) {
+        const next = line ? line + ' ' + word : word;
+        if (line && ctx.measureText(next).width > maxW) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = next;
+        }
+      }
+      lines.push(line);
+    }
+
+    const lh = px * Math.max(0.8, cfg.lineHeight);
+    const blockH = lines.length * lh;
+    // The block is centred; position is applied as a uniform offset so moving
+    // it does not cost an upload.
+    let y = h * 0.5 - blockH * 0.5 + px * 0.8;
+
+    // Reveal order is counted over the whole paragraph, so the pace is even.
+    const totalChars = Math.max(1, cfg.content.length);
+    let wordCount = 0;
+    for (const ch of cfg.content) if (ch === ' ' || ch === '\n') wordCount++;
+    wordCount = Math.max(1, wordCount + 1);
+    const byWord = cfg.effect === 'word';
+
+    let charSeen = 0;
+    let wordSeen = 0;
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const lineW = ctx.measureText(line).width;
+      let x = (w - lineW) * 0.5;
+      if (cfg.align === 'left') x = (w - maxW) * 0.5;
+      else if (cfg.align === 'right') x = (w + maxW) * 0.5 - lineW;
+      const lineOrder = lines.length > 1 ? li / (lines.length - 1) : 0;
+
+      for (let ci = 0; ci < line.length; ci++) {
+        const ch = line[ci];
+        const order = byWord
+          ? wordSeen / Math.max(1, wordCount - 1)
+          : charSeen / Math.max(1, totalChars - 1);
+        if (ch !== ' ') {
+          const r = Math.round(Math.min(1, order) * 255);
+          const g = Math.round(lineOrder * 255);
+          ctx.fillStyle = `rgb(${r}, ${g}, 255)`;
+          ctx.fillText(ch, x, y);
+        }
+        x += ctx.measureText(ch).width;
+        charSeen++;
+        if (ch === ' ') wordSeen++;
+      }
+      // The wrap consumed a space, and the newline counts as a word break.
+      charSeen++;
+      wordSeen++;
+      y += lh;
+    }
+
+    if (!this.textTexture) {
+      this.textTexture = new THREE.CanvasTexture(this.textCanvas);
+      this.textTexture.minFilter = THREE.LinearFilter;
+      this.textTexture.magFilter = THREE.LinearFilter;
+      this.textTexture.generateMipmaps = false;
+      this.textTexture.wrapS = THREE.ClampToEdgeWrapping;
+      this.textTexture.wrapT = THREE.ClampToEdgeWrapping;
+    }
+    this.textTexture.needsUpdate = true;
+    this.textUniforms.tText.value = this.textTexture;
+  }
+
+  /**
+   * Advance the run and feed the text pass. The paragraph is re-laid-out only
+   * when the words or their layout change — not when it moves, recolours, or
+   * types itself out.
+   */
+  private applyText(dt: number, bands: Bands, w: number, h: number) {
+    const cfg = this.config.text;
+    const cw = Math.min(1920, Math.max(256, Math.round(w)));
+    const ch = Math.max(144, Math.round(cw * (h / Math.max(1, w))));
+    const sig = [cfg.content, cfg.effect, cfg.size, cfg.align, cfg.lineHeight, cfg.wrap, cw, ch]
+      .join('|');
+    if (sig !== this.textSig) {
+      this.redrawText(cw, ch);
+      this.textSig = sig;
+    }
+
+    // Beat-locked, so a paragraph lands with the music rather than drifting.
+    const bpm = this.config.camera?.bpm > 0 ? this.config.camera.bpm : 120;
+    const band = cfg.band !== 'none' ? (bands as any)[cfg.band] || 0 : 0;
+    this.textBeat += dt * (bpm / 60) * (1 + band * (cfg.amount || 0));
+    const beats = Math.max(0.25, cfg.beats || 8);
+    let prog = this.textBeat / beats;
+    if (cfg.loop) prog -= Math.floor(prog);
+    else prog = Math.min(1, prog);
+
+    const c = new THREE.Color(cfg.color || '#ffffff');
+    this.textUniforms.uColor.value.copy(c);
+    this.textUniforms.uOpacity.value = cfg.opacity;
+    this.textUniforms.uBlend.value = CAPTURE_BLEND_INDEX[cfg.blend] ?? 0;
+    this.textUniforms.uEffect.value = TEXT_EFFECT_INDEX[cfg.effect] ?? 0;
+    this.textUniforms.uHold.value = cfg.hold && !cfg.loop ? 1 : 0;
+    this.textUniforms.uProg.value = prog;
+    this.textUniforms.uTime.value = performance.now() * 0.001;
+    (this.textUniforms.uOffset.value as THREE.Vector2).set(cfg.posX * 0.5, cfg.posY * 0.5);
   }
 
   /** Feed the video pass its framing, opacity and blend for this frame. */

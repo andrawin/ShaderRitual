@@ -9,6 +9,7 @@ import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
 import type { Band, CameraMode, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+import { TEXT_MAX } from './types';
 
 function defaultPart(): PartSetting {
   return { band: 'none', amount: 1.0, target: 'scale', visible: true };
@@ -171,6 +172,12 @@ export class ShaderRitualApp extends LitElement {
     }
     this.post({ type: 'videoStatus', name: this.videoName, info: this.videoInfo });
   };
+
+  /** Restart the paragraph from the top, here or in the render window. */
+  private fireText() {
+    if (this.isController) this.post({ type: 'command', name: 'textFire' });
+    else this.viewEl?.textTrigger?.();
+  }
 
   /** Fire one slice trigger now, whatever the auto mode is doing. */
   private fireVideo(kind: string) {
@@ -984,6 +991,7 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
     else if (name.startsWith('vid:')) this.viewEl?.videoTrigger?.(name.slice(4));
+    else if (name === 'textFire') this.viewEl?.textTrigger?.();
     else if (name === 'removeVideo') {
       this.viewEl?.clearVideo?.();
       this.videoName = '';
@@ -1144,6 +1152,14 @@ export class ShaderRitualApp extends LitElement {
       'video.surfaceSoftness': { min: 0.01, max: 0.6 },
       'video.warp': { min: 0, max: 0.35 },
       'video.sliceDrift': { min: 0, max: 1 },
+      'text.opacity': { min: 0, max: 1 },
+      'text.size': { min: 0.02, max: 0.3 },
+      'text.posX': { min: -1, max: 1 },
+      'text.posY': { min: -1, max: 1 },
+      'text.lineHeight': { min: 0.8, max: 2.5 },
+      'text.wrap': { min: 0.2, max: 1 },
+      'text.beats': { min: 1, max: 64 },
+      'text.amount': { min: 0, max: 3 },
       'model.capture.opacity': { min: 0, max: 1 },
       'model.capture.scale': { min: 0.1, max: 4 },
       'model.fracture.physics.gravity': { min: 0, max: 4 },
@@ -1180,6 +1196,8 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'video.blend' || path === 'model.capture.blend')
       return ['normal', 'screen', 'add', 'multiply', 'overlay', 'difference', 'lighten', 'darken'];
     if (path === 'video.fit') return ['cover', 'contain', 'stretch'];
+    if (path === 'text.effect') return ['type', 'word', 'fade', 'wipe', 'scroll', 'glitch'];
+    if (path === 'text.align') return ['left', 'center', 'right'];
     if (path === 'video.sliceMode') return ['off', 'retrigger', 'jump', 'ladder'];
     if (path === 'video.surface') return ['off', 'luma', 'lumaInv'];
     if (path === 'video.sliceDiv') return [0.25, 0.5, 1, 2, 4];
@@ -1222,6 +1240,14 @@ export class ShaderRitualApp extends LitElement {
     '!videoPlay': () => this.updateConfig('video.playing', !this.config.video.playing),
     // Hand-fired slice triggers. Each is its own action, so a pad hits one
     // thing rather than cycling a dropdown to reach it.
+    '!textFire': () => this.fireText(),
+    '!textShow': () => this.updateConfig('text.visible', !this.config.text.visible),
+    '!textType': () => this.updateConfig('text.effect', 'type'),
+    '!textWord': () => this.updateConfig('text.effect', 'word'),
+    '!textFade': () => this.updateConfig('text.effect', 'fade'),
+    '!textWipe': () => this.updateConfig('text.effect', 'wipe'),
+    '!textScroll': () => this.updateConfig('text.effect', 'scroll'),
+    '!textGlitch': () => this.updateConfig('text.effect', 'glitch'),
     '!vidRetrig': () => this.fireVideo('retrigger'),
     '!vidJump': () => this.fireVideo('jump'),
     '!vidNext': () => this.fireVideo('next'),
@@ -1778,6 +1804,117 @@ export class ShaderRitualApp extends LitElement {
       style="margin-right:4px;"
       @click=${() => this.updateConfig('video.sliceMode', mode)}>${label}</button>
   `;
+
+  /** An effect button, lit when it is the one running. */
+  private textFxBtn = (mode: string, action: string, label: string) => html`
+    ${this.learnDot(action)}
+    <button class="mini ${this.config.text.effect === mode ? 'on' : ''}"
+      style="margin-right:4px;"
+      @click=${() => this.updateConfig('text.effect', mode)}>${label}</button>
+  `;
+
+  private renderTextSection() {
+    const t = this.config.text;
+    const used = t.content.length;
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Text · plays under the post filters</span>
+        <div class="control-row">
+          <label>Show</label>
+          ${this.learnDot('!textShow')}
+          ${this.learnDot('text.visible')}
+          <button class="mini ${t.visible ? 'on' : ''}"
+            @click=${() => this.updateConfig('text.visible', !t.visible)}>
+            ${t.visible ? 'ON' : 'OFF'}</button>
+          ${this.learnDot('!textFire')}
+          <button class="mini" style="margin-left:4px;" @click=${this.fireText}>RESTART</button>
+        </div>
+        <textarea
+          maxlength=${TEXT_MAX}
+          rows="4"
+          placeholder="Type up to ${TEXT_MAX} characters…"
+          style="width:100%;box-sizing:border-box;margin:6px 0 2px;background:rgba(0,0,0,0.4);
+                 color:#ddd;border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+                 padding:6px;font-family:inherit;font-size:12px;resize:vertical;"
+          .value=${live(t.content)}
+          @input=${(e: any) =>
+            this.updateConfig('text.content', String(e.target.value).slice(0, TEXT_MAX))}></textarea>
+        <div class="element-desc" style="margin-bottom:8px;">
+          ${used} / ${TEXT_MAX} characters. The words are laid out once and the
+          effect runs over that image, so typing a full paragraph out costs no
+          more per frame than holding one still. It draws in front of the clip
+          and before the post filters, so Datamosh and Glitch chew on it too.
+        </div>
+
+        <div class="control-row">
+          <label>Effect</label>
+          ${this.textFxBtn('type', '!textType', 'TYPE')}
+          ${this.textFxBtn('word', '!textWord', 'WORD')}
+          ${this.textFxBtn('fade', '!textFade', 'FADE')}
+        </div>
+        <div class="control-row">
+          <label></label>
+          ${this.textFxBtn('wipe', '!textWipe', 'WIPE')}
+          ${this.textFxBtn('scroll', '!textScroll', 'SCROLL')}
+          ${this.textFxBtn('glitch', '!textGlitch', 'GLITCH')}
+        </div>
+        <div class="element-desc" style="margin-bottom:8px;">
+          Type runs a character at a time with the cursor lit; Word steps a word
+          at a time; Fade brings the block up whole; Wipe sweeps a soft edge
+          across it; Scroll is a credits roll; Glitch tears the lines apart and
+          lets them settle.
+        </div>
+
+        <div class="control-row">
+          <label>Run over</label>
+          ${this.learnDot('text.beats')}
+          <select .value=${live(String(t.beats))}
+            @change=${(e: any) => this.updateConfig('text.beats', parseFloat(e.target.value))}>
+            <option value="2">2 beats</option>
+            <option value="4">1 bar</option>
+            <option value="8">2 bars</option>
+            <option value="16">4 bars</option>
+            <option value="32">8 bars</option>
+            <option value="64">16 bars</option>
+          </select>
+        </div>
+        ${this.renderToggle('Loop', 'text.loop')}
+        ${t.loop ? '' : this.renderToggle('Hold at end', 'text.hold')}
+        <div class="element-desc" style="margin-bottom:8px;">
+          One run takes this many beats at the tempo in Camera · Motion, so a
+          paragraph lands with the music instead of drifting off it. RESTART
+          takes it back to the top — map it to a pad.
+        </div>
+
+        ${this.renderSelect('React band', 'text.band', [
+          { value: 'none', label: 'None' }, { value: 'low', label: 'Low' },
+          { value: 'mid', label: 'Mid' }, { value: 'high', label: 'High' },
+        ])}
+        ${this.renderSlider('React amount', 'text.amount', 0, 3, 0.05)}
+        ${this.renderSlider('Opacity', 'text.opacity', 0, 1, 0.02)}
+        ${this.renderSelect('Blend', 'text.blend', [
+          { value: 'normal', label: 'Normal' }, { value: 'screen', label: 'Screen' },
+          { value: 'add', label: 'Add' }, { value: 'multiply', label: 'Multiply' },
+          { value: 'overlay', label: 'Overlay' }, { value: 'difference', label: 'Difference' },
+          { value: 'lighten', label: 'Lighten' }, { value: 'darken', label: 'Darken' },
+        ])}
+        <div class="control-row">
+          <label>Colour</label>
+          <input type="color" .value=${live(t.color)}
+            @input=${(e: any) => this.updateConfig('text.color', e.target.value)} />
+        </div>
+        ${this.renderSelect('Align', 'text.align', [
+          { value: 'left', label: 'Left' }, { value: 'center', label: 'Centre' },
+          { value: 'right', label: 'Right' },
+        ])}
+        ${this.renderSlider('Size', 'text.size', 0.02, 0.3, 0.005)}
+        ${this.renderSlider('Line height', 'text.lineHeight', 0.8, 2.5, 0.05)}
+        ${this.renderSlider('Wrap width', 'text.wrap', 0.2, 1, 0.02)}
+        ${this.renderSlider('Position X', 'text.posX', -1, 1, 0.02)}
+        ${this.renderSlider('Position Y', 'text.posY', -1, 1, 0.02)}
+      </div>
+    `;
+  }
 
   private renderVideoSection() {
     const v = this.config.video;
@@ -2377,7 +2514,11 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderFx('scanlines', 'Scanlines')}
           ${this.renderFx('glitch', 'Glitch (block swap)')}
           ${this.renderFx('mosaic', 'Mosaic Shuffle')}
+          ${this.renderFx('datamosh', 'Datamosh')}
         </div>
+
+        <!-- TEXT -->
+        ${this.renderTextSection()}
 
         <!-- VIDEO CLIP -->
         ${this.renderVideoSection()}
