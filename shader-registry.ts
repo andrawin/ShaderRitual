@@ -58,6 +58,7 @@ import { bloom } from './shaders/bloom';
 import { fallout } from './shaders/fallout';
 import { wrath } from './shaders/wrath';
 import { ocean } from './shaders/ocean';
+import { kodok } from './shaders/kodok';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -92,6 +93,7 @@ export const SHADERS: ShaderDef[] = [
   verdigris,
   maelstrom,
   ocean,
+  kodok,
   // The Odyssey suite — six scenes of one story, in order.
   awakening,
   revelry,
