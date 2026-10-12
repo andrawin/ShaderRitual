@@ -6,7 +6,7 @@ import type { ShaderDef } from '../types';
 
 /*
  * "Vitrine" — a Cornell box path-traced live, with the loaded clip playing on
- * the faces of the two blocks. Because the room is actually traced, the screens
+ * the faces of the two blocks, and its side and back walls see-through. Because the room is actually traced, the screens
  * are not decals: their light bounces off the walls, so whatever is playing
  * colours the whole box.
  *
@@ -34,7 +34,8 @@ import type { ShaderDef } from '../types';
  * Elements:
  *   lamp   -> ceiling light size and output
  *   screen -> the clip on the blocks, and how much light it throws (hideable)
- *   tint   -> the coloured side walls (hideable for a white room)
+ *   walls  -> how solid the side and back walls are to the camera
+ *   tint   -> how much colour those walls throw (hideable for a neutral room)
  *   blocks -> the two blocks themselves (hideable for an empty room)
  *   bounce -> how far light is followed; the cost of colour bleed
  *   detail -> samples per pixel, which is grain against frame rate
@@ -62,6 +63,7 @@ uniform float screen_react;
 uniform float screen_visible;
 uniform float tint_react;
 uniform float tint_visible;
+uniform float walls_react;
 uniform float blocks_react;
 uniform float blocks_visible;
 uniform float bounce_react;
@@ -80,6 +82,8 @@ float gScreen;
 float gEmit;
 float gSamples;
 float gBounces;
+float gWallEye;    // how solid the three walls are to the camera
+float gWallHit;    // set by intersect(): was the chosen hit one of them
 
 // Random stream. The original used a TEA cipher over unsigned ints, which this
 // dialect does not have; this is a float hash over pixel, index and time.
@@ -221,10 +225,11 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
   float t_min = INFINITY;
   albedo = vec4(0.0);
   emit = vec3(0.0);
+  gWallHit = 0.0;
 
   {
     float t = intersect_light(ray);
-    if(t < t_min){ albedo = light_albedo; normal = light_normal; t_min = t; p = ray_at(ray, t); }
+    if(t < t_min){ albedo = light_albedo; normal = light_normal; t_min = t; p = ray_at(ray, t); gWallHit = 0.0; }
   }
 
   if(blocks_visible > 0.5){
@@ -247,6 +252,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
         emit = c * gEmit;
       }
       normal = rotY(nt, -ang);
+      gWallHit = 0.0;
     }
 
     // Short block, square on.
@@ -264,6 +270,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
         emit = c * gEmit;
       }
       normal = nt;
+      gWallHit = 0.0;
     }
   }
 
@@ -278,7 +285,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
     if(t < t_min){
       vec3 q = ray_at(ray, t);
       if(all(lessThanEqual(q.yz, vec2(1.0))) && all(greaterThanEqual(q.yz, vec2(-1.0)))){
-        normal = n; p = q; t_min = t; albedo = vec4(red, 0.0); emit = vec3(0.0);
+        normal = n; p = q; t_min = t; albedo = vec4(red, 0.0); emit = vec3(0.0); gWallHit = 1.0;
       }
     }
   }
@@ -289,7 +296,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
     if(t < t_min){
       vec3 q = ray_at(ray, t);
       if(all(lessThanEqual(q.yz, vec2(1.0))) && all(greaterThanEqual(q.yz, vec2(-1.0)))){
-        normal = n; p = q; t_min = t; albedo = vec4(grn, 0.0); emit = vec3(0.0);
+        normal = n; p = q; t_min = t; albedo = vec4(grn, 0.0); emit = vec3(0.0); gWallHit = 1.0;
       }
     }
   }
@@ -301,6 +308,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xz, vec2(1.0))) && all(greaterThan(q.xz, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
+        gWallHit = 0.0;
       }
     }
   }
@@ -312,6 +320,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xz, vec2(1.0))) && all(greaterThan(q.xz, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
+        gWallHit = 0.0;
       }
     }
   }
@@ -323,6 +332,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xy, vec2(1.0))) && all(greaterThan(q.xy, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
+        gWallHit = 1.0;
       }
     }
   }
@@ -355,6 +365,10 @@ vec3 pt_mis(Ray ray){
   float t = intersect(ray, position, normal, albedo, emit);
   if(t >= INFINITY) return vec3(0.0);
   if(albedo.a > 0.0) return albedo.rgb * albedo.a;
+  // Only what the camera sees directly is faded. Nothing behind a wall is lit,
+  // so a transparent one reads as black — which is what it is, from outside.
+  float eye = gWallHit > 0.5 ? gWallEye : 1.0;
+  if(eye <= 0.0) return vec3(0.0);
   contrib += emit;
 
   for(int i = 0; i < 3; i++){
@@ -411,7 +425,7 @@ vec3 pt_mis(Ray ray){
       albedo = an;
     }
   }
-  return contrib;
+  return contrib * eye;
 }
 
 void main(){
@@ -431,6 +445,7 @@ void main(){
   light_normal = vec3(0.0, -1.0, 0.0);
   light_albedo = vec4(1.0, 1.0, 1.0, 2.0 * power / light_area);
 
+  gWallEye = clamp(walls_react, 0.0, 1.0);
   float sg = clamp(screen_react, 0.0, 2.0);
   gScreen = 0.55 + sg * 0.3;     // how the clip behaves as a diffuse surface
   gEmit = sg * 0.9;              // and how much light it throws into the room
@@ -533,9 +548,21 @@ export const vitrine: ShaderDef = {
       defaultVisible: true,
     },
     {
+      id: 'walls',
+      name: 'Wall Solidity',
+      description:
+        'How solid the side and back walls are to the camera. At 0 you see straight through them to the void, while they still bounce their colour into the room — coloured light with no visible source. Turn it up for the closed box.',
+      defaultBand: 'none',
+      defaultAmount: 0.4,
+      defaultLevel: 0,
+      canHide: false,
+      defaultVisible: true,
+    },
+    {
       id: 'tint',
-      name: 'Coloured Walls',
-      description: 'The red and green side walls. Hide for a white room and plain bounce.',
+      name: 'Wall Colour',
+      description:
+        'How red and green the side walls are. They colour the light whether or not they can be seen; hide for a neutral room.',
       defaultBand: 'none',
       defaultAmount: 0.5,
       defaultLevel: 1.2,
