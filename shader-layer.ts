@@ -8,6 +8,16 @@ import { commonVertex, commonVertex3 } from './shaders/common';
 import { getShader } from './shader-registry';
 import type { Bands, ShaderDef, ShaderSetting } from './types';
 
+/** A 1x1 white texture, so iVideo is always bound to something valid. */
+let whiteTex: THREE.DataTexture | null = null;
+function whiteTexture(): THREE.DataTexture {
+  if (!whiteTex) {
+    whiteTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    whiteTex.needsUpdate = true;
+  }
+  return whiteTex;
+}
+
 /**
  * One shader's full render pipeline — ping-pong feedback (`iChannel0`), an
  * optional static Buffer B (`iChannel1`) and the per-element uniforms — drawn
@@ -75,6 +85,13 @@ export class ShaderLayer {
       iCamFov: { value: 60 },
       iCamReact: { value: 0 },
       iBeat: { value: 0 },
+      // The loaded clip, for shaders that map it onto their own geometry
+      // rather than letting it composite over the frame. Bound to a 1x1 white
+      // texture when nothing is loaded, because sampling an unbound sampler is
+      // undefined — a shader that reads it must gate on iVideoOn.
+      iVideo: { value: whiteTexture() },
+      iVideoOn: { value: 0 },
+      iVideoAspect: { value: 16 / 9 },
     };
     for (const el of def.elements) {
       this.uniforms[`${el.id}_react`] = { value: 0 };
@@ -121,6 +138,14 @@ export class ShaderLayer {
   }
 
   /** Push the per-frame uniform values (time, camera, element react/visible). */
+  /** Hand the layer the live clip, or null when there is none. */
+  setVideo(tex: THREE.Texture | null, aspect: number) {
+    if (!this.uniforms || !this.uniforms.iVideo) return;
+    this.uniforms.iVideo.value = tex || whiteTexture();
+    this.uniforms.iVideoOn.value = tex ? 1 : 0;
+    this.uniforms.iVideoAspect.value = aspect > 0 ? aspect : 16 / 9;
+  }
+
   setUniforms(time: number, cam: CameraUniforms, bands: Bands, elemCfg: ShaderSetting['elements']) {
     const def = getShader(this.currentShaderId);
     for (const el of def.elements) {

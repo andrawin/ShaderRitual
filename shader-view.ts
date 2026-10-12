@@ -1233,6 +1233,14 @@ void main(){
     const baseCfg = this.config.shaders[baseDef.id]?.elements || {};
     this.baseLayer.setUniforms(time, cam, this.lastBands, baseCfg);
 
+    // Hand the clip to the shader itself, so a shader that maps video onto its
+    // own geometry can do so. Deliberately not gated on video.visible: turning
+    // the full-screen layer off is exactly how you get the clip *only* on the
+    // geometry, which is the point.
+    const vEl = this.videoEl;
+    const vAspect = vEl && vEl.videoHeight > 0 ? vEl.videoWidth / vEl.videoHeight : 16 / 9;
+    this.baseLayer.setVideo(this.videoTexture || null, vAspect);
+
     // Screen capture is composited last, and it needs the finished image as a
     // texture to blend against — so while it is up, every pass that would
     // normally end at the screen ends in captureSrc instead. Decided here
@@ -1270,6 +1278,7 @@ void main(){
       const ovDef = getShader(ov.shader);
       const ovCfg = this.config.shaders[ovDef.id]?.elements || {};
       this.overlayLayer.setUniforms(time, cam, this.lastBands, ovCfg);
+      this.overlayLayer.setVideo(this.videoTexture || null, vAspect);
       this.overlayLayer.render(this.camera, this.overlayTarget);
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
