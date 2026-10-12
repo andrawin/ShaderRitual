@@ -17,3 +17,15 @@ void main() {
   gl_Position = vec4(position.xy, 0.0, 1.0);
 }
 `;
+
+/** GLSL ES 3.00 variant, for shaders flagged `glsl3` (uint ops, textureLod, ...). */
+export const commonVertex300 = `
+precision highp float;
+in vec3 position;
+in vec2 uv;
+out vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;

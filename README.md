@@ -22,6 +22,7 @@ audio mapping is per-shader. MIDI-learn is available on every amount slider.
 | `audio-bands.ts` | Splits FFT into Low/Mid/High, applies sensitivity + noise gate |
 | `shaders/common.ts` | Shared full-screen-quad vertex shader |
 | `shaders/sanctum.ts` | The first shader (Buffer A + Image bloom pass) with element metadata |
+| `shaders/cornell.ts` | Path-traced Cornell box with video-textured boxes |
 | `shader-registry.ts` | Shader list + default/sanitized config |
 | `shader-view.ts` | Three.js two-pass renderer; auto-creates per-element uniforms |
 | `main.ts` | Lit UI: shader selector, per-element menus, MIDI, audio, metering |
@@ -43,6 +44,24 @@ The shader reads these to modulate or remove that part of the image. For the
 | `beams` | emission + glow of the moving light bars | the bars |
 | `walls` | surface brightness of the chamber | the architecture |
 | `bloom` | post-process bloom spread | the bloom (passes through) |
+
+### Cornell Screens (video surfaces)
+
+`cornell` is a path-traced Cornell box (32 spp, NEE + MIS) whose two boxes are
+video screens. Open the menu → **Video Surfaces** and load a clip for each box:
+
+| Element | `_react` drives | `_visible` hides |
+| --- | --- | --- |
+| `light` | area-light intensity | the light (room lit by screens only) |
+| `screens` | glow of the videos | the videos (plain grey boxes) |
+| `tower` | spin of the tall box (`iChannel1`) | the tall box |
+| `cube` | hop of the small cube (`iChannel2`) | the cube |
+| `walls` | hue shift of the red/green walls | the room |
+
+Videos are bound to `iChannel1`–`3` with their size in `iChannelResolution`
+(zero while nothing is loaded) for any shader that lists `videoChannels`. They
+are session-only and muted. Shaders that need GLSL ES 3.00 set `glsl3: true`;
+heavy ones can cap Buffer A's resolution with `maxPixelRatio`.
 
 ## Add a new shader
 

@@ -42,6 +42,14 @@ export interface ShaderElement {
   defaultVisible: boolean;
 }
 
+/** A video input slot a shader samples (Shadertoy-style `iChannel<n>`). */
+export interface VideoChannel {
+  /** Channel index, 1-3 (iChannel0 is reserved for Buffer A). */
+  channel: number;
+  name: string;
+  description: string;
+}
+
 /** A registered Shadertoy-style multi-pass shader. */
 export interface ShaderDef {
   id: string;
@@ -52,6 +60,18 @@ export interface ShaderDef {
   /** Image fragment shader (samples Buffer A via iChannel0, draws to screen). */
   imageShader: string;
   elements: ShaderElement[];
+  /**
+   * Compile both passes as GLSL ES 3.00 (uint ops, `textureLod`, ...). Shaders
+   * then use `in vUv` and declare their own `out vec4`.
+   */
+  glsl3?: boolean;
+  /** Cap on the device pixel ratio Buffer A is rendered at (for heavy shaders). */
+  maxPixelRatio?: number;
+  /**
+   * Video inputs. Each loaded video is bound to `iChannel<channel>` with its
+   * size in `iChannelResolution[channel]` (zero while nothing is loaded).
+   */
+  videoChannels?: VideoChannel[];
 }
 
 /** Live audio band readout (post-sensitivity raw + post-gate values). */

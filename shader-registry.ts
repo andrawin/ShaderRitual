@@ -4,9 +4,10 @@
  */
 import type { ShaderDef, ShaderRitualConfig, ShaderSetting } from './types';
 import { sanctum } from './shaders/sanctum';
+import { cornell } from './shaders/cornell';
 
 /** All registered shaders. Add new shaders here. */
-export const SHADERS: ShaderDef[] = [sanctum];
+export const SHADERS: ShaderDef[] = [sanctum, cornell];
 
 export function getShader(id: string): ShaderDef {
   return SHADERS.find((s) => s.id === id) || SHADERS[0];

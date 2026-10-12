@@ -47,6 +47,10 @@ export class ShaderRitualApp extends LitElement {
 
   @state() config: ShaderRitualConfig = this.loadSavedConfig();
 
+  /** Loaded videos keyed by channel. Session-only: object URLs don't persist. */
+  @state() videos: Record<number, { url: string; name: string }> = {};
+  private videoUrls: Record<number, string> = {};
+
   private loadSavedConfig(): ShaderRitualConfig {
     const saved = localStorage.getItem(STORAGE_KEY);
     try {
@@ -189,6 +193,9 @@ export class ShaderRitualApp extends LitElement {
     }
     .vis-toggle.on { color: #10b981; border-color: #10b981; }
     .vis-toggle.off { color: #ef4444; border-color: #ef4444; }
+
+    .control-row label.file-btn { flex: 0 0 auto; color: white; }
+    .video-name { color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   `;
 
   firstUpdated() {
@@ -424,6 +431,34 @@ export class ShaderRitualApp extends LitElement {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.config));
   };
 
+  /* --------------------------- Videos ---------------------------- */
+
+  private loadVideo = (channel: number, e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.clearVideo(channel);
+    this.setVideos({ ...this.videos, [channel]: { url: URL.createObjectURL(file), name: file.name } });
+  };
+
+  private clearVideo = (channel: number) => {
+    const current = this.videos[channel];
+    if (!current) return;
+    URL.revokeObjectURL(current.url);
+    const next = { ...this.videos };
+    delete next[channel];
+    this.setVideos(next);
+  };
+
+  /** Keep the URL map the view receives stable between unrelated re-renders. */
+  private setVideos(videos: Record<number, { url: string; name: string }>) {
+    this.videos = videos;
+    const urls: Record<number, string> = {};
+    for (const [channel, v] of Object.entries(videos)) urls[Number(channel)] = v.url;
+    this.videoUrls = urls;
+  }
+
   /* ----------------------------- UI ------------------------------ */
 
   private renderSlider = (label: string, path: string, min: number, max: number, step: number) => {
@@ -501,10 +536,44 @@ export class ShaderRitualApp extends LitElement {
             class="shader-select"
             .value=${this.config.activeShader}
             @change=${(e: any) => this.updateConfig('activeShader', e.target.value)}>
-            ${SHADERS.map((s) => html`<option value=${s.id}>${s.name}</option>`)}
+            ${SHADERS.map(
+              (s) => html`<option value=${s.id} ?selected=${s.id === this.config.activeShader}>${s.name}</option>`,
+            )}
           </select>
           <div class="element-desc" style="margin-top:8px;">${def.description}</div>
         </div>
+
+        ${def.videoChannels?.length
+          ? html`
+              <!-- VIDEO INPUTS (per shader) -->
+              <div class="setting-group">
+                <span class="group-title">${def.name} · Video Surfaces</span>
+                ${def.videoChannels.map((ch) => {
+                  const loaded = this.videos[ch.channel];
+                  return html`
+                    <div class="element-card">
+                      <div class="element-head">
+                        <span class="element-name">${ch.name}</span>
+                        <span class="element-desc" style="margin:0;">iChannel${ch.channel}</span>
+                      </div>
+                      <div class="element-desc">${ch.description}</div>
+                      <div class="element-desc video-name">${loaded ? loaded.name : 'No video loaded'}</div>
+                      <div class="control-row action-row">
+                        <label class="action-btn small file-btn">
+                          ${loaded ? 'Replace Video' : 'Load Video'}
+                          <input type="file" accept="video/*" hidden
+                            @change=${(e: Event) => this.loadVideo(ch.channel, e)} />
+                        </label>
+                        ${loaded
+                          ? html`<button class="action-btn small" @click=${() => this.clearVideo(ch.channel)}>Clear</button>`
+                          : ''}
+                      </div>
+                    </div>
+                  `;
+                })}
+              </div>
+            `
+          : ''}
 
         <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
         <div class="setting-group">
@@ -601,7 +670,10 @@ export class ShaderRitualApp extends LitElement {
         </button>
         ${this.renderSettings()}
         <div id="status">${this.error || this.status}</div>
-        <shader-ritual-view .config=${this.config} .inputNode=${this.audioNode}></shader-ritual-view>
+        <shader-ritual-view
+          .config=${this.config}
+          .inputNode=${this.audioNode}
+          .videos=${this.videoUrls}></shader-ritual-view>
       </div>
     `;
   }
