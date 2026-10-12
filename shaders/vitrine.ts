@@ -83,7 +83,7 @@ float gEmit;
 float gSamples;
 float gBounces;
 float gWallEye;    // how solid the three walls are to the camera
-float gWallHit;    // set by intersect(): was the chosen hit one of them
+float gSkipWalls;  // set for a camera ray that is passing through them
 
 // Random stream. The original used a TEA cipher over unsigned ints, which this
 // dialect does not have; this is a float hash over pixel, index and time.
@@ -225,11 +225,10 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
   float t_min = INFINITY;
   albedo = vec4(0.0);
   emit = vec3(0.0);
-  gWallHit = 0.0;
 
   {
     float t = intersect_light(ray);
-    if(t < t_min){ albedo = light_albedo; normal = light_normal; t_min = t; p = ray_at(ray, t); gWallHit = 0.0; }
+    if(t < t_min){ albedo = light_albedo; normal = light_normal; t_min = t; p = ray_at(ray, t); }
   }
 
   if(blocks_visible > 0.5){
@@ -252,7 +251,6 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
         emit = c * gEmit;
       }
       normal = rotY(nt, -ang);
-      gWallHit = 0.0;
     }
 
     // Short block, square on.
@@ -270,7 +268,6 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
         emit = c * gEmit;
       }
       normal = nt;
-      gWallHit = 0.0;
     }
   }
 
@@ -278,6 +275,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
   vec3 red = mix(vec3(0.7), vec3(0.9, 0.1, 0.1), clamp(sat, 0.0, 1.0));
   vec3 grn = mix(vec3(0.7), vec3(0.1, 0.9, 0.1), clamp(sat, 0.0, 1.0));
 
+  if(gSkipWalls < 0.5){
   // left
   {
     vec3 n = vec3(1, 0, 0);
@@ -285,7 +283,7 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
     if(t < t_min){
       vec3 q = ray_at(ray, t);
       if(all(lessThanEqual(q.yz, vec2(1.0))) && all(greaterThanEqual(q.yz, vec2(-1.0)))){
-        normal = n; p = q; t_min = t; albedo = vec4(red, 0.0); emit = vec3(0.0); gWallHit = 1.0;
+        normal = n; p = q; t_min = t; albedo = vec4(red, 0.0); emit = vec3(0.0);
       }
     }
   }
@@ -296,10 +294,12 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
     if(t < t_min){
       vec3 q = ray_at(ray, t);
       if(all(lessThanEqual(q.yz, vec2(1.0))) && all(greaterThanEqual(q.yz, vec2(-1.0)))){
-        normal = n; p = q; t_min = t; albedo = vec4(grn, 0.0); emit = vec3(0.0); gWallHit = 1.0;
+        normal = n; p = q; t_min = t; albedo = vec4(grn, 0.0); emit = vec3(0.0);
       }
     }
   }
+  }
+
   // floor
   {
     vec3 n = vec3(0, 1, 0);
@@ -308,7 +308,6 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xz, vec2(1.0))) && all(greaterThan(q.xz, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
-        gWallHit = 0.0;
       }
     }
   }
@@ -320,10 +319,10 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xz, vec2(1.0))) && all(greaterThan(q.xz, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
-        gWallHit = 0.0;
       }
     }
   }
+  if(gSkipWalls < 0.5){
   // back wall
   {
     vec3 n = vec3(0, 0, 1);
@@ -332,9 +331,9 @@ float intersect(Ray ray, inout vec3 p, inout vec3 normal, out vec4 albedo, out v
       vec3 q = ray_at(ray, t);
       if(all(lessThan(q.xy, vec2(1.0))) && all(greaterThan(q.xy, vec2(-1.0)))){
         normal = n; p = q; t_min = t; albedo = vec4(0.7, 0.7, 0.7, 0.0); emit = vec3(0.0);
-        gWallHit = 1.0;
       }
     }
+  }
   }
 
   normal = normalize(normal);
@@ -362,13 +361,16 @@ vec3 pt_mis(Ray ray){
   vec4 albedo;
   vec3 emit;
 
+  // Whether this camera ray passes through the walls is decided per sample, so
+  // the fader cross-fades across the samples in a pixel rather than dimming a
+  // wall that is still standing in the way. Cleared immediately: the bounce and
+  // shadow rays must always see the walls, or the room loses its bounced
+  // colour and its shadows along with them.
+  gSkipWalls = get_random().x < (1.0 - gWallEye) ? 1.0 : 0.0;
   float t = intersect(ray, position, normal, albedo, emit);
+  gSkipWalls = 0.0;
   if(t >= INFINITY) return vec3(0.0);
   if(albedo.a > 0.0) return albedo.rgb * albedo.a;
-  // Only what the camera sees directly is faded. Nothing behind a wall is lit,
-  // so a transparent one reads as black — which is what it is, from outside.
-  float eye = gWallHit > 0.5 ? gWallEye : 1.0;
-  if(eye <= 0.0) return vec3(0.0);
   contrib += emit;
 
   for(int i = 0; i < 3; i++){
@@ -425,7 +427,7 @@ vec3 pt_mis(Ray ray){
       albedo = an;
     }
   }
-  return contrib * eye;
+  return contrib;
 }
 
 void main(){
