@@ -16,7 +16,7 @@ import { odysseyUniforms, odysseyLib } from './odyssey';
  * subject. Fumes drives the density; at the top of its range the traveller is
  * most of what is still legible.
  *
- * Shares the suite's grammar (see odyssey.ts).
+ * Played in the first person (see odyssey.ts).
  */
 
 const bufferShader = `
@@ -62,81 +62,108 @@ vec3 skyFilamentOd(vec2 uv, float react){
   return acc;
 }
 
-void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = frameOd(fragCoord);
-  float px = pxOd();
-  float scroll = -iTime * 0.030 - iCamOrbit * 0.03;
+/*
+ * The fallen, lying where they dropped beside the path: a torso, head, an arm
+ * thrown out and the legs, each turned by its own hash so no two lie the same
+ * way. Close to the lane — the point is that you walk past them.
+ */
+float fallenOd(vec3 q){
+  float d = sdSeg3Od(q, vec3(-0.40, 0.17, 0.0), vec3(0.35, 0.21, 0.0)) - 0.17;
+  d = min(d, length(q - vec3(0.62, 0.19, 0.05)) - 0.13);
+  d = min(d, sdSeg3Od(q, vec3(0.20, 0.20, 0.14), vec3(0.48, 0.07, 0.48)) - 0.06);
+  d = min(d, sdSeg3Od(q, vec3(-0.40, 0.14, 0.06), vec3(-1.15, 0.09, 0.16)) - 0.09);
+  d = min(d, sdSeg3Od(q, vec3(-0.40, 0.14, -0.06), vec3(-1.10, 0.10, -0.24)) - 0.09);
+  return d;
+}
 
-  float spd = 0.020 + walk_react * 0.050;
-  float sw  = 0.9 + sword_react * 1.3;
-  float wx  = travellerXOd(spd);
-  float gy  = groundOd(wx, scroll, 12.4, -0.25, 0.55);
+float sceneMapOd(vec3 p){
+  float dg = groundDistOd(p, 0.55, 12.4);
+  float d = dg;
+  gMatOd = 0.0;
+  if(fallen_visible > 0.5){
+    float sp = 6.0;
+    float cz = cellOd(p.z, sp);
+    float side = p.x < 0.0 ? -1.0 : 1.0;
+    float h = hashOd(vec2(cz, side * 3.0 + 33.0));
+    if(h > 0.32){
+      vec3 c = vec3(side * (2.6 + h * 4.5), 0.0, cz * sp + (h - 0.5) * 2.5);
+      c.y = terrainOd(c.xz, 0.55, 12.4) - 0.05;
+      vec3 q = p - c;
+      float a = h * 37.0;
+      q.xz = mat2(cos(a), sin(a), -sin(a), cos(a)) * q.xz;
+      float df = fallenOd(q);
+      if(df < d){ d = df; gMatOd = 1.0; }
+    }
+    if(dg < 1.0) gCapOd = min(gCapOd, cellEdgeOd(p.z, cz, sp));
+  }
+  return d;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  float stride = 0.3 + walk_react * 0.8;
+  float sw = 0.9 + sword_react * 1.3;
+
+  vec3 ro, rd;
+  fpsCamOd(fragCoord, 0.55, 12.4, stride, ro, rd);
+  vec2 sky = skyUvOd(rd);
+  vec3 key = vec3(0.75, 1.00, 0.35);
 
   // Jaundiced sky.
-  float s = clamp(uv.y + 0.5, 0.0, 1.0);
-  vec3 col = mix(vec3(0.46, 0.46, 0.14), vec3(0.09, 0.13, 0.07), s);
-  col += vec3(0.40, 0.36, 0.10) * pow(max(0.0, 1.0 - abs(uv.y + 0.24) * 1.6), 3.0) * 0.6;
+  float e = clamp(rd.y * 2.2, 0.0, 1.0);
+  vec3 horizon = vec3(0.46, 0.46, 0.14);
+  vec3 col = mix(horizon, vec3(0.09, 0.13, 0.07), e);
+  col += vec3(0.40, 0.36, 0.10) * pow(max(0.0, 1.0 - abs(rd.y) * 3.2), 3.0) * 0.6;
+  vec3 skyCol = col;
 
-  // Background, behind everything.
-  float gyx = groundOd(uv.x, scroll, 12.4, -0.25, 0.55);
-  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyFilamentOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
-  }
+  // A sun that cannot get through: up and to the right.
+  vec3 sunDir = normalize(vec3(-0.226, 0.204, 0.953));
 
-  // A sun that cannot get through.
-  if(sun_visible > 0.5){
-    vec2 sp = uv - vec2(0.34, 0.06);
-    float sd = length(sp);
-    col += vec3(0.85, 0.72, 0.22) * smoothstep(0.085, 0.062, sd) * (0.45 + sun_react * 0.7);
-    col += vec3(0.55, 0.48, 0.12) * pow(max(0.0, 1.0 - sd * 1.6), 3.0)
-         * (0.25 + sun_react * 0.6);
-  }
+  float mat;
+  float t = marchOd(ro, rd, 160.0, mat);
 
-  // Far ridge, already lost in it.
-  col = mix(col * vec3(0.55, 0.58, 0.40), col,
-            bandOd(uv, scroll * 0.5, 8.8, -0.18, 0.70, px));
-
-  // The fallen, along the ridge behind the traveller.
-  if(fallen_visible > 0.5){
-    float fx = uv.x + scroll * 0.9;
-    float cell = floor(fx / 0.30);
-    float h = hashOd(vec2(cell, 33.0));
-    if(h > 0.50){
-      float cx = (cell + 0.5) * 0.30 - scroll * 0.9;
-      float sc = 0.15 + h * 0.07;
-      // Lifted clear of the ground line: they sit on a slope, and the ground
-      // band drawn after this would otherwise bury half of each figure.
-      vec2 fp = vec2(mod(fx, 0.30) - 0.15,
-                     uv.y - groundOd(cx, scroll, 12.4, -0.25, 0.55) - 0.012) / sc;
-      float fd = slumpedOd(fp, 0.3 + h * 0.7) * sc;
-      col = mix(col, vec3(0.030, 0.045, 0.022), smoothstep(px, -px, fd));
-      col += vec3(0.60, 0.70, 0.22) * smoothstep(px * 2.2, 0.0, abs(fd))
-           * (0.35 + fallen_react * 0.7);
+  if(mat < -0.5){
+    if(sky_visible > 0.5) col += skyFilamentOd(sky, sky_react) * smoothstep(-0.02, 0.1, rd.y);
+    if(sun_visible > 0.5){
+      float sd = acos(clamp(dot(rd, sunDir), -1.0, 1.0));
+      col += vec3(0.85, 0.72, 0.22) * smoothstep(0.06, 0.044, sd) * (0.45 + sun_react * 0.7);
+      col += vec3(0.55, 0.48, 0.12) * pow(max(0.0, 1.0 - sd * 2.3), 3.0) * (0.25 + sun_react * 0.6);
     }
+  } else {
+    vec3 p = ro + rd * t;
+    vec3 n = normalOd(p, t);
+    float dif = clamp(dot(n, sunDir), 0.0, 1.0) * (sun_visible > 0.5 ? 1.0 : 0.4);
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+    vec3 g;
+    if(mat < 0.5){
+      vec3 base = vec3(0.07, 0.075, 0.035);
+      g = base * (vec3(0.9, 0.85, 0.35) * dif * 2.0 + vec3(0.3, 0.32, 0.12) * (0.5 + 0.5 * n.y));
+      g += key * rim * 0.12 * exp(-t * 0.015);
+    } else {
+      // Cut out dark, and picked out in the sickly green so they are not
+      // mistaken for rocks.
+      g = vec3(0.030, 0.045, 0.022) * (0.5 + dif);
+      g += vec3(0.60, 0.70, 0.22) * rim * (0.35 + fallen_react * 0.8);
+    }
+    // The air itself is the subject: it thickens fast with distance.
+    float dens = 0.022 + (fumes_visible > 0.5 ? fumes_react * 0.018 : 0.0);
+    col = fogOd(g, skyCol, t, dens);
   }
 
-  // Ground.
-  col *= mix(0.06, 1.0, bandOd(uv, scroll, 12.4, -0.25, 0.55, px));
+  col = viewmodelLayerOd(col, sw, walk_visible, stride, key, 0.6 + walk_react * 0.9);
 
-  vec3 key = vec3(0.75, 1.00, 0.35);
-  float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
-  col *= smoothstep(-px, px, d);
-  col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.6 + walk_react * 0.9);
-  // Suit piping, drawn only where it falls inside the cut-out — outside it
-  // would read as a thicker outline rather than as costume.
-  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
-       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
-
-  // Particulate, over everything, two layers at different speeds. This is the
-  // one thing in the suite that is allowed to bury the traveller.
+  // Particulate over everything, two layers, pinned to the sky so it hangs in
+  // the world as you turn. This is the one thing in the suite that is allowed
+  // to bury you.
   if(fumes_visible > 0.5){
-    float f1 = fbmOd(vec2(uv.x * 1.7 + scroll * 1.6, uv.y * 1.2 - iTime * 0.06));
-    float f2 = fbmOd(vec2(uv.x * 3.4 - scroll * 2.6 + 9.0, uv.y * 2.3 - iTime * 0.11));
-    float f = clamp((f1 * 0.65 + f2 * 0.45) * (0.35 + fumes_react * 0.95), 0.0, 0.92);
+    float drift = walkedOd() * 0.02;
+    float f1 = fbmOd(vec2(sky.x * 1.7 - drift, sky.y * 1.2 - iTime * 0.06));
+    float f2 = fbmOd(vec2(sky.x * 3.4 + 9.0 - drift * 2.0, sky.y * 2.3 - iTime * 0.11));
+    float f = clamp((f1 * 0.65 + f2 * 0.45) * (0.25 + fumes_react * 0.85), 0.0, 0.9);
     col = mix(col, vec3(0.30, 0.32, 0.10), f);
     col += vec3(0.10, 0.11, 0.03) * f2 * fumes_react * 0.4;
   }
 
+  col *= 1.0 - 0.45 * pow(clamp(length(gUvOd * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -154,7 +181,7 @@ export const miasma: ShaderDef = {
   id: 'miasma',
   name: 'Odyssey V — Miasma',
   description:
-    'The fourth journey: the air itself has turned. A jaundiced sky, a sun that cannot get through, scrolling particulate, and figures along the ridge who have stopped walking.',
+    'The fourth journey, in the first person: the air itself has turned. A jaundiced haze, a sun that cannot get through, and the fallen lying beside the path as you walk past.',
   bufferShader,
   imageShader,
   elements: [
@@ -162,7 +189,8 @@ export const miasma: ShaderDef = {
       id: 'walk',
       name: 'Traveller',
       description:
-        'Travel speed and stride of the figure crossing the scene. At 0 they hold centre and march in place. Hide to clear them out of the frame.',
+        
+        'You. How hard each step lands — the head bob and the sword swinging with it. The pace itself follows the motion clock, so the walk quickens with the music. Hide to put the sword away.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.25,
@@ -173,7 +201,8 @@ export const miasma: ShaderDef = {
       id: 'sword',
       name: 'Sword',
       description:
-        'Size of the blade alone — the body stays put. Push the level for something absurd above the horizon.',
+        
+        'Size of the blade in your hand. Push the level and it runs off the top of the frame.',
       defaultBand: 'high',
       defaultAmount: 0.5,
       defaultLevel: 0.45,
@@ -184,7 +213,8 @@ export const miasma: ShaderDef = {
       id: 'fumes',
       name: 'Fumes',
       description:
-        'Two layers of particulate scrolling over the whole frame. At the top of its range it buries everything but the traveller.',
+        
+        'The air itself. Thickens the haze with distance and hangs particulate across the view. At the top of its range it buries everything.',
       defaultBand: 'mid',
       defaultAmount: 1.0,
       defaultLevel: 0.45,
@@ -195,7 +225,8 @@ export const miasma: ShaderDef = {
       id: 'fallen',
       name: 'The Fallen',
       description:
-        'Slumped silhouettes along the ridge. React lifts their outline out of the murk; hide for an empty landscape.',
+        
+        'The fallen, lying beside the path as you walk past. React lifts their outline out of the murk; hide for an empty landscape.',
       defaultBand: 'low',
       defaultAmount: 0.7,
       defaultLevel: 0.2,
@@ -205,7 +236,8 @@ export const miasma: ShaderDef = {
     {
       id: 'sun',
       name: 'Sun',
-      description: 'The dimmed disc and its bloom behind the haze.',
+      description: 
+        'The dimmed disc and its bloom, failing to get through.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.35,

@@ -15,7 +15,7 @@ import { odysseyUniforms, odysseyLib } from './odyssey';
  * and cyan of The Artful Escape's cavern, at full saturation. Extraction takes
  * this exact sky and drains it; Cinder burns what is left of it.
  *
- * Shares the suite's grammar (see odyssey.ts).
+ * Played in the first person (see odyssey.ts).
  */
 
 const bufferShader = `
@@ -78,82 +78,108 @@ vec3 skyCageOd(vec2 uv, float react){
         + vec3(1.00, 0.24, 0.72) * g2 * 0.038) * (0.4 + react * 1.1);
 }
 
-void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = frameOd(fragCoord);
-  float px = pxOd();
-  float scroll = -iTime * 0.045 - iCamOrbit * 0.03;
+float gHueOd = 0.0;
 
-  float spd = 0.030 + walk_react * 0.070;
-  float sw  = 0.9 + sword_react * 1.3;
-  float wx  = travellerXOd(spd);
-  float gy  = groundOd(wx, scroll, 5.7, -0.26, 0.55);
+/*
+ * Crystal spires lining the path, one every nine metres either side when the
+ * hash allows. Hexagonal in section and tapering to a point, so they read as
+ * grown rather than built. Left and right hash separately; symmetric, they look
+ * like an avenue someone planned.
+ */
+float sceneMapOd(vec3 p){
+  float dg = groundDistOd(p, 0.55, 5.7);
+  float d = dg;
+  gMatOd = 0.0;
+  if(spires_visible > 0.5){
+    float sp = 9.0;
+    float cz = cellOd(p.z, sp);
+    float side = p.x < 0.0 ? -1.0 : 1.0;
+    float h = hashOd(vec2(cz, side * 7.0 + 11.0));
+    if(h > 0.3){
+      vec3 c = vec3(side * (6.5 + h * 7.0), 0.0, cz * sp + (h - 0.5) * 3.0);
+      c.y = terrainOd(c.xz, 0.55, 5.7) - 0.6;
+      vec3 q = p - c;
+      float ht = 3.5 + h * 10.0;
+      float r = 0.55 + h * 0.75;
+      float hex = max(abs(q.x) * 0.866 + abs(q.z) * 0.5, abs(q.z));
+      float taper = r * clamp(1.0 - q.y / ht, 0.0, 1.0);
+      float ds = max(max(hex - taper, -q.y), q.y - ht) * 0.6;
+      if(ds < d){ d = ds; gMatOd = 1.0; gHueOd = h; }
+    }
+    if(dg < 8.5) gCapOd = min(gCapOd, cellEdgeOd(p.z, cz, sp));
+  }
+  return d;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  float stride = 0.4 + walk_react * 0.9;
+  float sw = 0.9 + sword_react * 1.3;
+
+  vec3 ro, rd;
+  fpsCamOd(fragCoord, 0.55, 5.7, stride, ro, rd);
+  vec2 sky = skyUvOd(rd);
+  vec3 key = vec3(0.35, 1.00, 0.95);
 
   // Clean sky: deep violet overhead into hot magenta at the horizon.
-  float s = clamp(uv.y + 0.5, 0.0, 1.0);
-  vec3 col = mix(vec3(0.55, 0.10, 0.45), vec3(0.10, 0.03, 0.30), s);
-  col += vec3(0.9, 0.25, 0.6) * pow(max(0.0, 1.0 - abs(uv.y + 0.26) * 1.8), 4.0) * 0.5;
+  float e = clamp(rd.y * 2.2, 0.0, 1.0);
+  vec3 horizon = vec3(0.55, 0.10, 0.45);
+  vec3 col = mix(horizon, vec3(0.10, 0.03, 0.30), e);
+  col += vec3(0.9, 0.25, 0.6) * pow(max(0.0, 1.0 - abs(rd.y) * 4.0), 4.0) * 0.5;
+  vec3 skyCol = col;
 
-  // Background, behind everything.
-  float gyx = groundOd(uv.x, scroll, 5.7, -0.26, 0.55);
-  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyCageOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
-  }
+  float mat;
+  float t = marchOd(ro, rd, 200.0, mat);
 
-  if(aurora_visible > 0.5){
-    float a = 0.0;
-    for(int i = 0; i < 3; i++){
-      float fi = float(i);
-      float yy = uv.y - 0.10 - fi * 0.09;
-      float wv = fbmOd(vec2(uv.x * 1.6 + scroll * 2.0 + fi * 4.0, iTime * 0.12 + fi)) - 0.5;
-      a += smoothstep(0.075, 0.0, abs(yy - wv * 0.22)) * (1.0 - fi * 0.22);
+  if(mat < -0.5){
+    if(sky_visible > 0.5) col += skyCageOd(sky, sky_react) * smoothstep(-0.02, 0.1, rd.y);
+    if(aurora_visible > 0.5){
+      float a = 0.0;
+      for(int i = 0; i < 3; i++){
+        float fi = float(i);
+        float yy = sky.y - 0.10 - fi * 0.09;
+        float wv = fbmOd(vec2(sky.x * 1.6 + fi * 4.0, iTime * 0.12 + fi)) - 0.5;
+        a += smoothstep(0.075, 0.0, abs(yy - wv * 0.22)) * (1.0 - fi * 0.22);
+      }
+      vec3 ac = mix(vec3(0.20, 1.00, 0.80), vec3(0.70, 0.35, 1.00), 0.5 + 0.5 * sin(iTime * 0.3));
+      col += ac * a * (0.25 + aurora_react * 0.8);
     }
-    vec3 ac = mix(vec3(0.20, 1.00, 0.80), vec3(0.70, 0.35, 1.00),
-                  0.5 + 0.5 * sin(iTime * 0.3));
-    col += ac * a * (0.25 + aurora_react * 0.8);
+  } else {
+    vec3 p = ro + rd * t;
+    vec3 n = normalOd(p, t);
+    // A low magenta sun off the horizon ahead, and the crests rimmed in cyan.
+    vec3 sun = normalize(vec3(-0.3, 0.22, 1.0));
+    float dif = clamp(dot(n, sun), 0.0, 1.0);
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+    vec3 g;
+    if(mat < 0.5){
+      vec3 base = vec3(0.07, 0.03, 0.10);
+      g = base * (vec3(1.0, 0.35, 0.8) * dif * 2.2 + vec3(0.25, 0.12, 0.45) * (0.5 + 0.5 * n.y));
+      g += key * rim * 0.25 * exp(-t * 0.01);
+    } else {
+      // Lit glass: dark through the body, burning along the edges and up
+      // towards the point.
+      vec3 sc = mix(vec3(0.15, 0.90, 1.00), vec3(1.00, 0.30, 0.85), gHueOd);
+      float rise = clamp((p.y - terrainOd(p.xz, 0.55, 5.7)) / 10.0, 0.0, 1.0);
+      // Lit from inside: a floor of glow through the whole body, so they read
+      // as glass with a light in it rather than as dark spikes with an edge.
+      float facet = 0.5 + 0.5 * sin((p.y - p.x * 0.5) * 3.0 + gHueOd * 20.0);
+      g = sc * (0.22 + rise * 0.55 + facet * 0.12) * (0.45 + spires_react * 1.1);
+      g += sc * rim * 1.4 * (0.4 + spires_react * 1.1);
+      g += vec3(1.0) * pow(clamp(dot(reflect(rd, n), sun), 0.0, 1.0), 24.0) * 0.6;
+    }
+    col = fogOd(g, skyCol, t, 0.011);
   }
 
-  // Crystal spires, tapering as they rise, lit from inside.
-  if(spires_visible > 0.5){
-    float sx = uv.x + scroll * 1.4;
-    float cell = floor(sx / 0.26);
-    float h = hashOd(vec2(cell, 11.0));
-    float lx = mod(sx, 0.26) - 0.13;
-    float top = -0.16 + h * 0.30;
-    float ty = clamp((uv.y + 0.30) / max(top + 0.30, 1e-3), 0.0, 1.0);
-    float wdt = (0.012 + h * 0.020) * (1.0 - ty * 0.85);
-    float m = smoothstep(px, -px, abs(lx) - wdt)
-            * smoothstep(px, -px, uv.y - top)
-            * smoothstep(-px, px, uv.y + 0.30)
-            * step(0.45, h);
-    vec3 sc = mix(vec3(0.15, 0.90, 1.00), vec3(1.00, 0.30, 0.85), h);
-    col = mix(col, sc * (0.5 + spires_react * 1.2), m * 0.9);
-    // a soft bleed so they read as lit glass rather than cut paper
-    col += sc * smoothstep(0.05, 0.0, abs(lx) - wdt)
-              * smoothstep(top + 0.05, top - 0.2, uv.y)
-              * step(0.45, h) * (0.10 + spires_react * 0.25);
-  }
-
-  // Ground: a far violet band and a near black one.
-  col = mix(col * vec3(0.35, 0.18, 0.45), col,
-            bandOd(uv, scroll * 0.55, 2.3, -0.20, 0.70, px));
-  col *= mix(0.05, 1.0, bandOd(uv, scroll, 5.7, -0.26, 0.55, px));
-
-  vec3 key = vec3(0.35, 1.00, 0.95);
-  float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
-  col *= smoothstep(-px, px, d);
-  col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.7 + walk_react * 0.9);
-  // Suit piping, drawn only where it falls inside the cut-out — outside it
-  // would read as a thicker outline rather than as costume.
-  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
-       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
+  col = viewmodelLayerOd(col, sw, walk_visible, stride, key, 0.7 + walk_react * 0.9);
 
   // Spores, over everything — this is the air the rest of the suite loses.
   if(motes_visible > 0.5){
-    float m = motesOd(uv + vec2(scroll, 0.0), 14.0, 0.06, 0.55);
-    vec3 mc = mix(vec3(1.00, 0.85, 0.40), vec3(0.40, 1.00, 0.95), fract(uv.x * 3.0));
+    float m = sporesOd(gUvOd, 0.035, 0.74);
+    vec3 mc = mix(vec3(1.00, 0.85, 0.40), vec3(0.40, 1.00, 0.95), fract(gUvOd.x * 3.0 + 0.5));
     col += mc * m * (0.4 + motes_react * 1.2);
   }
 
+  col *= 1.0 - 0.4 * pow(clamp(length(gUvOd * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -171,7 +197,7 @@ export const revelry: ShaderDef = {
   id: 'revelry',
   name: 'Odyssey II — Revelry',
   description:
-    'The first journey: clean air and a landscape behaving like a party. Aurora ribbons, glowing crystal spires and drifting spores in full magenta and cyan.',
+    'The first journey, in the first person: clean air and a landscape behaving like a party. An avenue of glowing crystal spires, aurora overhead and spores streaming past, in full magenta and cyan.',
   bufferShader,
   imageShader,
   elements: [
@@ -179,7 +205,8 @@ export const revelry: ShaderDef = {
       id: 'walk',
       name: 'Traveller',
       description:
-        'Travel speed and stride of the figure crossing the scene. At 0 they hold centre and march in place. Hide to clear them out of the frame.',
+        
+        'You. How hard each step lands — the head bob and the sword swinging with it. The pace itself follows the motion clock, so the walk quickens with the music. Hide to put the sword away.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.3,
@@ -190,7 +217,8 @@ export const revelry: ShaderDef = {
       id: 'sword',
       name: 'Sword',
       description:
-        'Size of the blade alone — the body stays put. Push the level for something absurd above the horizon.',
+        
+        'Size of the blade in your hand. Push the level and it runs off the top of the frame.',
       defaultBand: 'high',
       defaultAmount: 0.5,
       defaultLevel: 0.45,
@@ -211,7 +239,8 @@ export const revelry: ShaderDef = {
     {
       id: 'spires',
       name: 'Spires',
-      description: 'The lit crystal columns growing out of the ridge. React drives what is inside them.',
+      description: 
+        'The lit crystal spires lining the path. React drives the light inside them.',
       defaultBand: 'low',
       defaultAmount: 0.9,
       defaultLevel: 0.3,
@@ -221,7 +250,8 @@ export const revelry: ShaderDef = {
     {
       id: 'motes',
       name: 'Spores',
-      description: 'Drifting particles in the clean air. React brightens the whole field.',
+      description: 
+        'Spores in the clean air, streaming past as you walk. React brightens the whole field.',
       defaultBand: 'high',
       defaultAmount: 1.0,
       defaultLevel: 0.3,

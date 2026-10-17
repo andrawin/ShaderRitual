@@ -20,7 +20,7 @@ import { odysseyUniforms, odysseyLib } from './odyssey';
  * direct quotation in the suite, and the reason this scene closes the arc that
  * Revelry's clean air opened.
  *
- * Shares the suite's grammar (see odyssey.ts).
+ * Played in the first person (see odyssey.ts).
  */
 
 const bufferShader = `
@@ -121,90 +121,123 @@ vec3 skyStormOd(vec2 uv, float react){
   return acc;
 }
 
-/* Forest ridge crossfading into dunes as the burn advances. */
-float landOd(float x, float scroll, float bn){
-  float f = ridgeOd(x + scroll, 13.7) * 0.5;
-  float dn = sin((x + scroll) * 3.1) * 0.05 + sin((x + scroll) * 7.3 + 1.7) * 0.018;
-  return -0.24 + mix(f, dn, bn);
+float gBnOd = 0.0;
+
+/* Forest ridge crossfading into dunes as the burn advances. The dunes are kept
+ * low down the lane for the same reason the ridge is. */
+float landOd(vec2 xz){
+  float f = terrainOd(xz, 0.5, 13.7);
+  float lane = mix(0.12, 1.0, smoothstep(2.5, 16.0, abs(xz.x)));
+  float dn = (sin(xz.x * 0.09 + xz.y * 0.05) * 2.6 + sin(xz.x * 0.21 - xz.y * 0.13 + 1.7) * 0.9) * lane;
+  return mix(f, dn, gBnOd);
+}
+
+/*
+ * A burnt tree: a tapering trunk forking into three bare limbs. No crown — it
+ * has already gone — and fewer of them stand as the burn finishes.
+ */
+float treeOd3(vec3 q, float h){
+  float ht = 4.5 + h * 4.0;
+  float d = sdSeg3Od(q, vec3(0.0), vec3(0.15 * (h - 0.5), ht, 0.0)) - mix(0.32, 0.09, clamp(q.y / ht, 0.0, 1.0));
+  vec3 top = vec3(0.15 * (h - 0.5), ht * 0.62, 0.0);
+  float a = h * 17.0;
+  for(int i = 0; i < 3; i++){
+    float fi = float(i);
+    float an = a + fi * 2.094;
+    vec3 tip = top + vec3(cos(an) * 1.6, 1.4 + fi * 0.5 + h, sin(an) * 1.6);
+    d = min(d, sdSeg3Od(q, top, tip) - 0.08);
+  }
+  return d;
+}
+
+float sceneMapOd(vec3 p){
+  float dg = (p.y - landOd(p.xz)) * 0.55;
+  float d = dg;
+  gMatOd = 0.0;
+  if(trees_visible > 0.5){
+    float sp = 5.0;
+    float cz = cellOd(p.z, sp);
+    float side = p.x < 0.0 ? -1.0 : 1.0;
+    float h = hashOd(vec2(cz, side * 9.0 + 41.0));
+    if(h > mix(0.25, 0.92, gBnOd)){
+      vec3 c = vec3(side * (3.5 + h * 10.0), 0.0, cz * sp + (h - 0.5) * 2.0);
+      c.y = landOd(c.xz) - 0.3;
+      float dt = treeOd3(p - c, h);
+      if(dt < d){ d = dt; gMatOd = 1.0; }
+    }
+    if(dg < 7.0) gCapOd = min(gCapOd, cellEdgeOd(p.z, cz, sp));
+  }
+  return d;
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = frameOd(fragCoord);
-  float px = pxOd();
-  float scroll = -iTime * 0.038 - iCamOrbit * 0.03;
-  float bn = clamp(burn_react, 0.0, 2.0) * 0.5;
+  gBnOd = clamp(burn_react, 0.0, 2.0) * 0.5;
+  float bn = gBnOd;
+  float stride = 0.4 + walk_react * 0.9;
+  float sw = 0.9 + sword_react * 1.3;
 
-  float spd = 0.024 + walk_react * 0.055;
-  float sw  = 0.9 + sword_react * 1.3;
-  float wx  = travellerXOd(spd);
-  float gy  = landOd(wx, scroll, bn);
+  vec3 ro, rd;
+  fpsCamOd(fragCoord, 0.5, 13.7, stride, ro, rd);
+  vec2 sky = skyUvOd(rd);
 
   // Sky: ember orange under ash, lifting to desert haze as it finishes.
-  float s = clamp(uv.y + 0.5, 0.0, 1.0);
+  float e = clamp(rd.y * 2.2, 0.0, 1.0);
   vec3 col = mix(mix(vec3(0.85, 0.28, 0.06), vec3(0.72, 0.50, 0.28), bn),
-                 mix(vec3(0.10, 0.05, 0.06), vec3(0.28, 0.20, 0.16), bn), s);
-  col += vec3(1.0, 0.45, 0.10) * pow(max(0.0, 1.0 - abs(uv.y + 0.24) * 1.5), 3.0)
-       * 0.5 * (1.0 - bn * 0.6);
+                 mix(vec3(0.10, 0.05, 0.06), vec3(0.28, 0.20, 0.16), bn), e);
+  col += vec3(1.0, 0.45, 0.10) * pow(max(0.0, 1.0 - abs(rd.y) * 3.0), 3.0) * 0.5 * (1.0 - bn * 0.6);
+  vec3 skyCol = col;
 
-  // Background, behind everything — under the smoke, so the smoke veils it.
-  float gyx = landOd(uv.x, scroll, bn);
-  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyStormOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
-  }
+  float mat;
+  float t = marchOd(ro, rd, 200.0, mat);
 
-  // Smoke lying across the sky.
-  float sm = fbmOd(vec2(uv.x * 1.6 + scroll * 1.3, uv.y * 1.5 - iTime * 0.07));
-  col = mix(col, vec3(0.13, 0.10, 0.10), clamp(sm * 0.45 * (1.0 - bn * 0.4), 0.0, 0.7));
+  // The fire goes out as the burn finishes; what is left is sand.
+  float fireAmt = fire_visible > 0.5 ? (0.5 + fire_react * 1.4) * (1.0 - bn * 0.92) : 0.0;
 
-  // Far ridge.
-  col = mix(col * vec3(0.55, 0.35, 0.28), col,
-            bandOd(uv, scroll * 0.5, 10.6, -0.18, 0.70, px));
-
-  // The forest, thinning out as the burn advances.
-  if(trees_visible > 0.5){
-    float tx = uv.x + scroll * 1.15;
-    float cell = floor(tx / 0.155);
-    float h = hashOd(vec2(cell, 41.0));
-    if(h > mix(0.42, 0.97, bn)){
-      float cx = (cell + 0.5) * 0.155 - scroll * 1.15;
-      vec2 tp = vec2(mod(tx, 0.155) - 0.0775, uv.y - landOd(cx, scroll, bn));
-      float td = treeOd(tp, h * 4.3, 0.5 + trees_react);
-      float m = smoothstep(0.07, 0.02, td);
-      col = mix(col, vec3(0.020, 0.014, 0.016), m);
-      // the crown catching
-      col += vec3(1.0, 0.40, 0.08) * smoothstep(0.11, 0.07, td)
-           * (0.25 + trees_react * 0.6) * (1.0 - bn * 0.7);
+  if(mat < -0.5){
+    if(sky_visible > 0.5) col += skyStormOd(sky, sky_react) * smoothstep(-0.02, 0.1, rd.y);
+    // Smoke lying across the sky.
+    float sm = fbmOd(vec2(sky.x * 1.6, sky.y * 1.5 - iTime * 0.07));
+    col = mix(col, vec3(0.13, 0.10, 0.10), clamp(sm * 0.45 * (1.0 - bn * 0.4), 0.0, 0.7));
+  } else {
+    vec3 p = ro + rd * t;
+    vec3 n = normalOd(p, t);
+    vec3 sun = normalize(vec3(0.2, 0.25, 1.0));
+    float dif = clamp(dot(n, sun), 0.0, 1.0);
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+    vec3 key = mix(vec3(1.00, 0.55, 0.15), vec3(1.00, 0.86, 0.58), bn);
+    vec3 g;
+    if(mat < 0.5){
+      // Burnt black turning to sand.
+      vec3 base = mix(vec3(0.035, 0.022, 0.02), vec3(0.42, 0.29, 0.17), bn);
+      g = base * (vec3(1.0, 0.55, 0.3) * dif * 1.8 + vec3(0.35, 0.18, 0.12) * (0.5 + 0.5 * n.y));
+      // The fire line: the ground itself burning in drifting patches, flaring
+      // under the trees and dying back to sand as the burn finishes.
+      float fl = fbmOd(p.xz * 0.35 + vec2(iTime * 0.25, -iTime * 0.4));
+      float burnPatch = smoothstep(0.52, 0.72, fl);
+      g += mix(vec3(1.0, 0.30, 0.05), vec3(1.0, 0.75, 0.25), fl) * burnPatch * fireAmt * 0.9;
+      g += key * rim * 0.14 * exp(-t * 0.012);
+    } else {
+      // Charcoal, with the limbs still catching higher up.
+      float up = clamp((p.y - landOd(p.xz)) / 7.0, 0.0, 1.0);
+      g = vec3(0.025, 0.016, 0.015) * (0.4 + dif);
+      float flick = 0.6 + 0.4 * sin(iTime * 9.0 + p.y * 3.0 + p.x);
+      g += vec3(1.0, 0.40, 0.08) * smoothstep(0.35, 0.9, up) * flick
+         * (0.35 + trees_react * 0.8) * (1.0 - bn * 0.7);
+      g += key * rim * 0.4;
     }
+    col = fogOd(g, skyCol, t, 0.012 + (1.0 - bn) * 0.004);
   }
-
-  // Ground: burnt black turning to sand.
-  col = mix(mix(vec3(0.030, 0.020, 0.020), vec3(0.42, 0.29, 0.17), bn), col,
-            smoothstep(-px, px, uv.y - landOd(uv.x, scroll, bn)));
 
   vec3 key = mix(vec3(1.00, 0.55, 0.15), vec3(1.00, 0.86, 0.58), bn);
-  float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
-  col *= smoothstep(-px, px, d);
-  col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.7 + walk_react * 0.9);
-  // Suit piping, drawn only where it falls inside the cut-out — outside it
-  // would read as a thicker outline rather than as costume.
-  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
-       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
+  col = viewmodelLayerOd(col, sw, walk_visible, stride, key, 0.7 + walk_react * 0.9);
 
-  // The fire line hugging the ground, and what it throws up.
-  if(fire_visible > 0.5){
-    float hgt = uv.y - landOd(uv.x, scroll, bn);
-    float fl = fbmOd(vec2(uv.x * 5.0 + scroll * 3.0, uv.y * 3.0 - iTime * 1.1));
-    float band = smoothstep(0.22 + fl * 0.12, -0.01, hgt)
-               * smoothstep(-0.05, 0.02, hgt) * (1.0 - bn * 0.55);
-    col += mix(vec3(1.0, 0.35, 0.06), vec3(1.0, 0.80, 0.25), fl)
-         * band * (0.5 + fire_react * 1.4);
-  }
-
+  // Embers streaming past, over everything.
   if(embers_visible > 0.5){
-    float e = motesOd(uv * 1.3 + vec2(scroll * 1.4, 0.0), 16.0, 0.22, 0.62);
-    col += vec3(1.0, 0.42, 0.10) * e * (0.5 + embers_react * 1.6) * (1.0 - bn * 0.4);
+    float em = sporesOd(gUvOd + vec2(0.0, -iTime * 0.02), 0.04, 0.7);
+    col += vec3(1.0, 0.42, 0.10) * em * (0.5 + embers_react * 1.6) * (1.0 - bn * 0.4);
   }
 
+  col *= 1.0 - 0.45 * pow(clamp(length(gUvOd * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -222,7 +255,7 @@ export const cinder: ShaderDef = {
   id: 'cinder',
   name: 'Odyssey VI — Cinder',
   description:
-    'The last journey: a forest and an air both on fire, with nothing but sand behind it. Ride Burn from 0 to 2 and the forest goes to desert in front of the audience.',
+    'The last journey, in the first person: walking through a forest and an air both on fire, with nothing but sand behind it. Ride Burn from 0 to 2 and it goes to desert around you.',
   bufferShader,
   imageShader,
   elements: [
@@ -230,7 +263,8 @@ export const cinder: ShaderDef = {
       id: 'walk',
       name: 'Traveller',
       description:
-        'Travel speed and stride of the figure crossing the scene. At 0 they hold centre and march in place. Hide to clear them out of the frame.',
+        
+        'You. How hard each step lands — the head bob and the sword swinging with it. The pace itself follows the motion clock, so the walk quickens with the music. Hide to put the sword away.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.3,
@@ -241,7 +275,8 @@ export const cinder: ShaderDef = {
       id: 'sword',
       name: 'Sword',
       description:
-        'Size of the blade alone — the body stays put. Push the level for something absurd above the horizon.',
+        
+        'Size of the blade in your hand. Push the level and it runs off the top of the frame.',
       defaultBand: 'high',
       defaultAmount: 0.5,
       defaultLevel: 0.45,
@@ -252,7 +287,8 @@ export const cinder: ShaderDef = {
       id: 'fire',
       name: 'Fire',
       description:
-        'The burning line along the ground. React makes it surge on the beat; it damps itself down as Burn rises and there is less left to take.',
+        
+        'The ground burning in drifting patches. React makes it surge; it goes out as Burn rises and there is less left to take.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.4,
@@ -262,7 +298,8 @@ export const cinder: ShaderDef = {
     {
       id: 'embers',
       name: 'Embers',
-      description: 'What the fire throws up into the air. React drives the density.',
+      description: 
+        'Embers streaming past as you walk through the fire. React drives the density.',
       defaultBand: 'high',
       defaultAmount: 1.0,
       defaultLevel: 0.35,
@@ -273,7 +310,8 @@ export const cinder: ShaderDef = {
       id: 'trees',
       name: 'Forest',
       description:
-        'The fractal trees, straight out of Horizon. React sways them and lights their crowns; hide for bare ground.',
+        
+        'The burnt trees lining the path, limbs still catching. React drives the fire in them; hide for bare ground.',
       defaultBand: 'mid',
       defaultAmount: 0.8,
       defaultLevel: 0.3,
@@ -284,7 +322,8 @@ export const cinder: ShaderDef = {
       id: 'burn',
       name: 'Burn',
       description:
-        'How far the fire has already got. Crossfades ridge to dunes, thins the forest to the last few trees, damps the fire and lifts the sky to desert haze. 0 is forest, 2 is desert.',
+        
+        'How far the fire has already got. Crossfades forest to dunes, thins the trees to the last few standing, puts the fire out and lifts the sky to desert haze.',
       defaultBand: 'mid',
       defaultAmount: 0.4,
       defaultLevel: 0.4,

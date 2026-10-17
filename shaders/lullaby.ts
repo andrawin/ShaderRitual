@@ -16,7 +16,7 @@ import { odysseyUniforms, odysseyLib } from './odyssey';
  * it on the kick and the detonation lands on the beat: white core, a column
  * that grows with the hit, shock rings rolling out, and the whole sky flashed.
  *
- * Shares the suite's grammar (see odyssey.ts).
+ * Played in the first person (see odyssey.ts).
  */
 
 const bufferShader = `
@@ -77,92 +77,105 @@ vec3 skyCloudOd(vec2 uv, float react, float b){
   return acc * (0.30 + react * 0.55);
 }
 
-void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = frameOd(fragCoord);
-  float px = pxOd();
-  float scroll = -iTime * 0.018 - iCamOrbit * 0.02;
+float sceneMapOd(vec3 p){
+  gMatOd = 0.0;
+  return groundDistOd(p, 0.6, 7.9);
+}
 
-  float spd = 0.010 + walk_react * 0.040;
-  float sw  = 0.9 + sword_react * 1.3;
-  float wx  = travellerXOd(spd);
-  float gy  = groundOd(wx, scroll, 7.9, -0.25, 0.60);
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  float stride = 0.3 + walk_react * 0.8;
+  float sw = 0.9 + sword_react * 1.3;
+
+  vec3 ro, rd;
+  fpsCamOd(fragCoord, 0.6, 7.9, stride, ro, rd);
+  vec2 sky = skyUvOd(rd);
 
   // The detonation. Hidden means it never happens.
   float b = 0.0;
   if(blast_visible > 0.5){
     b = clamp(pow(max(0.0, sin(iTime * 0.13)), 24.0) + blast_react * 0.7, 0.0, 1.6);
   }
+  vec3 hot = vec3(1.00, 0.94, 0.82);
+  // Where it is: ahead and to the right, far enough that it sits on the
+  // horizon. Kept a fixed way off from you rather than fixed in the world, so
+  // it stays where the cloud in the sky is drawn.
+  // sky.x = azimuth * 1.42, and positive azimuth is screen-right, which is -x
+  // in the world when you face +z.
+  float baz = 0.42 / 1.42;
+  vec2 gz = vec2(-sin(baz) * 320.0, walkedOd() + cos(baz) * 320.0);
+  vec3 blastDir = normalize(vec3(gz.x - ro.x, 6.0, gz.y - ro.z));
 
-  // Night sky: deep blue overhead, a colder wash at the horizon.
-  float s = clamp(uv.y + 0.5, 0.0, 1.0);
-  vec3 col = mix(vec3(0.06, 0.10, 0.26), vec3(0.01, 0.02, 0.09), s);
-  col += vec3(0.10, 0.18, 0.34) * pow(max(0.0, 1.0 - abs(uv.y + 0.25) * 2.0), 3.0);
-  col += vec3(0.05, 0.09, 0.20) * fbmOd(vec2(uv.x * 1.1 + scroll, uv.y * 2.2 + 4.0)) * 0.5;
+  // Night: deep blue overhead, a colder wash at the horizon.
+  float e = clamp(rd.y * 2.2, 0.0, 1.0);
+  vec3 horizon = vec3(0.06, 0.10, 0.26);
+  vec3 col = mix(horizon, vec3(0.01, 0.02, 0.09), e);
+  col += vec3(0.10, 0.18, 0.34) * pow(max(0.0, 1.0 - abs(rd.y) * 4.0), 3.0);
+  col += vec3(0.05, 0.09, 0.20) * fbmOd(vec2(sky.x * 1.1, sky.y * 2.2 + 4.0)) * 0.5;
+  vec3 skyCol = col;
 
-  // Background, behind everything.
-  float gyx = groundOd(uv.x, scroll, 7.9, -0.25, 0.60);
-  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyCloudOd(uv, sky_react, b) * skyFadeOd(uv.y, gyx);
+  float mat;
+  float t = marchOd(ro, rd, 220.0, mat);
+
+  if(mat < -0.5){
+    float up = smoothstep(-0.02, 0.1, rd.y);
+    if(sky_visible > 0.5) col += skyCloudOd(sky, sky_react, b) * up;
+    if(stars_visible > 0.5){
+      float st = starsOd(sky, 34.0, 0.7) + starsOd(sky * 1.9 + vec2(0.0, 11.0), 34.0, 1.0) * 0.6;
+      col += vec3(0.80, 0.88, 1.0) * st * (0.45 + stars_react * 0.9) * up * (1.0 - min(b, 1.0) * 0.7);
+    }
+    if(moon_visible > 0.5){
+      // As a true angle from a direction rather than a circle in sky
+      // coordinates, which comes out as an oval once it is projected.
+      vec3 md3 = normalize(vec3(0.279, 0.292, 0.915));
+      float md = acos(clamp(dot(rd, md3), -1.0, 1.0));
+      col += vec3(0.75, 0.82, 1.0) * smoothstep(0.072, 0.067, md) * (0.7 + moon_react * 0.6);
+      col += vec3(0.35, 0.50, 0.85) * pow(max(0.0, 1.0 - md * 3.1), 4.0) * (0.25 + moon_react * 0.6);
+    }
+    if(b > 0.001){
+      // Column and cap as one union, with the cap outline boiled.
+      vec2 bp = sky - vec2(0.42, -0.24);
+      float colw = 0.020 + b * 0.026;
+      float colh = 0.12 + b * 0.30;
+      vec2 cp = bp - vec2(0.0, colh);
+      float capr = 0.060 + b * 0.075;
+      float boil = fbmOd(vec2(cp.x * 7.0, cp.y * 7.0 - iTime * 0.8)) - 0.5;
+      float cloud = min(sdSegOd(bp, vec2(0.0, 0.0), vec2(0.0, colh), colw),
+                        length(cp * vec2(0.58, 1.05)) - capr - boil * capr * 0.5);
+      float px = 0.004;
+      col = mix(col, hot, smoothstep(px * 2.0, -px * 2.0, cloud) * min(b, 1.0));
+      float bd = length(bp);
+      col += hot * pow(max(0.0, 1.0 - bd * 3.2), 5.0) * b * 1.4;
+      col += hot * pow(max(0.0, 1.0 - bd * 1.1), 2.5) * b * 0.45;
+    }
+  } else {
+    vec3 p = ro + rd * t;
+    vec3 n = normalOd(p, t);
+    // The moon is up and to the left, which is +x facing +z.
+    vec3 moon = normalize(vec3(0.279, 0.292, 0.915));
+    float dif = clamp(dot(n, moon), 0.0, 1.0);
+    vec3 base = vec3(0.035, 0.045, 0.08);
+    vec3 g = base * (vec3(0.5, 0.6, 1.0) * dif * 1.6 + vec3(0.18, 0.24, 0.45) * (0.5 + 0.5 * n.y));
+    // The flash lights everything that faces it.
+    g += vec3(0.25, 0.22, 0.18) * hot * clamp(dot(n, blastDir), 0.0, 1.0) * b * 1.6;
+    // Shock fronts rolling out across the ground, towards you.
+    if(b > 0.001){
+      float rr = length(p.xz - gz);
+      g += hot * pow(sin(rr * 0.08 - iTime * 6.0) * 0.5 + 0.5, 10.0)
+         * smoothstep(420.0, 40.0, rr) * b * 0.55;
+    }
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+    vec3 keyT = mix(vec3(0.55, 0.75, 1.00), vec3(1.00, 0.90, 0.70), clamp(b, 0.0, 1.0));
+    g += keyT * rim * (0.16 + b * 0.3) * exp(-t * 0.01);
+    col = fogOd(g, mix(skyCol, hot * 0.5, min(b, 1.0) * 0.5), t, 0.010);
   }
 
-  if(stars_visible > 0.5){
-    float st = starsOd(uv + vec2(scroll * 0.25, 0.0), 34.0, 0.7)
-             + starsOd(uv * 1.9 + vec2(scroll * 0.15, 11.0), 34.0, 1.0) * 0.6;
-    col += vec3(0.80, 0.88, 1.0) * st * (0.45 + stars_react * 0.9);
-  }
+  // The whole sky goes white at the peak.
+  col += vec3(1.0, 0.95, 0.85) * b * 0.18;
 
-  if(moon_visible > 0.5){
-    vec2 mp = uv - vec2(-0.42, 0.18);
-    float md = length(mp);
-    col += vec3(0.75, 0.82, 1.0) * smoothstep(0.105, 0.098, md) * (0.7 + moon_react * 0.6);
-    col += vec3(0.35, 0.50, 0.85) * pow(max(0.0, 1.0 - md * 2.2), 4.0)
-         * (0.25 + moon_react * 0.6);
-  }
-
-  // Far ridge.
-  col = mix(col * vec3(0.30, 0.36, 0.60), col,
-            bandOd(uv, scroll * 0.5, 6.2, -0.19, 0.75, px));
-
-  if(b > 0.001){
-    vec2 bp = uv - vec2(0.42, -0.24);
-    float bd = length(bp);
-    vec3 hot = vec3(1.00, 0.94, 0.82);
-
-    // Column and cap as one union, so the cap sits on the stem instead of
-    // floating over it, with its outline boiled so it is not a clean ellipse.
-    float colw = 0.020 + b * 0.026;
-    float colh = 0.12 + b * 0.30;
-    vec2 cp = bp - vec2(0.0, colh);
-    float capr = 0.060 + b * 0.075;
-    float boil = fbmOd(vec2(cp.x * 7.0, cp.y * 7.0 - iTime * 0.8)) - 0.5;
-    float cloud = min(sdSegOd(bp, vec2(0.0, 0.0), vec2(0.0, colh), colw),
-                      length(cp * vec2(0.58, 1.05)) - capr - boil * capr * 0.5);
-    col = mix(col, hot, smoothstep(px * 2.0, -px * 2.0, cloud) * min(b, 1.0));
-
-    // Core, ground flash and the sky going white.
-    col += hot * pow(max(0.0, 1.0 - bd * 3.2), 5.0) * b * 1.4;
-    col += hot * pow(max(0.0, 1.0 - bd * 1.1), 2.5) * b * 0.45;
-    col += vec3(1.0, 0.95, 0.85) * b * 0.22;
-
-    // Shock fronts rolling out along the ground. Squashing the radius flattens
-    // them onto the horizon — unsquashed they read as ripples in a pond.
-    float rr = length(bp * vec2(1.0, 3.2));
-    col += hot * pow(sin(rr * 30.0 - iTime * 6.0) * 0.5 + 0.5, 10.0)
-         * smoothstep(0.8, 0.05, rr) * b * 0.45;
-  }
-
-  col *= mix(0.04, 1.0, bandOd(uv, scroll, 7.9, -0.25, 0.60, px));
-
-  // The traveller is backlit by it: the rim warms as the blast grows.
   vec3 key = mix(vec3(0.55, 0.75, 1.00), vec3(1.00, 0.90, 0.70), clamp(b, 0.0, 1.0));
-  float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
-  col *= smoothstep(-px, px, d);
-  col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.55 + walk_react * 0.8 + b * 0.8);
-  // Suit piping, drawn only where it falls inside the cut-out — outside it
-  // would read as a thicker outline rather than as costume.
-  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
-       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
+  col = viewmodelLayerOd(col, sw, walk_visible, stride, key, 0.55 + walk_react * 0.8 + b * 0.8);
 
+  col *= 1.0 - 0.45 * pow(clamp(length(gUvOd * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -180,7 +193,7 @@ export const lullaby: ShaderDef = {
   id: 'lullaby',
   name: 'Odyssey IV — Lullaby',
   description:
-    'The third journey: a silent night of soft stars and a low moon — until the horizon goes white. Put Blast on the kick and the detonation lands on the beat.',
+    'The third journey, in the first person: a silent night of soft stars and a low moon over moonlit dunes — until the horizon goes white and the shock rolls towards you. Put Blast on the kick and it lands on the beat.',
   bufferShader,
   imageShader,
   elements: [
@@ -188,7 +201,8 @@ export const lullaby: ShaderDef = {
       id: 'walk',
       name: 'Traveller',
       description:
-        'Travel speed and stride of the figure crossing the scene. At 0 they hold centre and march in place. Hide to clear them out of the frame.',
+        
+        'You. How hard each step lands — the head bob and the sword swinging with it. The pace itself follows the motion clock, so the walk quickens with the music. Hide to put the sword away.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.25,
@@ -199,7 +213,8 @@ export const lullaby: ShaderDef = {
       id: 'sword',
       name: 'Sword',
       description:
-        'Size of the blade alone — the body stays put. Push the level for something absurd above the horizon.',
+        
+        'Size of the blade in your hand. Push the level and it runs off the top of the frame.',
       defaultBand: 'high',
       defaultAmount: 0.5,
       defaultLevel: 0.45,
@@ -230,7 +245,8 @@ export const lullaby: ShaderDef = {
       id: 'blast',
       name: 'Blast',
       description:
-        'The detonation: column, core, shock rings and a sky flash, with the traveller backlit by it and the nebula lit from underneath. Carries a slow automatic swell; assign it to the kick to land it on the beat. Hide to keep the night silent.',
+        
+        'The detonation on the horizon: column, cap, a flash that lights the ground and shock fronts rolling across it towards you. Carries a slow automatic cycle; react pushes it.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.0,

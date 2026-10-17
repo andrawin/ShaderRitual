@@ -17,7 +17,7 @@ import { odysseyUniforms, odysseyLib } from './odyssey';
  * from 0 to 2 across a track and the landscape is mined in front of the
  * audience.
  *
- * Shares the suite's grammar (see odyssey.ts).
+ * Played in the first person (see odyssey.ts).
  */
 
 const bufferShader = `
@@ -83,86 +83,121 @@ float mineOd(float x, float scroll, float dr){
   return -0.25 + mix(r, floor(r * 26.0) / 26.0, dr);
 }
 
-void mainImage(out vec4 fragColor, in vec2 fragCoord){
-  vec2 uv = frameOd(fragCoord);
-  float px = pxOd();
-  float scroll = -iTime * 0.040 - iCamOrbit * 0.03;
-  float dr = clamp(drain_react, 0.0, 1.0);
+float gDrOd = 0.0;
 
-  float spd = 0.026 + walk_react * 0.060;
-  float sw  = 0.9 + sword_react * 1.3;
-  float wx  = travellerXOd(spd);
-  float gy  = mineOd(wx, scroll, dr);
+/* The land, cut into benches as the drain rises — an open pit, terraced away
+ * from the lane. The lane itself stays smooth, so the walk does not stair-step. */
+float pitOd(vec2 xz){
+  float h = terrainOd(xz, 0.7, 4.1);
+  float stepH = 1.6;
+  float k = h / stepH;
+  float bench = (floor(k) + smoothstep(0.78, 1.0, fract(k))) * stepH;
+  return mix(h, bench, gDrOd * smoothstep(3.0, 11.0, abs(xz.x)));
+}
+
+/*
+ * Derricks: a narrowing lattice tower with a nodding pump arm. The four legs
+ * are one capsule folded into each quadrant with abs(), and each bracing level
+ * is two, so a whole tower costs about what a single leg would.
+ */
+float sceneMapOd(vec3 p){
+  float dg = (p.y - pitOd(p.xz)) * 0.55;
+  float d = dg;
+  gMatOd = 0.0;
+  if(rigs_visible > 0.5){
+    float sp = 14.0;
+    float cz = cellOd(p.z, sp);
+    float side = p.x < 0.0 ? -1.0 : 1.0;
+    float h = hashOd(vec2(cz, side * 5.0 + 21.0));
+    if(h > 0.35){
+      vec3 c = vec3(side * (9.0 + h * 9.0), 0.0, cz * sp);
+      c.y = pitOd(c.xz) - 0.3;
+      vec3 q = p - c;
+      float ht = 7.0 + h * 6.0;
+      vec3 f = vec3(abs(q.x), q.y, abs(q.z));
+      float wb = 1.4, wt = 0.3;
+      float rig = sdSeg3Od(f, vec3(wb, 0.0, wb), vec3(wt, ht, wt)) - 0.07;
+      for(int i = 0; i < 2; i++){
+        float fy = (float(i) + 1.0) / 3.0;
+        float wf = mix(wb, wt, fy);
+        float y = ht * fy;
+        rig = min(rig, sdSeg3Od(f, vec3(0.0, y, wf), vec3(wf, y, wf)) - 0.05);
+        rig = min(rig, sdSeg3Od(f, vec3(wf, y, 0.0), vec3(wf, y, wf)) - 0.05);
+      }
+      // The pump arm nods on its own clock; react drives how far it swings.
+      float nod = sin(iTime * (1.2 + h) + h * 12.0) * 0.6 * (0.4 + rigs_react);
+      rig = min(rig, sdSeg3Od(q, vec3(0.0, ht, 0.0), vec3(-side * 3.0, ht + nod, 0.0)) - 0.14);
+      if(rig < d){ d = rig; gMatOd = 1.0; }
+      // The one warning light left burning on the mast.
+      float lamp = length(q - vec3(0.0, ht + 0.35, 0.0)) - 0.22;
+      if(lamp < d){ d = lamp; gMatOd = 2.0; }
+    }
+    if(dg < 8.5) gCapOd = min(gCapOd, cellEdgeOd(p.z, cz, sp));
+  }
+  return d;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  gDrOd = clamp(drain_react, 0.0, 1.0);
+  float dr = gDrOd;
+  float stride = 0.4 + walk_react * 0.9;
+  float sw = 0.9 + sword_react * 1.3;
+
+  vec3 ro, rd;
+  fpsCamOd(fragCoord, 0.7, 4.1, stride, ro, rd);
+  vec2 sky = skyUvOd(rd);
+  vec3 key = mix(vec3(0.35, 1.00, 0.95), vec3(1.00, 0.55, 0.18), dr);
 
   // The sky Revelry had, crossfaded into the one it is being turned into.
-  float s = clamp(uv.y + 0.5, 0.0, 1.0);
-  vec3 skyA = mix(vec3(0.42, 0.10, 0.38), vec3(0.09, 0.03, 0.22), s);
-  vec3 skyB = mix(vec3(0.40, 0.29, 0.16), vec3(0.10, 0.09, 0.10), s);
+  float e = clamp(rd.y * 2.2, 0.0, 1.0);
+  vec3 skyA = mix(vec3(0.42, 0.10, 0.38), vec3(0.09, 0.03, 0.22), e);
+  vec3 skyB = mix(vec3(0.40, 0.29, 0.16), vec3(0.10, 0.09, 0.10), e);
+  vec3 horizon = mix(vec3(0.42, 0.10, 0.38), vec3(0.40, 0.29, 0.16), dr);
   vec3 col = mix(skyA, skyB, dr);
   col += mix(vec3(0.9, 0.25, 0.6), vec3(0.55, 0.38, 0.14), dr)
-       * pow(max(0.0, 1.0 - abs(uv.y + 0.25) * 1.8), 4.0) * 0.45;
+       * pow(max(0.0, 1.0 - abs(rd.y) * 4.0), 4.0) * 0.45;
+  vec3 skyCol = col;
 
-  // Background, behind everything.
-  float gyx = mineOd(uv.x, scroll, dr);
-  if(sky_visible > 0.5 && uv.y > gyx - 0.02){
-    col += skyMachineOd(uv, sky_react) * skyFadeOd(uv.y, gyx);
-  }
+  float mat;
+  float t = marchOd(ro, rd, 200.0, mat);
 
-  // A far ridge, already grey.
-  col = mix(col * mix(vec3(0.40, 0.22, 0.45), vec3(0.30, 0.28, 0.26), dr), col,
-            bandOd(uv, scroll * 0.55, 4.1, -0.19, 0.70, px));
-
-  // Derricks: a narrowing lattice tower with a nodding arm on top.
-  if(rigs_visible > 0.5){
-    float rx = uv.x + scroll * 1.2;
-    float cell = floor(rx / 0.34);
-    float h = hashOd(vec2(cell, 21.0));
-    if(h > 0.42){
-      float cx = (cell + 0.5) * 0.34 - scroll * 1.2;
-      vec2 rp = vec2(mod(rx, 0.34) - 0.17, uv.y - mineOd(cx, scroll, dr));
-      float th = 0.16 + h * 0.14;
-      float d = 1e5;
-      d = min(d, sdSegOd(rp, vec2(-0.035, 0.0), vec2(-0.008, th), 0.006));
-      d = min(d, sdSegOd(rp, vec2( 0.035, 0.0), vec2( 0.008, th), 0.006));
-      for(int i = 0; i < 3; i++){
-        float f = (float(i) + 1.0) / 4.0;
-        float ww = mix(0.035, 0.008, f);
-        d = min(d, sdSegOd(rp, vec2(-ww, th * f), vec2(ww, th * f), 0.004));
-      }
-      float nod = sin(iTime * (1.2 + h) + h * 12.0) * 0.10 * (0.4 + rigs_react);
-      d = min(d, sdSegOd(rp, vec2(0.0, th), vec2(0.075, th + nod), 0.010));
-      col = mix(col, vec3(0.030, 0.026, 0.028), smoothstep(px, -px, d));
-      // the one warning light left burning on the mast
-      col += vec3(1.0, 0.25, 0.12)
-           * smoothstep(0.02, 0.0, length(rp - vec2(0.0, th + 0.02)))
-           * (0.5 + rigs_react * 1.0);
+  if(mat < -0.5){
+    if(sky_visible > 0.5) col += skyMachineOd(sky, sky_react) * smoothstep(-0.02, 0.1, rd.y);
+    // Plumes standing up off the horizon, thickening as they climb.
+    if(smoke_visible > 0.5){
+      float sm = fbmOd(vec2(sky.x * 2.0, sky.y * 1.4 - iTime * 0.10));
+      sm *= smoothstep(-0.30, 0.35, sky.y) * smoothstep(0.60, 0.10, sky.y);
+      col = mix(col, vec3(0.16, 0.14, 0.13), clamp(sm * (0.35 + smoke_react * 0.9), 0.0, 0.85));
     }
+  } else {
+    vec3 p = ro + rd * t;
+    vec3 n = normalOd(p, t);
+    vec3 sun = normalize(vec3(0.25, 0.3, 1.0));
+    float dif = clamp(dot(n, sun), 0.0, 1.0);
+    float rim = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 4.0);
+    vec3 g;
+    if(mat < 0.5){
+      // Violet earth turning to spoil as it is dug out.
+      vec3 base = mix(vec3(0.08, 0.035, 0.10), vec3(0.11, 0.095, 0.08), dr);
+      g = base * (horizon * dif * 2.4 + vec3(0.2, 0.15, 0.22) * (0.5 + 0.5 * n.y));
+      g += key * rim * 0.22 * exp(-t * 0.01);
+    } else if(mat < 1.5){
+      // Steel, nearly black against the sky, catching a little sun.
+      g = vec3(0.03, 0.028, 0.03) * (0.4 + dif * 2.0) + key * rim * 0.35;
+    } else {
+      g = vec3(1.0, 0.25, 0.12) * (1.5 + rigs_react * 2.0);
+    }
+    // Smoke lies in the pit and thickens the air.
+    float dens = 0.010 + (smoke_visible > 0.5 ? smoke_react * 0.008 : 0.0);
+    col = fogOd(g, mix(skyCol, vec3(0.16, 0.14, 0.13), dr * 0.6), t, dens);
   }
 
-  // Plumes, thickening as they climb.
-  if(smoke_visible > 0.5){
-    float sm = fbmOd(vec2(uv.x * 2.0 + scroll * 1.2, uv.y * 1.4 - iTime * 0.10));
-    sm *= smoothstep(-0.30, 0.35, uv.y) * smoothstep(0.60, 0.10, uv.y);
-    col = mix(col, vec3(0.16, 0.14, 0.13),
-              clamp(sm * (0.35 + smoke_react * 0.9), 0.0, 0.85));
-  }
-
-  // The cut hillside.
-  col *= mix(0.05, 1.0, smoothstep(-px, px, uv.y - mineOd(uv.x, scroll, dr)));
-
-  vec3 key = mix(vec3(0.35, 1.00, 0.95), vec3(1.00, 0.55, 0.18), dr);
-  float d = travellerOd(uv, wx, gy, 0.30, spd, sw, walk_visible);
-  col *= smoothstep(-px, px, d);
-  col += key * smoothstep(px * 2.5, 0.0, abs(d)) * (0.7 + walk_react * 0.9);
-  // Suit piping, drawn only where it falls inside the cut-out — outside it
-  // would read as a thicker outline rather than as costume.
-  col += key * smoothstep(px * 1.7, 0.0, gTrimOd)
-       * (1.0 - smoothstep(-px, px, d)) * (0.55 + walk_react * 0.7);
+  col = viewmodelLayerOd(col, sw, walk_visible, stride, key, 0.7 + walk_react * 0.9);
 
   // Grit in the air, only once the drain is on.
-  col += (hashOd(floor(uv * iResolution.y * 0.5) + floor(iTime * 24.0)) - 0.5)
-       * 0.05 * dr;
+  col += (hashOd(floor(gUvOd * iResolution.y * 0.5) + floor(iTime * 24.0)) - 0.5) * 0.05 * dr;
 
+  col *= 1.0 - 0.4 * pow(clamp(length(gUvOd * vec2(0.85, 1.25)), 0.0, 1.0), 2.5);
   fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 void main(){ vec4 c; mainImage(c, vUv * iResolution.xy); gl_FragColor = c; }
@@ -180,7 +215,7 @@ export const extraction: ShaderDef = {
   id: 'extraction',
   name: 'Odyssey III — Extraction',
   description:
-    'The second journey, where it turns. Nodding derricks, rising plumes, and a hillside quantised into mine benches as the colour drains out of the sky.',
+    'The second journey, where it turns, in the first person. Derricks nodding along the path, plumes on the horizon, and the land either side cut into mine benches as the colour drains out of the sky.',
   bufferShader,
   imageShader,
   elements: [
@@ -188,7 +223,8 @@ export const extraction: ShaderDef = {
       id: 'walk',
       name: 'Traveller',
       description:
-        'Travel speed and stride of the figure crossing the scene. At 0 they hold centre and march in place. Hide to clear them out of the frame.',
+        
+        'You. How hard each step lands — the head bob and the sword swinging with it. The pace itself follows the motion clock, so the walk quickens with the music. Hide to put the sword away.',
       defaultBand: 'low',
       defaultAmount: 0.6,
       defaultLevel: 0.3,
@@ -199,7 +235,8 @@ export const extraction: ShaderDef = {
       id: 'sword',
       name: 'Sword',
       description:
-        'Size of the blade alone — the body stays put. Push the level for something absurd above the horizon.',
+        
+        'Size of the blade in your hand. Push the level and it runs off the top of the frame.',
       defaultBand: 'high',
       defaultAmount: 0.5,
       defaultLevel: 0.45,
@@ -210,7 +247,8 @@ export const extraction: ShaderDef = {
       id: 'rigs',
       name: 'Derricks',
       description:
-        'The pumping rigs on the ridge. React drives how hard they nod and how bright their warning lights burn.',
+        
+        'The derricks lining the path, pump arms nodding. React drives how hard they nod and how bright their warning lights burn.',
       defaultBand: 'low',
       defaultAmount: 1.0,
       defaultLevel: 0.25,
@@ -220,7 +258,8 @@ export const extraction: ShaderDef = {
     {
       id: 'smoke',
       name: 'Plumes',
-      description: 'The smoke going up off the rigs. React thickens it across the sky.',
+      description: 
+        'The plumes standing up off the horizon. React thickens them and the air in the pit.',
       defaultBand: 'mid',
       defaultAmount: 0.9,
       defaultLevel: 0.3,
@@ -231,7 +270,8 @@ export const extraction: ShaderDef = {
       id: 'drain',
       name: 'Drain',
       description:
-        'The scene itself. Pulls the sky from magenta to ochre grey and cuts the hillside into mine benches. Ride it 0 to 2 across a track to mine the landscape live.',
+        
+        'The scene itself. Pulls the sky from magenta to ochre grey and cuts the land either side of the path into mine benches. Ride it 0 to 2 across a track to mine the landscape out from under you.',
       defaultBand: 'mid',
       defaultAmount: 0.4,
       defaultLevel: 0.5,

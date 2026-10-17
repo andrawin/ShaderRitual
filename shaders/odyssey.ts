@@ -4,27 +4,30 @@
  */
 
 /*
- * Shared GLSL for the Odyssey suite — six scenes following one traveller with
- * an oversized sword across a story arc, from waking in an empty universe to a
- * burnt-out desert. The scenes are separate shaders so they can be cut between
- * live, but they share this library so the traveller, the ground and the
- * parallax band language stay identical from one to the next.
+ * Shared GLSL for the Odyssey suite — six scenes of one journey, from waking in
+ * an empty universe to a burnt-out desert, carrying an oversized sword. The
+ * scenes are separate shaders so they can be cut between live, but they share
+ * this library so the walk, the ground and the sword stay identical from one to
+ * the next.
  *
- * The visual grammar is Horizon's: silhouettes stepped out of procedural
- * functions, layered into parallax bands, over a scrolling sin-stack ridge.
- * What is different is the palette — Horizon is monochrome, and these take
- * The Artful Escape's saturated neon as reference, so each scene is built
- * around two or three strong hues with the traveller cut out black against
- * them and rim-lit in the scene's key colour.
+ * It is played in the first person. You are the traveller: the eye walks a
+ * lane at head height over a marched heightfield, the sword is held in view the
+ * way a shooter holds its weapon, and each scene lines the path with its own
+ * props. The shape language is still Horizon's — the terrain is its sin-stack
+ * ridge crossed with itself — and the palette still takes The Artful Escape's
+ * saturated neon as reference: the sword is cut out black against each scene
+ * and rimmed in its key colour, which is the old figure language carried into
+ * the viewmodel.
  *
  * Every scene shares two elements, in the same order, so one MIDI map carries
  * across the whole suite:
- *   walk  -> travel speed and stride; hide to clear the traveller out
+ *   walk  -> how hard each step lands; hide to put the sword away
  *   sword -> blade size, from a longsword to something absurd
  *
  * Everything here is GLSL-ES 1.00: constant loop bounds with the index
  * declared in the init clause, no round()/dFdx()/texelFetch(), no dynamic
- * array indexing.
+ * array indexing. The side-on figure functions below (walkerOd and friends)
+ * are no longer drawn; they are kept for reference to the original suite.
  */
 
 /** Uniform block every scene in the suite opens with. */
@@ -406,5 +409,234 @@ float motesOd(vec2 uv, float density, float rise, float cut){
   vec2 f = fract(g) - 0.5;
   vec2 o = (vec2(hashOd(c + 5.3), hashOd(c + 9.1)) - 0.5) * 0.6;
   return smoothstep(0.13, 0.0, length(f - o)) * (0.35 + h * 0.65);
+}
+
+/* ===================== First-person core =====================
+ * The suite began as a side-on scroller. Now the traveller is you: the eye is
+ * at head height walking the path, the ground is a heightfield marched in
+ * depth, and the oversized sword is held in view the way a shooter holds its
+ * weapon. Each scene supplies sceneMapOd() and its own shading; everything
+ * else — camera, terrain, march, sky projection, the viewmodel — lives here,
+ * so the six still feel like one journey when you cut between them.
+ */
+
+#define EYE_OD 1.7
+
+// Material of whatever sceneMapOd() last found nearest. 0 is always ground.
+float gMatOd = 0.0;
+
+// A step limit a scene may set from sceneMapOd(), kept apart from the
+// distance. Folded into the distance it reads as a surface: the hit test is
+// relative to range, so far enough out a capped step looks like a wall.
+float gCapOd = 1e5;
+
+// Each scene defines this: distance to everything in it, setting gMatOd.
+float sceneMapOd(vec3 p);
+
+/*
+ * Horizon's ridge, crossed with itself, so the suite's shape language carries
+ * into depth. A lane down the middle is kept low; without it the first hill
+ * fills the frame and you are looking at a wall.
+ */
+float terrainOd(vec2 xz, float amp, float seed){
+  float a = ridgeOd(xz.x * 0.022, seed);
+  float b = ridgeOd(xz.y * 0.016 + xz.x * 0.005, seed + 4.7);
+  float lane = smoothstep(2.5, 16.0, abs(xz.x));
+  return (a + b) * 55.0 * amp * mix(0.12, 1.0, lane);
+}
+
+/* A heightfield is not a distance field — on a slope p.y - h overstates the
+ * distance — so the step is taken at a fraction of it. */
+float groundDistOd(vec3 p, float amp, float seed){
+  return (p.y - terrainOd(p.xz, amp, seed)) * 0.55;
+}
+
+// Set by fpsCamOd() for the rest of the frame.
+vec2 gUvOd;       // screen position, aspect-corrected, y in [-0.5, 0.5]
+float gPhaseOd;   // stride phase
+float gPxOd;      // one pixel in gUvOd units
+
+/*
+ * How far you have walked. Deliberately driven by iTime and nothing else: the
+ * motion clock is already audio-gated and integrated on the CPU, so the pace
+ * follows the music smoothly. Multiplying by a band here instead would make
+ * the position jump by metres every time the audio moved, because
+ * distance = time * speed only holds while speed stands still.
+ */
+float walkedOd(){ return iTime * 2.4; }
+
+/*
+ * The eye: head height over the lane, walking +z. Orbit turns the head — kept
+ * within reach, so it never ends up looking back down the path — height
+ * pitches it, distance scales how tall you are, and the lens is iCamFov.
+ * 'stride' is how hard each footfall lands.
+ */
+void fpsCamOd(vec2 fragCoord, float amp, float seed, float stride,
+              out vec3 ro, out vec3 rd){
+  gUvOd = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+  gPxOd = 1.5 / iResolution.y;
+  float dist = walkedOd();
+  gPhaseOd = dist * 1.35;
+
+  float bob = abs(sin(gPhaseOd)) * 0.06 * stride;
+  float sway = sin(gPhaseOd) * 0.04 * stride;
+  // The ground under the eye, averaged a step either side, so one bump in
+  // the lane does not jolt the whole view.
+  float g = 0.5 * (terrainOd(vec2(0.0, dist - 1.2), amp, seed)
+                 + terrainOd(vec2(0.0, dist + 1.2), amp, seed));
+  ro = vec3(sway, g + EYE_OD * clamp(iCamDist, 0.3, 4.0) + bob, dist);
+
+  float yaw = sin(iCamOrbit * 0.5) * 0.55;
+  float pitch = -0.05 + iCamHeight * 0.4 - bob * 0.3;
+  vec3 fw = normalize(vec3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)));
+  // cross(forward, up) — the other order mirrors the world left to right.
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  float f = 0.5 / tan(radians(clamp(iCamFov, 25.0, 110.0) * 0.5));
+  rd = normalize(gUvOd.x * rt + gUvOd.y * up + f * fw);
+}
+
+/*
+ * The skies were written for a flat frame with the horizon at y = -0.24. This
+ * maps a ray to that frame by its angles — azimuth across, elevation up —
+ * which puts the horizon back where they expect it and pins them to the
+ * world, so they turn with the head and stay put as you walk. A planar
+ * projection (rd.xy / rd.z) looks the same straight ahead but its scale runs
+ * away as the head turns, and smears the sky at the edge of the frame.
+ */
+vec2 skyUvOd(vec3 rd){
+  float az = (abs(rd.x) + abs(rd.z) < 1e-5) ? 0.0 : atan(-rd.x, rd.z);
+  float el = asin(clamp(rd.y, -1.0, 1.0));
+  return vec2(az, el) * 1.42 + vec2(0.0, -0.24);
+}
+
+/*
+ * March the scene. A grazing ray near the horizon can run out of steps short
+ * of the ground; treating that as a hit at whatever distance it reached hands
+ * it to the fog, which at that range is all that is visible anyway. Treated as
+ * a miss instead, the sky shows through the far hills in a ragged line.
+ */
+float marchOd(vec3 ro, vec3 rd, float maxT, out float mat){
+  float t = 0.1;
+  mat = -1.0;
+  for(int i = 0; i < 100; i++){
+    gCapOd = 1e5;
+    float d = sceneMapOd(ro + rd * t);
+    if(d < 0.0025 * t){ mat = gMatOd; return t; }
+    // A floor under the step that grows with distance. A ray skimming far
+    // terrain otherwise crawls and runs out of budget, and out there the fog
+    // hides any precision the floor costs.
+    t += max(min(d, gCapOd), t * 0.003);
+    if(t > maxT) return maxT;
+  }
+  mat = 0.0;
+  return t;
+}
+
+vec3 normalOd(vec3 p, float t){
+  vec2 k = vec2(1.0, -1.0) * (0.004 + t * 0.0015);
+  return normalize(k.xyy * sceneMapOd(p + k.xyy) + k.yyx * sceneMapOd(p + k.yyx)
+                 + k.yxy * sceneMapOd(p + k.yxy) + k.xxx * sceneMapOd(p + k.xxx));
+}
+
+vec3 fogOd(vec3 col, vec3 fogCol, float t, float density){
+  return mix(col, fogCol, 1.0 - exp(-t * density));
+}
+
+/* How close a ray passes to a point, and how far along it that is — for glows
+ * that should sit in the world rather than on the screen. */
+float rayPointDistOd(vec3 ro, vec3 rd, vec3 c, out float along){
+  along = dot(c - ro, rd);
+  return length(ro + rd * max(along, 0.0) - c);
+}
+
+/* Domain repetition along the path with a clamp-free cell index, so props keep
+ * coming as long as you keep walking. */
+float cellOd(float z, float spacing){ return floor(z / spacing + 0.5); }
+
+/* Distance to the edge of a repeated cell along z. A prop's distance only
+ * covers its own cell, so a ray could otherwise stride clean over one standing
+ * in the next; capping the step at the edge stops that. Feed it to gCapOd, and
+ * only below the props' height — never into the distance itself. */
+float cellEdgeOd(float z, float cz, float spacing){
+  return spacing * 0.5 - abs(z - cz * spacing) + 0.3;
+}
+
+/* Particles you walk through: a mote field zoomed out from the middle of the
+ * frame, in three staggered layers, so they stream past the way a starfield
+ * does. Screen-space motes only slide sideways, which in first person reads
+ * as dirt on the lens rather than as air you are moving through. */
+float sporesOd(vec2 uv, float speed, float cut){
+  float a = 0.0;
+  for(int i = 0; i < 3; i++){
+    float fi = float(i);
+    float z = fract(walkedOd() * speed + fi / 3.0);
+    float sc = mix(3.6, 0.35, z);
+    float fade = smoothstep(0.0, 0.25, z) * smoothstep(1.0, 0.7, z);
+    a += motesOd(uv * sc + fi * 7.31, 9.0, 0.015, cut) * fade;
+  }
+  return a;
+}
+
+/* ---------------- The viewmodel ----------------
+ * The sword in your hand. Screen space, so it holds still while the world
+ * moves past it — which is the whole effect of a first-person view. Grip off
+ * the bottom-right corner, blade rising across toward the centre, the arm
+ * dipping on each footfall against the head's rise and kicking on the beat.
+ */
+float gFullerOd = 1e5;
+
+float viewmodelOd(vec2 uv, float sw, float show, float stride){
+  gFullerOd = 1e5;
+  if(show < 0.5) return 1e5;
+  float ph = gPhaseOd;
+  float kick = pow(sin(fract(iBeat) * 6.2831853) * 0.5 + 0.5, 6.0) * iCamReact;
+  float aspect = iResolution.x / max(iResolution.y, 1.0);
+  vec2 o = vec2(0.5 * aspect - 0.30 + sin(ph) * 0.014 * stride,
+                -0.32 - abs(cos(ph)) * 0.024 * stride - kick * 0.018
+                + sin(iTime * 1.3) * 0.004);
+  float ang = 2.02 + sin(ph) * 0.03 * stride - kick * 0.05;
+  vec2 dir = vec2(cos(ang), sin(ang));
+  vec2 nrm = vec2(-dir.y, dir.x);
+  vec2 q = uv - o;
+  float al = dot(q, dir);     // along the blade
+  float ac = dot(q, nrm);     // across it
+
+  float L = 0.48 * sw;
+  float thick = sqrt(sw / 1.5);
+  float h = clamp((al - 0.04) / max(L - 0.04, 1e-3), 0.0, 1.0);
+  // Taper towards the tip, then close to a point over the last eighth.
+  float w = mix(0.036, 0.024, h) * thick * (1.0 - smoothstep(0.86, 1.0, h));
+  float blade = max(abs(ac) - w, max(0.04 - al, al - L));
+
+  float guard = max(abs(al - 0.028) - 0.012, abs(ac) - 0.085 * thick);
+  float grip = max(abs(al + 0.05) - 0.07, abs(ac) - 0.017);
+  float pommel = length(q - dir * -0.13) - 0.024;
+  // Gauntlet round the grip, and the forearm running off the corner.
+  vec2 hq = vec2(al + 0.05, ac);
+  float hand = length(max(abs(hq) - vec2(0.05, 0.034), 0.0)) - 0.02;
+  vec2 ea = o - dir * 0.05;
+  vec2 eb = ea + vec2(0.42, -0.36);
+  vec2 pa = uv - ea, ba = eb - ea;
+  float hh = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  float arm = length(pa - ba * hh) - mix(0.05, 0.085, hh);
+
+  // The fuller: a line down the middle of the blade, for the lit edge.
+  gFullerOd = max(abs(ac) - 0.003 * thick, max(0.07 - al, al - L * 0.82));
+
+  return min(min(min(blade, guard), min(grip, pommel)), min(hand, arm));
+}
+
+/* Cut the viewmodel out black and rim it in the scene's key colour — the
+ * suite's figure language, carried into the first person. */
+vec3 viewmodelLayerOd(vec3 col, float sw, float show, float stride, vec3 key, float glow){
+  float px = gPxOd;
+  float vm = viewmodelOd(gUvOd, sw, show, stride);
+  if(vm > 0.05) return col;
+  float inside = 1.0 - smoothstep(-px, px, vm);
+  col *= 1.0 - inside;
+  col += key * smoothstep(px * 2.5, 0.0, abs(vm)) * glow;
+  col += key * smoothstep(px * 1.6, 0.0, gFullerOd) * inside * glow * 0.9;
+  return col;
 }
 `;
