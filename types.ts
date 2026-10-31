@@ -13,6 +13,8 @@ export interface ElementSetting {
   /** Manual baseline added to the reactive value (drive by hand / MIDI / LFO). */
   level: number;
   visible: boolean;
+  /** For colour elements: the picked colour, as sRGB hex. */
+  color?: string;
 }
 
 /** Saved settings for a single shader (keyed by element id). */
@@ -373,6 +375,26 @@ export interface ShaderElement {
   defaultLevel?: number;
   canHide: boolean;
   defaultVisible: boolean;
+  /**
+   * Makes this a colour element. The renderer also feeds <id>_color (vec3,
+   * sRGB as picked) and the panel shows a picker; <id>_react still arrives
+   * and is meant as the colour's intensity, so a band can pulse it.
+   */
+  defaultColor?: string;
+  /**
+   * Makes this a menu element. The panel shows a dropdown of these names, and
+   * choosing one sets the level to the middle of that option's slice of the
+   * 0..2 range — so the level is still what MIDI drives, and a knob sweeps
+   * through the options in order. Shaders read the option as
+   * floor(clamp(react, 0, 1.999) * N / 2).
+   */
+  options?: string[];
+}
+
+/** A named set of colours for a shader's colour elements, keyed by element id. */
+export interface Palette {
+  name: string;
+  colors: Record<string, string>;
 }
 
 /** A registered Shadertoy-style multi-pass shader. */
@@ -396,6 +418,8 @@ export interface ShaderDef {
    */
   glsl3?: boolean;
   elements: ShaderElement[];
+  /** Preset colour sets, shown as one-press buttons above the elements. */
+  palettes?: Palette[];
 }
 
 /** Live audio band readout (post-sensitivity raw + post-gate values). */

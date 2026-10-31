@@ -8,6 +8,18 @@ import { commonVertex, commonVertex3 } from './shaders/common';
 import { getShader } from './shader-registry';
 import type { Bands, ShaderDef, ShaderSetting } from './types';
 
+/**
+ * '#rrggbb' to 0..1 RGB, kept in sRGB exactly as picked. THREE.Color would
+ * convert to linear on the way in, and these shaders write their output raw,
+ * so every mid-tone would come out darker and more saturated than the swatch.
+ */
+export function hexToRgb(hex: string, out: THREE.Vector3): THREE.Vector3 {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || '').trim());
+  if (!m) return out.set(1, 1, 1);
+  const n = parseInt(m[1], 16);
+  return out.set(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+}
+
 /** A 1x1 white texture, so iVideo is always bound to something valid. */
 let whiteTex: THREE.DataTexture | null = null;
 function whiteTexture(): THREE.DataTexture {
@@ -96,6 +108,9 @@ export class ShaderLayer {
     for (const el of def.elements) {
       this.uniforms[`${el.id}_react`] = { value: 0 };
       this.uniforms[`${el.id}_visible`] = { value: 1 };
+      if (el.defaultColor) {
+        this.uniforms[`${el.id}_color`] = { value: hexToRgb(el.defaultColor, new THREE.Vector3()) };
+      }
     }
 
     const bufferMat = new THREE.RawShaderMaterial({
@@ -154,6 +169,9 @@ export class ShaderLayer {
       const level = c ? c.level || 0 : 0;
       this.uniforms[`${el.id}_react`].value = level + (bandVal || 0) * (c ? c.amount : 0);
       this.uniforms[`${el.id}_visible`].value = c ? (c.visible ? 1 : 0) : 1;
+      if (el.defaultColor && this.uniforms[`${el.id}_color`]) {
+        hexToRgb(c?.color || el.defaultColor, this.uniforms[`${el.id}_color`].value);
+      }
     }
     this.uniforms.iTime.value = time;
     this.uniforms.iCamOrbit.value = cam.orbit;

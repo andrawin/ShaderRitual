@@ -13,7 +13,7 @@ import { fracture, type Fragment } from './fracture';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
-import { ShaderLayer } from './shader-layer';
+import { ShaderLayer, hexToRgb } from './shader-layer';
 import { commonVertex } from './shaders/common';
 import { getShader } from './shader-registry';
 import type { Bands, PartInfo, ShaderRitualConfig } from './types';
@@ -2169,8 +2169,9 @@ void main(){
     if (cfg.loop) prog -= Math.floor(prog);
     else prog = Math.min(1, prog);
 
-    const c = new THREE.Color(cfg.color || '#ffffff');
-    this.textUniforms.uColor.value.copy(c);
+    // As picked, not linearised: this pass writes its colour out raw.
+    const rgb = hexToRgb(cfg.color || '#ffffff', new THREE.Vector3());
+    (this.textUniforms.uColor.value as THREE.Color).setRGB(rgb.x, rgb.y, rgb.z, THREE.LinearSRGBColorSpace);
     this.textUniforms.uOpacity.value = cfg.opacity;
     this.textUniforms.uBlend.value = CAPTURE_BLEND_INDEX[cfg.blend] ?? 0;
     this.textUniforms.uEffect.value = TEXT_EFFECT_INDEX[cfg.effect] ?? 0;

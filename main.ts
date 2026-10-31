@@ -1282,7 +1282,10 @@ export class ShaderRitualApp extends LitElement {
     const rising = type === 'note' || (norm >= 0.5 && prev < 0.5);
 
     if (path.startsWith('!')) {
-      if (rising) this.MIDI_ACTIONS[path]?.();
+      if (rising) {
+        if (path.startsWith('!pal:')) this.applyPalette(path.slice(5));
+        else this.MIDI_ACTIONS[path]?.();
+      }
       return;
     }
 
@@ -2182,6 +2185,55 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
+  /** Apply a shader's preset palette. `key` is '<shaderId>:<index>'. */
+  private applyPalette(key: string) {
+    const cut = key.lastIndexOf(':');
+    const shaderId = key.slice(0, cut);
+    const def = getShader(shaderId);
+    const pal = def.palettes?.[parseInt(key.slice(cut + 1), 10)];
+    if (!pal || def.id !== shaderId) return;
+    for (const [elId, hex] of Object.entries(pal.colors)) {
+      if (this.config.shaders[shaderId]?.elements?.[elId]) {
+        this.updateConfig(`shaders.${shaderId}.elements.${elId}.color`, hex);
+      }
+    }
+  }
+
+  /** One button per preset palette, each its own MIDI pad. */
+  private renderPalettes(shaderId: string) {
+    const def = getShader(shaderId);
+    if (!def.palettes?.length) return '';
+    const els = this.config.shaders[shaderId]?.elements || {};
+    return html`
+      <div class="element-card">
+        <div class="element-head"><span class="element-name">Palette</span></div>
+        <div class="element-desc">
+          One press sets every colour below. Each is a MIDI pad, so a cut can
+          land with its own colours.
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+          ${def.palettes.map((pal, i) => {
+            const active = Object.entries(pal.colors).every(
+              ([id, hex]) => (els[id]?.color || '').toLowerCase() === hex.toLowerCase(),
+            );
+            const sw = Object.values(pal.colors);
+            return html`
+              <span style="display:inline-flex;align-items:center;">
+                ${this.learnDot(`!pal:${shaderId}:${i}`)}
+                <button class="mini ${active ? 'on' : ''}" title=${pal.name}
+                  style="display:inline-flex;align-items:center;gap:4px;"
+                  @click=${() => this.applyPalette(`${shaderId}:${i}`)}>
+                  ${sw.map((c) => html`<span style="width:9px;height:9px;border-radius:2px;
+                    background:${c};border:1px solid rgba(255,255,255,0.25);"></span>`)}
+                  ${pal.name}
+                </button>
+              </span>`;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
   private renderElement = (shaderId: string, elementId: string) => {
     const def = getShader(shaderId);
     const meta = def.elements.find((e) => e.id === elementId)!;
@@ -2205,6 +2257,31 @@ export class ShaderRitualApp extends LitElement {
             : ''}
         </div>
         <div class="element-desc">${meta.description}</div>
+        ${meta.options?.length
+          ? (() => {
+              const n = meta.options!.length;
+              const cur = Math.min(n - 1, Math.floor(Math.min(1.999, Math.max(0, setting.level)) * n / 2));
+              return html`
+                <div class="control-row">
+                  <label>${meta.name}</label>
+                  ${this.learnDot(levelPath)}
+                  <select .value=${live(String(cur))}
+                    @change=${(e: any) =>
+                      this.updateConfig(levelPath, ((parseInt(e.target.value, 10) + 0.5) * 2) / n)}>
+                    ${meta.options!.map((o, i) => html`<option value=${String(i)}>${o}</option>`)}
+                  </select>
+                </div>`;
+            })()
+          : ''}
+        ${meta.defaultColor
+          ? html`
+              <div class="control-row">
+                <label>Colour</label>
+                <input type="color" .value=${live(setting.color || meta.defaultColor)}
+                  @input=${(e: any) =>
+                    this.updateConfig(`shaders.${shaderId}.elements.${elementId}.color`, e.target.value)} />
+              </div>`
+          : ''}
         <div class="control-row">
           <label>Audio band</label>
           ${this.learnDot(bandPath)}
@@ -2226,7 +2303,7 @@ export class ShaderRitualApp extends LitElement {
             @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
         </div>
         <div class="control-row">
-          <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">Manual level</label>
+          <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">${meta.defaultColor ? 'Intensity' : meta.options?.length ? 'Level (sweeps)' : 'Manual level'}</label>
           <button
             class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
             @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
@@ -2477,6 +2554,7 @@ export class ShaderRitualApp extends LitElement {
         <!-- ELEMENT -> AUDIO ALLOCATION (per shader) -->
         <div class="setting-group">
           <span class="group-title">${def.name} · Element Allocation</span>
+          ${this.renderPalettes(def.id)}
           ${def.elements.map((el) => this.renderElement(def.id, el.id))}
         </div>
 

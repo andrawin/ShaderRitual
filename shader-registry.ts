@@ -60,6 +60,12 @@ import { wrath } from './shaders/wrath';
 import { ocean } from './shaders/ocean';
 import { kodok } from './shaders/kodok';
 import { vitrine } from './shaders/vitrine';
+import { lwTerrain } from './shaders/lw-terrain';
+import { lwStrands } from './shaders/lw-strands';
+import { lwBurst } from './shaders/lw-burst';
+import { lwContour } from './shaders/lw-contour';
+import { lwWeave } from './shaders/lw-weave';
+import { lwHalftone } from './shaders/lw-halftone';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -111,6 +117,13 @@ export const SHADERS: ShaderDef[] = [
   blight,
   ember,
   wrath,
+  // Linework — after a pack of vector "technological background" shapes.
+  lwTerrain,
+  lwStrands,
+  lwBurst,
+  lwContour,
+  lwWeave,
+  lwHalftone,
 ];
 
 /** Fresh camera / motion rig defaults. */
@@ -300,6 +313,7 @@ function defaultShaderSetting(def: ShaderDef): ShaderSetting {
       level: el.defaultLevel ?? 0,
       visible: el.defaultVisible,
     };
+    if (el.defaultColor) elements[el.id].color = el.defaultColor;
   }
   return { elements };
 }
@@ -359,6 +373,11 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     for (const el of def.elements) {
       const savedEl = savedShader?.elements?.[el.id];
       if (savedEl) elements[el.id] = { ...elements[el.id], ...savedEl };
+      // A colour comes back from storage as whatever was saved; anything that
+      // is not a #rrggbb string would reach the shader as black.
+      if (el.defaultColor && !/^#[0-9a-fA-F]{6}$/.test(String(elements[el.id].color))) {
+        elements[el.id].color = el.defaultColor;
+      }
     }
     merged.shaders[def.id] = { elements };
   }
