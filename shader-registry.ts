@@ -66,6 +66,7 @@ import { lwBurst } from './shaders/lw-burst';
 import { lwContour } from './shaders/lw-contour';
 import { lwWeave } from './shaders/lw-weave';
 import { lwHalftone } from './shaders/lw-halftone';
+import { neonCity } from './shaders/scene-neon-city';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -124,6 +125,8 @@ export const SHADERS: ShaderDef[] = [
   lwContour,
   lwWeave,
   lwHalftone,
+  // Scene shaders: Buffer A is a GLB scene rather than GLSL.
+  neonCity,
 ];
 
 /** Fresh camera / motion rig defaults. */

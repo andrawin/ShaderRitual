@@ -6,7 +6,8 @@ import * as THREE from 'three';
 import type { CameraUniforms } from './camera';
 import { commonVertex, commonVertex3 } from './shaders/common';
 import { getShader } from './shader-registry';
-import type { Bands, ShaderDef, ShaderSetting } from './types';
+import type { Bands, SceneRuntime, ShaderDef, ShaderSetting } from './types';
+import { loadSceneGLB } from './scene-loader';
 
 /**
  * '#rrggbb' to 0..1 RGB, kept in sRGB exactly as picked. THREE.Color would
@@ -49,6 +50,15 @@ export class ShaderLayer {
   private hasBufferB = false;
   private quad = new THREE.PlaneGeometry(2, 2);
 
+  // Scene shaders: an HDR, depth-buffered target the scene draws into in place
+  // of Buffer A, and the runtimes already built, keyed by URL, so cutting back
+  // to a scene is instant rather than a re-parse.
+  private sceneTarget: THREE.WebGLRenderTarget;
+  private sceneRuntime: SceneRuntime | null = null;
+  private sceneCache = new Map<string, SceneRuntime>();
+  private sceneToken = 0;
+  private size = new THREE.Vector2(1, 1);
+
   uniforms: Record<string, { value: any }> = {};
   currentShaderId = '';
 
@@ -71,6 +81,13 @@ export class ShaderLayer {
     this.readTarget = this.targetA;
     this.writeTarget = this.targetB;
     this.bufferBTarget = new THREE.WebGLRenderTarget(1024, 1024, opts);
+    // Half float so emissive light above 1.0 survives to the bloom and the
+    // tone map in the image pass, instead of clipping flat at white.
+    this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
+      ...opts,
+      type: THREE.HalfFloatType,
+      depthBuffer: true,
+    });
     this.bufferBTarget.texture.wrapS = THREE.RepeatWrapping;
     this.bufferBTarget.texture.wrapT = THREE.RepeatWrapping;
   }
@@ -127,6 +144,8 @@ export class ShaderLayer {
     this.bufferScene.add(new THREE.Mesh(this.quad, bufferMat));
     this.imageScene.add(new THREE.Mesh(this.quad, imageMat));
 
+    this.startScene(def);
+
     this.hasBufferB = !!def.bufferBShader;
     if (this.hasBufferB) {
       const bufferBMat = new THREE.RawShaderMaterial({
@@ -136,6 +155,37 @@ export class ShaderLayer {
       });
       this.bufferBScene.add(new THREE.Mesh(this.quad, bufferBMat));
     }
+  }
+
+  /**
+   * Bring up the scene behind a scene shader: from cache if this layer has
+   * built it before, otherwise load and set it up in the background. Frames
+   * drawn meanwhile come out black. A load that finishes after the layer has
+   * moved on is still cached, but not shown.
+   */
+  private startScene(def: ShaderDef) {
+    const token = ++this.sceneToken;
+    this.sceneRuntime = null;
+    const spec = def.scene;
+    if (!spec) return;
+    const cached = this.sceneCache.get(spec.url);
+    if (cached) {
+      cached.resize?.(this.size.x, this.size.y);
+      this.sceneRuntime = cached;
+      return;
+    }
+    loadSceneGLB(spec.url)
+      .then((root) => {
+        const rt = spec.setup(root, this.renderer);
+        rt.resize?.(this.size.x, this.size.y);
+        this.sceneCache.set(spec.url, rt);
+        if (token === this.sceneToken) this.sceneRuntime = rt;
+      })
+      .catch((e) => {
+        if (token === this.sceneToken) {
+          this.errorSink.error = `Could not load scene ${spec.url}: ${e?.message || e}`;
+        }
+      });
   }
 
   /** Render Buffer B once (static helper texture); call after build + resize. */
@@ -149,6 +199,9 @@ export class ShaderLayer {
   resize(pw: number, ph: number) {
     this.targetA.setSize(pw, ph);
     this.targetB.setSize(pw, ph);
+    this.sceneTarget.setSize(pw, ph);
+    this.size.set(pw, ph);
+    this.sceneRuntime?.resize?.(pw, ph);
     (this.uniforms.iResolution?.value as THREE.Vector3)?.set(pw, ph, 1);
   }
 
@@ -184,6 +237,26 @@ export class ShaderLayer {
 
   /** Render the feedback buffer + image pass into `output`. */
   render(camera: THREE.Camera, output: THREE.WebGLRenderTarget) {
+    if (getShader(this.currentShaderId).scene) {
+      // The scene stands in for Buffer A; the image pass grades it as usual.
+      // The scene may change the clear colour; nothing else in the app should
+      // inherit that.
+      const cc = this.renderer.getClearColor(new THREE.Color());
+      const ca = this.renderer.getClearAlpha();
+      if (this.sceneRuntime) {
+        this.sceneRuntime.update(this.uniforms);
+        this.sceneRuntime.render(this.renderer, this.sceneTarget);
+      } else {
+        this.renderer.setRenderTarget(this.sceneTarget);
+        this.renderer.setClearColor(0x000000, 1);
+        this.renderer.clear(true, true, false);
+      }
+      this.renderer.setClearColor(cc, ca);
+      this.uniforms.iChannel0.value = this.sceneTarget.texture;
+      this.renderer.setRenderTarget(output);
+      this.renderer.render(this.imageScene, camera);
+      return;
+    }
     this.uniforms.iChannel0.value = this.readTarget.texture;
     this.renderer.setRenderTarget(this.writeTarget);
     this.renderer.render(this.bufferScene, camera);

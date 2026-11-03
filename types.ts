@@ -2,6 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
+import type { Object3D, WebGLRenderer, WebGLRenderTarget } from 'three';
 
 /** Audio frequency band a visual element can be wired to. */
 export type Band = 'none' | 'low' | 'mid' | 'high';
@@ -391,6 +392,29 @@ export interface ShaderElement {
   options?: string[];
 }
 
+/**
+ * A shader whose Buffer A is a 3D scene rather than GLSL. The scene module
+ * owns its own camera, lights and rendering; the layer hands it the element
+ * uniforms every frame and an HDR target to draw into, and the shader's image
+ * pass then grades that target exactly as it would a GLSL buffer — so post-FX,
+ * overlays, video, text, capture and live coding of the image pass all carry
+ * on working over it.
+ */
+export interface SceneRuntime {
+  /** Called each frame before render, with the layer's live uniforms. */
+  update(u: Record<string, { value: any }>): void;
+  /** Draw into target: linear HDR, depth-buffered, already sized. */
+  render(renderer: WebGLRenderer, target: WebGLRenderTarget): void;
+  resize?(width: number, height: number): void;
+}
+
+export interface SceneSpec {
+  /** The GLB, as a URL relative to the app (files under public/ are served from the root). */
+  url: string;
+  /** Build the scene around the loaded model and return its runtime. */
+  setup(root: Object3D, renderer: WebGLRenderer): SceneRuntime;
+}
+
 /** A named set of colours for a shader's colour elements, keyed by element id. */
 export interface Palette {
   name: string;
@@ -420,6 +444,11 @@ export interface ShaderDef {
   elements: ShaderElement[];
   /** Preset colour sets, shown as one-press buttons above the elements. */
   palettes?: Palette[];
+  /**
+   * Makes this a scene shader: Buffer A is the GLB scene below instead of
+   * bufferShader, which is then only a placeholder for the code panel.
+   */
+  scene?: SceneSpec;
 }
 
 /** Live audio band readout (post-sensitivity raw + post-gate values). */
