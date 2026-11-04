@@ -3,3 +3,6 @@ dist/
 *.local
 .DS_Store
 package-lock.json
+.bake/
+.bake-test/
+.bake*.log

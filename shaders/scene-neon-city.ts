@@ -25,6 +25,16 @@ import type { SceneRuntime, ShaderDef } from '../types';
  *     HDR so the bloom and the tone map in the image pass have real light to
  *     work with.
  *
+ * Lightmap. tools/bake-neon-city.py bakes the moon and sky, and each of the
+ * two neon groups, in Cycles (bounces, soft shadows, light pooling in the
+ * streets) into the three channels of one texture, each in white. It rides
+ * in the GLB as the occlusion texture on a second UV set, so GLTFLoader hands
+ * it over as aoMap. Here it replaces the buildings' real-time diffuse: the
+ * moon channel in the night-sky tint, the two neon channels in the Neon and
+ * Glow colours, pulsing with their lights. The real-time lights stay for the
+ * specular, and for the ground, which is not in the bake. A file without the
+ * lightmap falls back to the real-time lights and the vertex AO.
+ *
  * Elements:
  *   route   -> where the camera goes: orbit, flyover, or low along the skyline
  *   neon    -> the first neon colour, and how hard its lights burn
@@ -71,6 +81,52 @@ function setupNeonCity(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Sce
     uNeonB: { value: new THREE.Color(0.1, 0.9, 1) },
   };
 
+  // Baked light, as the material patch reads it: one tint per channel,
+  // brightness included, set every frame.
+  const lm = {
+    uLmSky: { value: new THREE.Color() },
+    uLmA: { value: new THREE.Color() },
+    uLmB: { value: new THREE.Color() },
+  };
+  // The cladding is a fifth of its daylight albedo, so the bake is lifted well
+  // above its physical level to read at all: enough for the moon to give the
+  // towers their form and the neon to pool in the streets, not so much that
+  // the lit windows stop being the brightest thing on a facade.
+  const LM_SKY = new THREE.Color(0.55, 0.66, 1.0).multiplyScalar(10);
+  const LM_NEON = 40;
+
+  /*
+   * The lightmap replaces the diffuse the real-time lights give the buildings;
+   * their specular stays. Decoded as the bake encoded it: pow(texel, 2.2) times
+   * the channel's scale. aoMapIntensity is 0, so three's own use of the
+   * texture as occlusion does nothing, but its UV set and sampler come free.
+   */
+  const lightmapChunk = (shader: any, mat: THREE.MeshStandardMaterial) => {
+    const scale = (mat.userData.lightmapScale as number[] | undefined) ?? [1, 1, 1];
+    Object.assign(shader.uniforms, lm, { uLmScale: { value: new THREE.Vector3(...scale) } });
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform vec3 uLmSky;\nuniform vec3 uLmA;\nuniform vec3 uLmB;\nuniform vec3 uLmScale;',
+      )
+      .replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+#ifdef USE_AOMAP
+  vec3 lmT = pow(texture2D(aoMap, vAoMapUv).rgb, vec3(2.2)) * uLmScale;
+  reflectedLight.directDiffuse = vec3(0.0);
+  reflectedLight.indirectDiffuse = material.diffuseColor * (lmT.r * uLmSky + lmT.g * uLmA + lmT.b * uLmB);
+#endif`,
+      );
+  };
+  const useLightmap = (m: THREE.MeshStandardMaterial, old: THREE.MeshStandardMaterial) => {
+    if (!old.aoMap || !old.userData?.lightmapScale) return false;
+    m.aoMap = old.aoMap;
+    m.aoMapIntensity = 0;
+    m.userData.lightmapScale = old.userData.lightmapScale;
+    return true;
+  };
+
   /*
    * Windows, in world space. Each facade picks the axis it faces, cuts itself
    * into cells, and lights a cell or not from a hash that also takes the
@@ -80,6 +136,7 @@ function setupNeonCity(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Sce
    */
   const patch = (mat: THREE.MeshStandardMaterial, density: number) => {
     mat.onBeforeCompile = (shader) => {
+      if (mat.aoMap) lightmapChunk(shader, mat);
       Object.assign(shader.uniforms, win, { uDensityScale: { value: density } });
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNrm;')
@@ -141,7 +198,7 @@ vec3 windowGlow(vec3 p, vec3 n){
           '#include <emissivemap_fragment>\ntotalEmissiveRadiance += windowGlow(vWPos, normalize(vWNrm));',
         );
     };
-    mat.customProgramCacheKey = () => `neoncity-win-${density}`;
+    mat.customProgramCacheKey = () => `neoncity-win-${density}-${mat.aoMap ? 'lm' : 'rt'}`;
   };
 
   // --- Materials. ----------------------------------------------------------------
@@ -175,7 +232,10 @@ vec3 windowGlow(vec3 p, vec3 n){
     // normal and UV at a 36-byte stride; walking .array in steps of four wrote
     // straight across the vertex positions, flung them to huge coordinates,
     // and buried the GPU in screen-filling triangles.
-    const aoAttr = o.geometry && o.geometry.getAttribute('color');
+    const baked = !!(old.aoMap && old.userData?.lightmapScale);
+    // With the lightmap the occlusion is already in the light; the vertex AO
+    // on top would darken the canyons twice.
+    const aoAttr = !baked && o.geometry && o.geometry.getAttribute('color');
     if (aoAttr) {
       for (let i = 0; i < aoAttr.count; i++) {
         const v = Math.pow(aoAttr.getX(i), 1.5);
@@ -189,8 +249,9 @@ vec3 windowGlow(vec3 p, vec3 n){
       side: THREE.DoubleSide,
       // Ambient occlusion baked offline into the file's vertex colours:
       // darker where towers crowd each other and meet the ground.
-      vertexColors: !!(o.geometry && o.geometry.getAttribute('color')),
+      vertexColors: !!aoAttr,
     });
+    useLightmap(m, old);
     if (name.startsWith('lights')) {
       // The one window texture in the model: it becomes light.
       m.emissiveMap = old.map || null;
@@ -198,6 +259,10 @@ vec3 windowGlow(vec3 p, vec3 n){
       m.color.setRGB(0.05, 0.05, 0.06);
       m.roughness = 0.6;
       m.metalness = 0.2;
+      if (m.aoMap) {
+        m.onBeforeCompile = (shader) => lightmapChunk(shader, m);
+        m.customProgramCacheKey = () => 'neoncity-lights-lm';
+      }
       windowTexMats.push(m);
     } else {
       // Night-dark cladding. A facade at night is dark with points of light
@@ -313,12 +378,18 @@ vec3 windowGlow(vec3 p, vec3 n){
 
       // Neon: each light breathes on its own phase and kicks with the beat.
       const na = rv('neon'), nb = rv('glow');
+      let pa = 0, pb = 0;
       for (const n of neonLights) {
         const k = n.a ? na : nb;
         const pulse = 0.75 + 0.25 * Math.sin(t * 1.7 + n.phase) + beat * 0.6;
         n.light.color.copy(n.a ? cA : cB);
         n.light.intensity = 55 * k * pulse;
+        if (n.a) pa += pulse / (N / 2); else pb += pulse / (N / 2);
       }
+      // The baked neon, each group at its lights' average pulse.
+      lm.uLmSky.value.copy(LM_SKY);
+      lm.uLmA.value.copy(cA).multiplyScalar(LM_NEON * na * pa);
+      lm.uLmB.value.copy(cB).multiplyScalar(LM_NEON * nb * pb);
       win.uNeonA.value.copy(cA).multiplyScalar(2.2);
       win.uNeonB.value.copy(cB).multiplyScalar(2.2);
       const w = rv('windows');
