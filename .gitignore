@@ -6,3 +6,7 @@ package-lock.json
 .bake/
 .bake-test/
 .bake*.log
+# The un-prepped office model (41 MB) is only needed to re-run tools/prep-office.py;
+# get it from the Sketchfab link in README > Credits.
+tools/source/office.glb
+.claude/

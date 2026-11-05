@@ -190,3 +190,12 @@ npm run dev
 ```
 
 Then click the gear icon → **Ignite Audio** and play sound near your mic.
+
+## Credits
+
+- **Overtime** uses "office is old abandoned FREE" by
+  [dasy444](https://sketchfab.com/dasy444)
+  ([Sketchfab](https://sketchfab.com/3d-models/office-is-old-abandoned-free-3977a108b2304b85a698f3dda1777015)),
+  licensed [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/). Prepared
+  for the scene (screens cut out, textures compressed) by `tools/prep-office.py`;
+  the original and its licence are in `tools/source/`.
