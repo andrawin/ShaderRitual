@@ -15,6 +15,12 @@ import { computeBands } from './audio-bands';
 import { CameraRig } from './camera';
 import { ShaderLayer, hexToRgb } from './shader-layer';
 import { commonVertex } from './shaders/common';
+
+/** Whether the capture feed is shown mirrored: a camera with Mirror on. */
+function captureMirrored(config: any): boolean {
+  const c = config?.model?.capture;
+  return !!c && c.source === 'camera' && !!c.mirror;
+}
 import { getShader } from './shader-registry';
 import type { Bands, PartInfo, ShaderRitualConfig } from './types';
 
@@ -435,6 +441,21 @@ export class ShaderRitualView extends LitElement {
   private slicePhase = 0;       // 0..1 of a slice: where the cuts fall this pass
 
   private captureSrc!: THREE.WebGLRenderTarget;
+  // Camera FX: the shader lands in camSrc, and the camfx pass reshapes it with
+  // the capture feed. Motion is found at low resolution: each new camera frame
+  // is compared with the last (camPrev), and the difference piles up in a
+  // decaying trail buffer, ping-ponged between trailRead and trailWrite.
+  private camSrc!: THREE.WebGLRenderTarget;
+  private camPrev!: THREE.WebGLRenderTarget;
+  private trailRead!: THREE.WebGLRenderTarget;
+  private trailWrite!: THREE.WebGLRenderTarget;
+  private camFxUniforms!: Record<string, { value: any }>;
+  private camFxScene!: THREE.Scene;
+  private motionUniforms!: Record<string, { value: any }>;
+  private motionScene!: THREE.Scene;
+  private camCopyUniforms!: Record<string, { value: any }>;
+  private camCopyScene!: THREE.Scene;
+  private motionSeenUpload = 0;
   private captureScene!: THREE.Scene;
   private captureUniforms!: Record<string, { value: any }>;
   private captureTexture: THREE.Texture | null = null;
@@ -552,6 +573,8 @@ void main(){ gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.); }`,
       ),
     );
 
+    this.initCamFx(opts);
+
     // Screen capture: the finished image goes into captureSrc, and this pass
     // blends the captured frame over it and writes the result to the screen.
     this.captureSrc = new THREE.WebGLRenderTarget(1, 1, opts);
@@ -564,6 +587,8 @@ void main(){ gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.); }`,
       uPlace: { value: 0 },
       uCapAspect: { value: 16 / 9 },
       uScreenAspect: { value: 16 / 9 },
+      uMirror: { value: 0 },
+      uCover: { value: 0 },
     };
     this.captureScene = new THREE.Scene();
     this.captureScene.add(
@@ -582,6 +607,8 @@ uniform float uScale;
 uniform float uPlace;
 uniform float uCapAspect;
 uniform float uScreenAspect;
+uniform float uMirror;
+uniform float uCover;
 uniform int uBlend;
 ${blendGLSL}
 
@@ -594,6 +621,12 @@ void main(){
     // Fills the frame, scaled about the centre. Above 1 it crops in; below 1
     // it pulls back and the surround is left as shader.
     cuv = (vUv - 0.5) / max(uScale, 0.001) + 0.5;
+    if(uCover > 0.5){
+      // A camera is cropped to fill rather than stretched: a face pulled to
+      // the projector's shape reads as wrong in a way a shared window does not.
+      float r = uScreenAspect / max(uCapAspect, 0.001);
+      cuv = (cuv - 0.5) * (r > 1. ? vec2(1., 1. / r) : vec2(r, 1.)) + 0.5;
+    }
     mask = step(0., cuv.x) * step(cuv.x, 1.) * step(0., cuv.y) * step(cuv.y, 1.);
   } else {
     // A centred inset at the capture's own aspect, so a 16:9 share is not
@@ -605,6 +638,7 @@ void main(){
     cuv = (vUv - 0.5) / vec2(2. * hw, 2. * hh) + 0.5;
   }
 
+  if(uMirror > 0.5) cuv.x = 1. - cuv.x;
   vec3 cap = texture2D(tCap, cuv).rgb;
   vec3 mixed = clamp(blendLayer(base, cap, uBlend), 0., 1.);
   gl_FragColor = vec4(mix(base, mixed, uOpacity * mask), 1.);
@@ -953,6 +987,7 @@ void main(){
     this.baseTarget.setSize(pw, ph);
     this.overlayTarget.setSize(pw, ph);
     this.captureSrc.setSize(pw, ph);
+    this.camSrc.setSize(pw, ph);
     this.videoSrc.setSize(pw, ph);
     this.textSrc.setSize(pw, ph);
     this.sceneTarget.setSize(pw, ph);
@@ -1240,6 +1275,9 @@ void main(){
     const vEl = this.videoEl;
     const vAspect = vEl && vEl.videoHeight > 0 ? vEl.videoWidth / vEl.videoHeight : 16 / 9;
     this.baseLayer.setVideo(this.videoTexture || null, vAspect);
+    const capMirror = captureMirrored(this.config);
+    const cAspect = this.captureAspect();
+    this.baseLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
 
     // Screen capture is composited last, and it needs the finished image as a
     // texture to blend against — so while it is up, every pass that would
@@ -1264,12 +1302,18 @@ void main(){
     const beforeVideo = vidOn ? this.videoSrc : afterVideo;
     if (this.videoEl) this.driveVideo(dt, this.lastBands);
 
+    // Camera FX come first after the shader, so everything downstream treats
+    // the reshaped image as the shader's own.
+    const cf = this.camFxAmounts();
+    const camFxOn = !!this.captureTexture && cf.sil + cf.disp + cf.col + cf.trail > 0.001;
+    const shaderOut = camFxOn ? this.camSrc : beforeVideo;
+
     if (!needComposite && !anyPost) {
       // Fast path: base image straight out.
-      this.baseLayer.render(this.camera, beforeVideo);
+      this.baseLayer.render(this.camera, shaderOut);
     } else if (!needComposite) {
       // Post only: base -> post -> out.
-      this.baseLayer.render(this.camera, beforeVideo);
+      this.baseLayer.render(this.camera, shaderOut);
     } else {
       // Overlay compositing needed: base + overlay -> composite.
       this.baseLayer.render(this.camera, this.baseTarget);
@@ -1279,12 +1323,21 @@ void main(){
       const ovCfg = this.config.shaders[ovDef.id]?.elements || {};
       this.overlayLayer.setUniforms(time, cam, this.lastBands, ovCfg);
       this.overlayLayer.setVideo(this.videoTexture || null, vAspect);
+      this.overlayLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
       this.overlayLayer.render(this.camera, this.overlayTarget);
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
       // Composite -> sceneTarget (if post follows) or straight to screen.
-      this.renderer.setRenderTarget(beforeVideo);
+      this.renderer.setRenderTarget(shaderOut);
       this.renderer.render(this.compositeScene, this.camera);
+    }
+
+    if (camFxOn) {
+      this.renderCamFx(dt, time, cf, cAspect, capMirror);
+      this.renderer.setRenderTarget(beforeVideo);
+      this.renderer.render(this.camFxScene, this.camera);
+    } else if (this.trailRead) {
+      this.motionSeenUpload = 0;
     }
 
     // Clip over the shader, before post-FX picks the result up.
@@ -2204,7 +2257,7 @@ void main(){
 
   /* ----------------------- Screen capture ------------------------ */
 
-  /** Wire a getDisplayMedia stream (or null) into the capture plane. */
+  /** Wire a getDisplayMedia or camera stream (or null) into the capture plane. */
   setCaptureStream(stream: MediaStream | null) {
     if (this._captureStream === stream) return;
     this._captureStream = stream;
@@ -2280,6 +2333,210 @@ void main(){
     return h > 0 ? w / h : 16 / 9;
   }
 
+  /* ------------------------- Camera FX --------------------------- */
+
+  private initCamFx(opts: THREE.RenderTargetOptions) {
+    this.camSrc = new THREE.WebGLRenderTarget(1, 1, opts);
+    // Motion runs at a fixed low resolution: it only has to find where things
+    // moved, and the result is smoothed by the trail and the linear filter.
+    const lo = { ...opts, type: THREE.HalfFloatType };
+    this.camPrev = new THREE.WebGLRenderTarget(320, 180, lo);
+    this.trailRead = new THREE.WebGLRenderTarget(320, 180, lo);
+    this.trailWrite = new THREE.WebGLRenderTarget(320, 180, lo);
+    const quad = (uniforms: Record<string, { value: any }>, fragmentShader: string) => {
+      const sc = new THREE.Scene();
+      sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.RawShaderMaterial({
+        uniforms, vertexShader: commonVertex, fragmentShader, depthTest: false, depthWrite: false,
+      })));
+      return sc;
+    };
+
+    this.camCopyUniforms = { tSrc: { value: null } };
+    this.camCopyScene = quad(this.camCopyUniforms, `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tSrc;
+void main(){ gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.); }`);
+
+    this.motionUniforms = {
+      tCam: { value: null },
+      tPrevCam: { value: this.camPrev.texture },
+      tTrailPrev: { value: this.trailRead.texture },
+      uDecay: { value: 0.9 },
+      uFresh: { value: 0 },
+    };
+    this.motionScene = quad(this.motionUniforms, `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tCam;
+uniform sampler2D tPrevCam;
+uniform sampler2D tTrailPrev;
+uniform float uDecay;
+uniform float uFresh;
+float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main(){
+  // Camera noise flickers a few levels frame to frame; only real movement
+  // gets past the smoothstep.
+  float d = abs(luma(texture2D(tCam, vUv).rgb) - luma(texture2D(tPrevCam, vUv).rgb));
+  float m = smoothstep(0.035, 0.16, d) * uFresh;
+  float t = max(m, texture2D(tTrailPrev, vUv).r * uDecay);
+  gl_FragColor = vec4(t, t, t, 1.);
+}`);
+
+    this.camFxUniforms = {
+      tScene: { value: this.camSrc.texture },
+      tCam: { value: null },
+      tTrail: { value: this.trailRead.texture },
+      uCamAspect: { value: 16 / 9 },
+      uScreenAspect: { value: 16 / 9 },
+      uMirror: { value: 0 },
+      uSil: { value: 0 },
+      uInvert: { value: 0 },
+      uKey: { value: 0.35 },
+      uDisp: { value: 0 },
+      uCol: { value: 0 },
+      uTrail: { value: 0 },
+      iTime: { value: 0 },
+    };
+    this.camFxScene = quad(this.camFxUniforms, `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tScene;
+uniform sampler2D tCam;
+uniform sampler2D tTrail;
+uniform float uCamAspect;
+uniform float uScreenAspect;
+uniform float uMirror;
+uniform float uSil;
+uniform float uInvert;
+uniform float uKey;
+uniform float uDisp;
+uniform float uCol;
+uniform float uTrail;
+uniform float iTime;
+
+float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+// The camera, cropped to fill the frame (never stretched) and mirrored if set.
+vec2 camUv(vec2 uv){
+  float r = uScreenAspect / max(uCamAspect, 0.001);
+  vec2 c = (uv - 0.5) * (r > 1. ? vec2(1., 1. / r) : vec2(r, 1.)) + 0.5;
+  if(uMirror > 0.5) c.x = 1. - c.x;
+  return c;
+}
+float camL(vec2 c){ return luma(texture2D(tCam, c).rgb); }
+
+void main(){
+  vec2 cuv = camUv(vUv);
+  float l = camL(cuv);
+
+  // Displace: the camera's edges push the shader's pixels across them, and
+  // its brightness drifts them, so a figure shows as a ripple in the shader.
+  vec2 uv = vUv;
+  if(uDisp > 0.){
+    vec2 e = vec2(2.5 / 640., 2.5 / 360.);
+    float gx = camL(cuv + vec2(e.x, 0.)) - camL(cuv - vec2(e.x, 0.));
+    float gy = camL(cuv + vec2(0., e.y)) - camL(cuv - vec2(0., e.y));
+    if(uMirror > 0.5) gx = -gx;
+    vec2 drift = vec2(sin(iTime * 0.7 + l * 6.), cos(iTime * 0.9 + l * 5.)) * (l - 0.2);
+    uv += (vec2(gx, gy) * 0.4 + drift * 0.04) * uDisp;
+  }
+  vec3 scene = texture2D(tScene, uv).rgb;
+  vec3 col = scene;
+
+  // Colourise: the camera's light and shade, coloured by the shader — each
+  // tone takes its colour from a different part of the shader's own frame.
+  if(uCol > 0.){
+    vec3 tone = texture2D(tScene, mix(uv, vec2(l, 1. - l), 0.55)).rgb;
+    vec3 painted = (tone * 0.75 + scene * 0.45) * (0.08 + 1.5 * l);
+    col = mix(col, painted, uCol);
+  }
+
+  // Silhouette: the shader only where the camera is bright (you, lit), or
+  // only where it is dark, inverted.
+  if(uSil > 0.){
+    float m = smoothstep(uKey - 0.07, uKey + 0.07, l);
+    if(uInvert > 0.5) m = 1. - m;
+    col = mix(col, col * m, uSil);
+  }
+
+  // Trails: what moved stays lit and glows a little; what is still fades out.
+  if(uTrail > 0.){
+    float t = texture2D(tTrail, cuv).r;
+    col = mix(col, col * min(1., t * 1.4) + scene * t * t * 0.35, uTrail);
+  }
+
+  gl_FragColor = vec4(col, 1.);
+}`);
+  }
+
+  /** Each camera effect's strength this frame, with its band pushing it. */
+  private camFxAmounts() {
+    const c = this.config.camfx;
+    const amt = (s: { on: boolean; amount: number; band: string } | undefined) => {
+      if (!s || !s.on) return 0;
+      const bv = s.band === 'none' ? 0 : (this.lastBands as any)[s.band] || 0;
+      return Math.min(1.2, s.amount + bv);
+    };
+    return {
+      sil: amt(c?.silhouette),
+      disp: amt(c?.displace),
+      col: amt(c?.colourise),
+      trail: amt(c?.trails),
+    };
+  }
+
+  private renderCamFx(
+    dt: number,
+    time: number,
+    cf: { sil: number; disp: number; col: number; trail: number },
+    camAspect: number,
+    mirror: boolean,
+  ) {
+    const c = this.config.camfx;
+    const tex = this.captureTexture!;
+    const size = this.renderer.getSize(new THREE.Vector2());
+
+    if (cf.trail > 0.001) {
+      // Sample the camera once here so a frame due for upload goes up now; a
+      // new upload means a new frame to compare against the last one.
+      const before = this.lastCaptureUpload;
+      this.motionUniforms.tCam.value = tex;
+      this.motionUniforms.tPrevCam.value = this.camPrev.texture;
+      this.motionUniforms.tTrailPrev.value = this.trailRead.texture;
+      // Longer trails as the amount goes up: half-life 0.2s to about 1.2s.
+      const half = 0.2 + Math.min(1, cf.trail) * 1.0;
+      this.motionUniforms.uDecay.value = Math.pow(0.5, dt / half);
+      // The first frame after a (re)start has nothing to compare against.
+      this.motionUniforms.uFresh.value = this.motionSeenUpload ? 1 : 0;
+      this.renderer.setRenderTarget(this.trailWrite);
+      this.renderer.render(this.motionScene, this.camera);
+      const swap = this.trailRead;
+      this.trailRead = this.trailWrite;
+      this.trailWrite = swap;
+      if (this.lastCaptureUpload !== before || !this.motionSeenUpload) {
+        this.motionSeenUpload = this.lastCaptureUpload || 1;
+        this.camCopyUniforms.tSrc.value = tex;
+        this.renderer.setRenderTarget(this.camPrev);
+        this.renderer.render(this.camCopyScene, this.camera);
+      }
+    }
+
+    const u = this.camFxUniforms;
+    u.tCam.value = tex;
+    u.tTrail.value = this.trailRead.texture;
+    u.uCamAspect.value = camAspect;
+    u.uScreenAspect.value = size.y > 0 ? size.x / size.y : 16 / 9;
+    u.uMirror.value = mirror ? 1 : 0;
+    u.uSil.value = cf.sil;
+    u.uInvert.value = c.invert ? 1 : 0;
+    u.uKey.value = c.key;
+    u.uDisp.value = cf.disp;
+    u.uCol.value = cf.col;
+    u.uTrail.value = cf.trail;
+    u.iTime.value = time;
+  }
+
   /** Feed the capture pass its framing, opacity and blend for this frame. */
   private applyCapture(bands: Bands) {
     const c = this.config.model.capture;
@@ -2290,6 +2547,8 @@ void main(){
     this.captureUniforms.uScale.value = Math.max(0.05, c.scale * react);
     this.captureUniforms.uPlace.value = c.mode === 'floating' ? 1 : 0;
     this.captureUniforms.uBlend.value = CAPTURE_BLEND_INDEX[c.blend] ?? 0;
+    this.captureUniforms.uMirror.value = c.source === 'camera' && c.mirror ? 1 : 0;
+    this.captureUniforms.uCover.value = c.source === 'camera' ? 1 : 0;
     this.captureUniforms.uCapAspect.value = this.captureAspect();
     this.captureUniforms.uScreenAspect.value = size.y > 0 ? size.x / size.y : 16 / 9;
   }

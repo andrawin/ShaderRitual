@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import type {
+  CamFxConfig,
   CameraConfig,
   ModelConfig,
   MotionConfig,
@@ -205,6 +206,9 @@ export function defaultModel(): ModelConfig {
       },
     },
     capture: {
+      source: 'screen',
+      cameraId: '',
+      mirror: true,
       opacity: 0.85,
       scale: 1.0,
       mode: 'background',
@@ -272,6 +276,28 @@ export function defaultText(): TextConfig {
 }
 
 /** Fresh global post-FX defaults (all off). */
+export function defaultCamFx(): CamFxConfig {
+  return {
+    silhouette: { on: false, amount: 1.0, band: 'none' },
+    displace: { on: false, amount: 0.5, band: 'none' },
+    colourise: { on: false, amount: 0.8, band: 'none' },
+    trails: { on: false, amount: 0.7, band: 'none' },
+    invert: false,
+    key: 0.35,
+  };
+}
+
+function mergeCamFx(base: CamFxConfig, saved: any): CamFxConfig {
+  if (!saved || typeof saved !== 'object') return base;
+  const out: any = { ...base };
+  for (const k of ['silhouette', 'displace', 'colourise', 'trails'] as const) {
+    out[k] = { ...base[k], ...(saved[k] || {}) };
+  }
+  if (typeof saved.invert === 'boolean') out.invert = saved.invert;
+  if (Number.isFinite(saved.key)) out.key = Math.min(1, Math.max(0, saved.key));
+  return out;
+}
+
 export function defaultPostFX(): PostFXConfig {
   return {
     pixelate: { on: false, amount: 0.4, band: 'none' },
@@ -337,6 +363,7 @@ export function defaultConfig(): ShaderRitualConfig {
     video: defaultVideo(),
     text: defaultText(),
     postfx: defaultPostFX(),
+    camfx: defaultCamFx(),
     model: defaultModel(),
     shaders,
   };
@@ -361,6 +388,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     video: { ...base.video, ...(saved.video || {}) },
     text: { ...base.text, ...(saved.text || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
+    camfx: mergeCamFx(base.camfx, saved.camfx),
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },
   };

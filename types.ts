@@ -101,6 +101,24 @@ export type FxName =
 
 export type PostFXConfig = Record<FxName, FxSetting>;
 
+/**
+ * Camera FX: the live capture feed (a camera, or a shared window) reshaping
+ * whatever shader is running. Applied straight after the shader, so the clip,
+ * text and post-FX all land on top of the result.
+ */
+export type CamFxName = 'silhouette' | 'displace' | 'colourise' | 'trails';
+
+export interface CamFxConfig {
+  silhouette: FxSetting;
+  displace: FxSetting;
+  colourise: FxSetting;
+  trails: FxSetting;
+  /** Silhouette: the shader shows around you instead of inside you. */
+  invert: boolean;
+  /** Silhouette: how bright the camera has to be to count as you, 0..1. */
+  key: number;
+}
+
 /** What a part reacts to when its band fires (MeshRitual engine). */
 export type ReactTarget = 'scale' | 'emissive' | 'explode' | 'rotate';
 /** Per-mesh part allocation. */
@@ -164,7 +182,15 @@ export type CaptureBlend =
   | 'lighten'
   | 'darken';
 
+/** What the capture layer shows: a shared window or tab, or a camera. */
+export type CaptureSource = 'screen' | 'camera';
+
 export interface CaptureConfig {
+  source: CaptureSource;
+  /** The camera's deviceId; empty for the browser's default camera. */
+  cameraId: string;
+  /** Flip the picture left to right, so a camera facing you acts as a mirror. */
+  mirror: boolean;
   opacity: number;
   scale: number;
   /** Where the capture sits: filling the frame, or a centred inset. */
@@ -357,6 +383,7 @@ export interface ShaderRitualConfig {
   video: VideoConfig;
   text: TextConfig;
   postfx: PostFXConfig;
+  camfx: CamFxConfig;
   model: ModelConfig;
   shaders: Record<string, ShaderSetting>;
 }

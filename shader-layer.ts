@@ -121,6 +121,13 @@ export class ShaderLayer {
       iVideo: { value: whiteTexture() },
       iVideoOn: { value: 0 },
       iVideoAspect: { value: 16 / 9 },
+      // The live capture feed — camera or shared window — for shaders that
+      // want to use it in their own code. Same white-texture rule as iVideo:
+      // gate on iCaptureOn. Mirrored when the camera is set to mirror.
+      iCapture: { value: whiteTexture() },
+      iCaptureOn: { value: 0 },
+      iCaptureAspect: { value: 16 / 9 },
+      iCaptureMirror: { value: 0 },
     };
     for (const el of def.elements) {
       this.uniforms[`${el.id}_react`] = { value: 0 };
@@ -206,6 +213,15 @@ export class ShaderLayer {
   }
 
   /** Push the per-frame uniform values (time, camera, element react/visible). */
+  /** Hand the layer the live capture feed, or null when there is none. */
+  setCapture(tex: THREE.Texture | null, aspect: number, mirror: boolean) {
+    if (!this.uniforms || !this.uniforms.iCapture) return;
+    this.uniforms.iCapture.value = tex || whiteTexture();
+    this.uniforms.iCaptureOn.value = tex ? 1 : 0;
+    this.uniforms.iCaptureAspect.value = aspect > 0 ? aspect : 16 / 9;
+    this.uniforms.iCaptureMirror.value = mirror ? 1 : 0;
+  }
+
   /** Hand the layer the live clip, or null when there is none. */
   setVideo(tex: THREE.Texture | null, aspect: number) {
     if (!this.uniforms || !this.uniforms.iVideo) return;

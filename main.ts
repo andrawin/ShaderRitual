@@ -78,6 +78,11 @@ export class ShaderRitualApp extends LitElement {
   /** How many part cards are rendered at once (see renderPartsMenu). */
   @state() private partsShown = 40;
   @state() isCapturing = false;
+  /** Cameras the render window can see; mirrored to controllers with the meter. */
+  @state() cameras: { id: string; label: string }[] = [];
+  /** source|cameraId of the running capture, to notice when either changes. */
+  private captureKey = '';
+  private captureBusy = false;
   private captureStream: MediaStream | null = null;
 
   private onModelFile = async (e: any) => {
@@ -266,50 +271,125 @@ export class ShaderRitualApp extends LitElement {
     }
   };
 
-  /** Share-a-window screen capture, projected onto the model scene. */
+  /** The capture layer: a shared window, or a camera. */
   private toggleCapture = async () => {
     if (this.isController) {
       this.post({ type: 'command', name: this.isCapturing ? 'stopCapture' : 'startCapture' });
       return;
     }
-    if (this.isCapturing) {
-      this.captureStream?.getTracks().forEach((t) => t.stop());
-      this.captureStream = null;
-      this.isCapturing = false;
-      this.viewEl?.setCaptureStream?.(null);
-      return;
-    }
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      this.error = 'Screen capture not supported in this browser.';
-      return;
-    }
+    if (this.isCapturing) this.stopCapture();
+    else await this.startCapture();
+  };
+
+  private stopCapture() {
+    this.captureStream?.getTracks().forEach((t) => t.stop());
+    this.captureStream = null;
+    this.isCapturing = false;
+    this.captureKey = '';
+    this.viewEl?.setCaptureStream?.(null);
+  }
+
+  private async startCapture() {
+    if (this.captureBusy) return;
+    this.captureBusy = true;
+    const c = this.config.model.capture;
     try {
       this.error = '';
-      // Cap what the browser hands us — an uncapped 4K/60 share is by far the
-      // most expensive thing in the pipeline.
-      const fps = this.config.model.capture.fps || 30;
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          displaySurface: 'window',
-          frameRate: { max: fps },
-          width: { max: 1920 },
-          height: { max: 1080 },
-        } as any,
-        audio: false,
-      });
+      const stream = c.source === 'camera' ? await this.openCamera() : await this.openScreen();
+      if (!stream) return;
+      // A stream that was replaced while this one was opening is dropped.
+      this.captureStream?.getTracks().forEach((t) => t.stop());
       this.captureStream = stream;
       this.isCapturing = true;
+      this.captureKey = `${c.source}|${c.source === 'camera' ? c.cameraId : ''}`;
       this.viewEl?.setCaptureStream?.(stream);
-      stream.getTracks()[0].addEventListener('ended', () => {
-        this.captureStream = null;
-        this.isCapturing = false;
-        this.viewEl?.setCaptureStream?.(null);
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        // Only if it is still the live one — a camera swap ends the old track.
+        if (this.captureStream !== stream) return;
+        this.stopCapture();
       });
+      if (c.source === 'camera') this.refreshCameras();
     } catch (err: any) {
-      this.error = `Capture failed: ${err?.message || err}`;
+      const name = err?.name || '';
+      this.error =
+        name === 'NotAllowedError'
+          ? `${c.source === 'camera' ? 'Camera' : 'Screen capture'} permission was refused.`
+          : name === 'NotFoundError' || name === 'OverconstrainedError'
+            ? 'That camera is not connected.'
+            : name === 'NotReadableError'
+              ? 'The camera is in use by another app.'
+              : `Capture failed: ${err?.message || err}`;
       this.isCapturing = false;
+    } finally {
+      this.captureBusy = false;
     }
+  }
+
+  private async openScreen(): Promise<MediaStream | null> {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      this.error = 'Screen capture not supported in this browser.';
+      return null;
+    }
+    // Cap what the browser hands us — an uncapped 4K/60 share is by far the
+    // most expensive thing in the pipeline.
+    const fps = this.config.model.capture.fps || 30;
+    return navigator.mediaDevices.getDisplayMedia({
+      video: {
+        displaySurface: 'window',
+        frameRate: { max: fps },
+        width: { max: 1920 },
+        height: { max: 1080 },
+      } as any,
+      audio: false,
+    });
+  }
+
+  private async openCamera(): Promise<MediaStream | null> {
+    // Like the mic, the camera is only exposed on https or localhost.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.error =
+        'Camera blocked: browsers only allow it on https or localhost. ' +
+        `Open the render window at http://localhost:${location.port || 8787} on this machine.`;
+      return null;
+    }
+    const c = this.config.model.capture;
+    const fps = c.fps || 30;
+    const video: MediaTrackConstraints = {
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: Math.min(fps, 30), max: fps },
+    };
+    // `exact`, so a camera that has gone away says so instead of silently
+    // falling back to another one in the middle of a set.
+    if (c.cameraId) video.deviceId = { exact: c.cameraId };
+    return navigator.mediaDevices.getUserMedia({ video, audio: false });
+  }
+
+  /** List the cameras. Labels only appear once camera permission is granted. */
+  private refreshCameras = async () => {
+    if (this.isController || !navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      this.cameras = devs
+        .filter((d) => d.kind === 'videoinput')
+        .map((d, i) => ({ id: d.deviceId, label: d.label || `Camera ${i + 1}` }));
+    } catch (e) {}
   };
+
+  /**
+   * Called every frame on the render window. Changing the source or the camera
+   * while capturing — from this panel, a controller or MIDI — swaps the feed:
+   * a new camera opens straight away. A screen share needs a click in this
+   * window (the browser insists), so switching to Screen just stops the camera.
+   */
+  private syncCaptureSource() {
+    if (!this.isCapturing || this.captureBusy) return;
+    const c = this.config.model.capture;
+    const key = `${c.source}|${c.source === 'camera' ? c.cameraId : ''}`;
+    if (key === this.captureKey) return;
+    if (c.source === 'camera') this.startCapture();
+    else this.stopCapture();
+  }
 
   private pendingMidiUpdate = false;
   private monitorRaf = 0;
@@ -581,6 +661,10 @@ export class ShaderRitualApp extends LitElement {
     this.setupSync();
     this.initMidi();
     this.startMonitor();
+    if (!this.isController) {
+      this.refreshCameras();
+      navigator.mediaDevices?.addEventListener?.('devicechange', this.refreshCameras);
+    }
     if (this.isMain) {
       window.addEventListener('keydown', (e) => {
         const el = e.composedPath()[0] as HTMLElement;
@@ -923,6 +1007,7 @@ export class ShaderRitualApp extends LitElement {
           this.status = msg.status;
           this.error = msg.error || '';
           this.isCapturing = !!msg.isCapturing;
+          if (Array.isArray(msg.cameras)) this.cameras = msg.cameras;
         }
         break;
       case 'command':
@@ -1171,6 +1256,7 @@ export class ShaderRitualApp extends LitElement {
     };
     if (rangeMap[path]) return rangeMap[path];
     if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
+    if (path.startsWith('camfx') && (path.endsWith('.amount') || path === 'camfx.key')) return { min: 0, max: 1 };
     if (path.endsWith('.amount')) return { min: 0, max: 3 };
     if (path.endsWith('.level')) return { min: 0, max: 2 };
     if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
@@ -1204,6 +1290,7 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'video.slices') return [2, 4, 8, 16, 32];
     if (path === 'video.fps') return [60, 30, 15, 8];
     if (path === 'model.capture.mode') return ['background', 'floating'];
+    if (path === 'model.capture.source') return ['screen', 'camera'];
     if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
     if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
     if (path === 'model.capture.fps') return [60, 30, 15, 8];
@@ -1438,6 +1525,8 @@ export class ShaderRitualApp extends LitElement {
     const draw = () => {
       this.monitorRaf = requestAnimationFrame(draw);
 
+      if (!this.isController) this.syncCaptureSource();
+
       // Render window: stream the live meter + audio state to any controller.
       if (!this.isController && this.sync) {
         const view = this.shadowRoot?.querySelector('shader-ritual-view') as any;
@@ -1452,6 +1541,7 @@ export class ShaderRitualApp extends LitElement {
             status: this.status,
             error: this.error,
             isCapturing: this.isCapturing,
+            cameras: this.cameras,
           });
         }
       }
@@ -1631,9 +1721,9 @@ export class ShaderRitualApp extends LitElement {
         ${m.mode === 'fracture' ? this.renderFractureControls() : ''}
       </div>
 
-      <!-- Screen capture is its own layer — it works with or without a model. -->
+      <!-- Capture (screen or camera) is its own layer — it works with or without a model. -->
       <div class="setting-group">
-        <span class="group-title">Screen Capture</span>
+        <span class="group-title">Screen &amp; Camera</span>
         ${this.renderCaptureSection()}
       </div>
     `;
@@ -2082,12 +2172,51 @@ export class ShaderRitualApp extends LitElement {
     return html`
       <div>
         <div class="element-desc" style="margin-bottom:6px;">
-          Project a shared window into the scene. Works on its own — no 3D model needed.
+          Project a shared window, or a live camera, into the scene. Works on
+          its own — no 3D model needed.
         </div>
+        <div class="control-row">
+          <label>Source</label>
+          ${this.learnDot('model.capture.source')}
+          <select .value=${live(c.source)}
+            @change=${(e: any) => this.updateConfig('model.capture.source', e.target.value)}>
+            <option value="screen">Screen</option>
+            <option value="camera">Camera</option>
+          </select>
+        </div>
+        ${c.source === 'camera'
+          ? html`
+              <div class="control-row">
+                <label>Camera</label>
+                <select .value=${live(c.cameraId)}
+                  @change=${(e: any) => this.updateConfig('model.capture.cameraId', e.target.value)}>
+                  <option value="">Default camera</option>
+                  ${this.cameras
+                    .filter((cam) => cam.id)
+                    .map((cam) => html`<option value=${cam.id}>${cam.label}</option>`)}
+                  ${c.cameraId && !this.cameras.some((cam) => cam.id === c.cameraId)
+                    ? html`<option value=${c.cameraId}>Saved camera (not found)</option>`
+                    : ''}
+                </select>
+              </div>
+              <div class="control-row">
+                <label>Mirror</label>
+                ${this.learnDot('model.capture.mirror')}
+                <input type="checkbox" .checked=${c.mirror}
+                  @change=${(e: any) => this.updateConfig('model.capture.mirror', e.target.checked)} />
+              </div>
+              <div class="element-desc" style="margin-bottom:8px;">
+                Camera names show once the browser has been allowed to use the
+                camera. Changing camera while it is live swaps the feed.
+              </div>
+            `
+          : ''}
         <div class="control-row" style="gap:8px;justify-content:flex-start;">
           ${this.learnDot('!capture')}
           <button class="action-btn ${this.isCapturing ? 'active' : ''}" style="font-size:0.72rem;padding:6px 10px;"
-            @click=${this.toggleCapture}>${this.isCapturing ? 'Stop Capture' : 'Share a Window'}</button>
+            @click=${this.toggleCapture}>${this.isCapturing
+              ? c.source === 'camera' ? 'Stop Camera' : 'Stop Capture'
+              : c.source === 'camera' ? 'Start Camera' : 'Share a Window'}</button>
           ${this.learnDot('model.capture.visible')}
           <button class="vis-toggle ${c.visible ? 'on' : 'off'}"
             @click=${() => this.updateConfig('model.capture.visible', !c.visible)}>${c.visible ? 'SHOWN' : 'HIDDEN'}</button>
@@ -2106,7 +2235,7 @@ export class ShaderRitualApp extends LitElement {
         </div>
         <div class="element-desc" style="margin-bottom:8px;">
           Each captured frame is a full texture upload. Lower this first if
-          sharing feels heavy — re-share the window to apply the new rate.
+          sharing feels heavy — restart the capture to apply the new rate.
         </div>
         <div class="control-row">
           <label>Placement</label>
@@ -2149,11 +2278,11 @@ export class ShaderRitualApp extends LitElement {
     `;
   }
 
-  private renderFx = (name: string, label: string) => {
-    const fx = (this.config.postfx as any)[name];
-    const onPath = `postfx.${name}.on`;
-    const amtPath = `postfx.${name}.amount`;
-    const bandPath = `postfx.${name}.band`;
+  private renderFx = (name: string, label: string, root: 'postfx' | 'camfx' = 'postfx') => {
+    const fx = (this.config[root] as any)[name];
+    const onPath = `${root}.${name}.on`;
+    const amtPath = `${root}.${name}.amount`;
+    const bandPath = `${root}.${name}.band`;
     return html`
       <div class="element-card ${fx.on ? '' : 'hidden-el'}">
         <div class="element-head">
@@ -2184,6 +2313,46 @@ export class ShaderRitualApp extends LitElement {
       </div>
     `;
   };
+
+  private renderCamFxSection() {
+    const c = this.config.camfx;
+    const live0 = this.isCapturing;
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Camera FX · global</span>
+        <div class="element-desc" style="margin-bottom:10px;">
+          The live feed from Screen &amp; Camera reshaping whatever shader is
+          running. Start the camera there; hide its picture layer to keep only
+          the effect. ${live0 ? '' : html`<b>No feed running yet.</b>`}
+        </div>
+        ${this.renderFx('silhouette', 'Silhouette mask', 'camfx')}
+        <div class="control-row">
+          <label>Key</label>
+          ${this.learnDot('camfx.key')}
+          <input type="range" min="0" max="1" step="0.01" .value=${c.key}
+            @input=${(e: any) => this.updateConfig('camfx.key', parseFloat(e.target.value))} />
+        </div>
+        <div class="control-row">
+          <label>Invert</label>
+          ${this.learnDot('camfx.invert')}
+          <input type="checkbox" .checked=${c.invert}
+            @change=${(e: any) => this.updateConfig('camfx.invert', e.target.checked)} />
+        </div>
+        <div class="element-desc" style="margin-bottom:10px;">
+          The shader shows only where the camera is brighter than Key — light
+          the performer, keep the room dark. Invert shows it around them instead.
+        </div>
+        ${this.renderFx('displace', 'Displace', 'camfx')}
+        ${this.renderFx('colourise', 'Colourise', 'camfx')}
+        ${this.renderFx('trails', 'Motion trails', 'camfx')}
+        <div class="element-desc" style="margin-bottom:8px;">
+          Displace ripples the shader along the shapes in the picture. Colourise
+          paints the camera image in the shader's colours. Motion trails keep
+          the shader only where something moved; more amount, longer trails.
+        </div>
+      </div>
+    `;
+  }
 
   /** Apply a shader's preset palette. `key` is '<shaderId>:<index>'. */
   private applyPalette(key: string) {
@@ -2594,6 +2763,9 @@ export class ShaderRitualApp extends LitElement {
           ${this.renderFx('mosaic', 'Mosaic Shuffle')}
           ${this.renderFx('datamosh', 'Datamosh')}
         </div>
+
+        <!-- CAMERA FX (global, all shaders) -->
+        ${this.renderCamFxSection()}
 
         <!-- TEXT -->
         ${this.renderTextSection()}
