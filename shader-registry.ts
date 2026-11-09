@@ -69,6 +69,7 @@ import { lwWeave } from './shaders/lw-weave';
 import { lwHalftone } from './shaders/lw-halftone';
 import { neonCity } from './shaders/scene-neon-city';
 import { office } from './shaders/scene-office';
+import { neapolis } from './shaders/scene-neapolis';
 
 /** All registered shaders. Add new shaders here. */
 export const SHADERS: ShaderDef[] = [
@@ -130,6 +131,7 @@ export const SHADERS: ShaderDef[] = [
   // Scene shaders: Buffer A is a GLB scene rather than GLSL.
   neonCity,
   office,
+  neapolis,
 ];
 
 /** Fresh camera / motion rig defaults. */

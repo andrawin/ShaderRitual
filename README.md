@@ -199,3 +199,15 @@ Then click the gear icon → **Ignite Audio** and play sound near your mic.
   licensed [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/). Prepared
   for the scene (screens cut out, textures compressed) by `tools/prep-office.py`;
   the original and its licence are in `tools/source/`.
+- **Neapolis** uses six models from Sketchfab, all licensed
+  [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/):
+  "[Neapolis Greek Walls](https://sketchfab.com/3d-models/neapolis-greek-walls-734c2106e82840e7a79e7a4a6d806238)" by [artfletch](https://sketchfab.com/artfletch);
+  "[Gary's Synthesizer](https://sketchfab.com/3d-models/garys-synthesizer-4df4d2a8a556486a85e3b3336843d0ae)" by [Fredrik](https://sketchfab.com/kird3rf);
+  "[Moog Grandmother Semi-Modular Analog Synthesizer](https://sketchfab.com/3d-models/moog-grandmother-semi-modular-analog-synthesizer-6394f8259fb4450083d4333e394c02a8)" by [gozdemrl](https://sketchfab.com/gozdemrl);
+  "[SYNTHGEN-V1 O2](https://sketchfab.com/3d-models/synthgen-v1-o2-3ebd1cb2b60e44fab636403ddd0219fe)" by [AL3K](https://sketchfab.com/alexinsouratselou);
+  "[TR-808](https://sketchfab.com/3d-models/tr-808-577cb95c8d78491795918d06e0afe05b)" by [VictorBorgions](https://sketchfab.com/VictorBorgions);
+  "[Synthesizer](https://sketchfab.com/3d-models/synthesizer-736c46af07c54a7fb0eb6f93a6398cdf)" by [Michael Perez](https://sketchfab.com/pixelflygraphics).
+  Scaled to real size, placed on raycast-checked flat stone and flown by
+  `tools/build-neapolis.py` (Blender); exported for the web, with the drone's
+  flight in the GLB, by `tools/export-neapolis.py` and
+  `gltf-transform meshopt`.
