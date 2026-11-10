@@ -99,6 +99,24 @@ Two newer manipulation layers sit on top of the element system:
   The detached window carries the live band meter too, so you can run the visual
   full-screen on one display and drive it from another.
 
+## Audio signals
+
+Beyond the fixed Low / Mid / High bands, **Audio Signals** works like
+TouchDesigner's Audio Spectrum, Lag and Math CHOPs:
+
+- **Draw a range on the spectrum.** Each coloured box is a signal (Kick, Snare
+  and Hats to start; more from presets). Drag it, or drag its edges.
+- **Shape it.** Auto-level (scales between its own recent floor and peak),
+  Gain, Gate, Attack and Release in milliseconds, and a Curve for punch.
+  Signals read an unsmoothed FFT of their own, so transients come through.
+- **Use it anywhere a band is chosen.** Every Audio band menu lists the signals.
+- **Map it to any slider or amount.** Press Map on a signal, then click the ●
+  next to any numeric setting. Its own slider sets where it rests; the depth
+  (-100% to +100% of its range) sets how far the signal pushes it. Several
+  signals add up on one setting. Driven settings have a purple ring.
+
+Code: `audio-signals.ts` (analysis, shaping, modulation), `param-ranges.ts`.
+
 ## Architecture
 
 | File | Responsibility |

@@ -12,6 +12,7 @@ import { decompose, type Part } from './decompose';
 import { fracture, type Fragment } from './fracture';
 import { Analyser } from './analyser';
 import { computeBands } from './audio-bands';
+import { SignalEngine, applyModulation } from './audio-signals';
 import { CameraRig } from './camera';
 import { ShaderLayer, hexToRgb } from './shader-layer';
 import { commonVertex } from './shaders/common';
@@ -470,10 +471,20 @@ export class ShaderRitualView extends LitElement {
   private lastBands: Bands = { low: 0, mid: 0, high: 0, rawLow: 0, rawMid: 0, rawHigh: 0 };
 
   @property({ type: Object }) config!: ShaderRitualConfig;
+  /**
+   * This frame's config: the stored one with every audio modulation applied.
+   * Everything that draws reads this; only the panel's edits change config.
+   */
+  private frameConfig: ShaderRitualConfig | null = null;
+  private get cfg(): ShaderRitualConfig {
+    return this.frameConfig ?? this.config;
+  }
+  private signals: SignalEngine | null = null;
 
   @property()
   set inputNode(node: AudioNode) {
     this.analyser = new Analyser(node);
+    this.signals = new SignalEngine(node);
   }
 
   static styles = css`
@@ -488,6 +499,16 @@ export class ShaderRitualView extends LitElement {
 
   getBandData() {
     return this.lastBands;
+  }
+
+  /** The live spectrum on the signal editor's log axis, 0..1 per point. */
+  getSpectrum(points = 160): number[] | null {
+    return this.signals ? this.signals.spectrum(points) : null;
+  }
+
+  /** Each signal's level before shaping, for the editor's meters. */
+  getSignalLevels(): Record<string, number> {
+    return this.signals ? this.signals.levels : {};
   }
 
   /* ----------------- Live-coding delegates to the base layer -----------------
@@ -516,6 +537,9 @@ export class ShaderRitualView extends LitElement {
   }
 
   updated(changed: Map<string, any>) {
+    // The stored config, not last frame's modulated copy of it: this is about
+    // the edit that just came in.
+    if (changed.has('config')) this.frameConfig = null;
     if (changed.has('config') && this.renderer) {
       if (this.config.activeShader !== this.baseLayer.currentShaderId) {
         this.baseLayer.build(this.config.activeShader);
@@ -878,7 +902,7 @@ void main(){
 
     this.baseLayer = new ShaderLayer(this.renderer, this.errorSink);
     this.overlayLayer = new ShaderLayer(this.renderer, this.errorSink);
-    this.baseLayer.build(this.config.activeShader);
+    this.baseLayer.build(this.cfg.activeShader);
 
     // Final composite pass: base + optional overlay -> screen.
     this.compositeUniforms = {
@@ -967,7 +991,7 @@ void main(){
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
-    if (this.analyser) this.analyser.smoothing = this.config.fftSmoothing;
+    if (this.analyser) this.analyser.smoothing = this.cfg.fftSmoothing;
     this.renderLoop();
   }
 
@@ -978,7 +1002,7 @@ void main(){
     // Effective device pixels, scaled by the render-scale knob. Re-read the
     // live devicePixelRatio so moving to an external display (different DPR)
     // recomputes the backing-store size instead of ballooning it.
-    const scale = Math.min(1, Math.max(0.25, this.config?.renderScale ?? 1));
+    const scale = Math.min(1, Math.max(0.25, this.cfg?.renderScale ?? 1));
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio) * scale);
     this.renderer.setSize(w, h);
     const dpr = this.renderer.getPixelRatio();
@@ -993,7 +1017,7 @@ void main(){
     this.sceneTarget.setSize(pw, ph);
     this.feedRead.setSize(pw, ph);
     this.feedWrite.setSize(pw, ph);
-    const mq = Math.min(1, Math.max(0.25, this.config?.model?.quality ?? 1));
+    const mq = Math.min(1, Math.max(0.25, this.cfg?.model?.quality ?? 1));
     this.lastModelQuality = mq;
     this.modelTarget.setSize(Math.max(1, Math.floor(pw * mq)), Math.max(1, Math.floor(ph * mq)));
     this.baseLayer.resize(pw, ph);
@@ -1137,8 +1161,8 @@ void main(){
     const holder = this.modelHolder;
     const root = this.modelRootObj;
     if (!holder || !root || !this.modelParts.length) return;
-    const want = this.config.model.mode === 'fracture'
-      ? Math.max(2, Math.round(this.config.model.fracture.fragments))
+    const want = this.cfg.model.mode === 'fracture'
+      ? Math.max(2, Math.round(this.cfg.model.fracture.fragments))
       : 0;
     if (want === this.fragmentCount && (want === 0 || this.fractureGroup)) {
       this.applyMode();
@@ -1183,7 +1207,7 @@ void main(){
 
   /** Show the decomposed parts or the fracture group depending on mode. */
   private applyMode() {
-    const md = this.config.model;
+    const md = this.cfg.model;
     const showParts = md.mode !== 'fracture';
     for (const p of this.modelParts) {
       p.mesh.visible = showParts && (md.mode === 'none' || (md.parts[p.id]?.visible ?? true));
@@ -1193,14 +1217,14 @@ void main(){
 
   /** 0..1 effective strength of a post-FX filter (band pushes the amount). */
   private fxAmount(name: keyof ShaderRitualConfig['postfx']) {
-    const s = this.config.postfx?.[name];
+    const s = this.cfg.postfx?.[name];
     if (!s || !s.on) return 0;
     const bv = s.band === 'none' ? 0 : (this.lastBands as any)[s.band] || 0;
     return Math.min(1.2, s.amount + bv);
   }
 
   private ensureOverlay() {
-    const ov = this.config.overlay;
+    const ov = this.cfg.overlay;
     if (ov.enabled && this.overlayShaderId !== ov.shader) {
       this.overlayShaderId = ov.shader;
       this.overlayLayer.build(ov.shader);
@@ -1231,28 +1255,33 @@ void main(){
     this.rafId = requestAnimationFrame(this.renderLoop);
     if (!this.renderer || this.contextLost) return;
 
-    if (this.analyser) {
-      this.analyser.update();
-      this.lastBands = computeBands(this.analyser.data, this.config.sensitivity, this.config.thresholds);
-    }
-
-    // Audio-gated animation clock + shared camera rig.
     const now = performance.now();
     const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
-    const m = this.config.motion;
+
+    this.frameConfig = null;
+    if (this.analyser) {
+      this.analyser.update();
+      this.lastBands = computeBands(this.analyser.data, this.config.sensitivity, this.config.thresholds);
+      this.signals?.update(this.config.audio?.signals || [], dt, this.lastBands);
+    }
+    // Then the modulations, for everything below to read.
+    this.frameConfig = applyModulation(this.config, this.config.audio?.mods || [], this.lastBands);
+
+    // Audio-gated animation clock + shared camera rig.
+    const m = this.cfg.motion;
     const energy = Math.max(this.lastBands.low, this.lastBands.mid, this.lastBands.high);
     const speed = m && m.audioGated ? m.idle + energy * m.gain : 1;
     const motionDt = dt * speed;
     this.animTime += motionDt;
     const time = this.animTime;
-    const cam = this.cameraRig.update(motionDt, time, this.config.camera, this.lastBands);
+    const cam = this.cameraRig.update(motionDt, time, this.cfg.camera, this.lastBands);
 
     // Work out which optional passes are actually needed this frame. When the
     // overlay is off and every post-FX filter is idle (the common case), we
     // skip the composite + post passes entirely and draw the base image
     // straight to the screen — 2 full-screen passes instead of 4.
-    const ov = this.config.overlay;
+    const ov = this.cfg.overlay;
     const px = this.fxAmount('pixelate');
     const ed = this.fxAmount('edge');
     const po = this.fxAmount('posterize');
@@ -1264,8 +1293,8 @@ void main(){
     const anyPost = px + ed + po + rg + sc + gl + mo + dm > 0.001;
     const needComposite = ov.enabled;
 
-    const baseDef = getShader(this.config.activeShader);
-    const baseCfg = this.config.shaders[baseDef.id]?.elements || {};
+    const baseDef = getShader(this.cfg.activeShader);
+    const baseCfg = this.cfg.shaders[baseDef.id]?.elements || {};
     this.baseLayer.setUniforms(time, cam, this.lastBands, baseCfg);
 
     // Hand the clip to the shader itself, so a shader that maps video onto its
@@ -1275,7 +1304,7 @@ void main(){
     const vEl = this.videoEl;
     const vAspect = vEl && vEl.videoHeight > 0 ? vEl.videoWidth / vEl.videoHeight : 16 / 9;
     this.baseLayer.setVideo(this.videoTexture || null, vAspect);
-    const capMirror = captureMirrored(this.config);
+    const capMirror = captureMirrored(this.cfg);
     const cAspect = this.captureAspect();
     this.baseLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
 
@@ -1283,7 +1312,7 @@ void main(){
     // texture to blend against — so while it is up, every pass that would
     // normally end at the screen ends in captureSrc instead. Decided here
     // because it changes the destination of all of them.
-    const mdl = this.config.model;
+    const mdl = this.cfg.model;
     const capOn = !!this.captureTexture && !!mdl?.capture?.visible && mdl.capture.opacity > 0;
     const outRT = capOn ? this.captureSrc : (null as any);
 
@@ -1293,8 +1322,8 @@ void main(){
     // The text layer sits between the clip and post-FX for the same reason, so
     // the chain is: shader -> clip -> text -> post -> capture -> model, and
     // each stage lands wherever the next one is going to read from.
-    const vcfg = this.config.video;
-    const tcfg = this.config.text;
+    const vcfg = this.cfg.video;
+    const tcfg = this.cfg.text;
     const vidOn = !!this.videoTexture && !!vcfg?.visible && vcfg.opacity > 0;
     const txtOn = !!tcfg?.visible && tcfg.opacity > 0 && !!tcfg.content.trim();
     const afterText = anyPost ? this.sceneTarget : outRT;
@@ -1320,7 +1349,7 @@ void main(){
       this.compositeUniforms.uOverlay.value = 1;
       this.ensureOverlay();
       const ovDef = getShader(ov.shader);
-      const ovCfg = this.config.shaders[ovDef.id]?.elements || {};
+      const ovCfg = this.cfg.shaders[ovDef.id]?.elements || {};
       this.overlayLayer.setUniforms(time, cam, this.lastBands, ovCfg);
       this.overlayLayer.setVideo(this.videoTexture || null, vAspect);
       this.overlayLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
@@ -1398,7 +1427,7 @@ void main(){
     // 3D overlay scene, drawn on top of the post-processed image and on top of
     // the capture layer. Only the uploaded model lives here now — capture is
     // its own full-screen pass — and all per-frame work is skipped without one.
-    const md = this.config.model;
+    const md = this.cfg.model;
     const modelUp = !!this.modelHolder && !!md && md.visible && md.opacity > 0.004;
 
     if (modelUp) {
@@ -1428,7 +1457,7 @@ void main(){
         // so choosing a movement does something without a second setting.
         // Real time, not the audio-gated clock: a tempo the user typed should
         // run at that tempo whether or not audio is coming in.
-        const beat = md.bpm > 0 ? md.bpm : this.config.camera?.bpm || 120;
+        const beat = md.bpm > 0 ? md.bpm : this.cfg.camera?.bpm || 120;
         if (md.motion !== 'none') this.modelPhase += dt * (beat / 60); // beats
         this.applyModelMotion(md);
       }
@@ -1557,7 +1586,7 @@ void main(){
   private animateParts(bands: Bands, dt: number) {
     const k = this.modelRadius;
     for (const part of this.modelParts) {
-      const s = this.config.model.parts[part.id];
+      const s = this.cfg.model.parts[part.id];
       if (!part.mesh.visible) continue;
 
       part.mesh.position.copy(part.basePosition);
@@ -1565,7 +1594,7 @@ void main(){
       part.mesh.quaternion.copy(part.baseQuaternion);
       for (const m of part.materials) m.emissiveIntensity = 0;
 
-      const v = !s || s.band === 'none' ? 0 : (bands as any)[s.band] * s.amount;
+      const v = !s || s.band === 'none' ? 0 : ((bands as any)[s.band] || 0) * s.amount;
       if (v <= 0 && s?.target !== 'rotate') continue;
 
       switch (s?.target) {
@@ -1589,7 +1618,7 @@ void main(){
 
   private animateFracture(bands: Bands, dt: number) {
     if (!this.fractureGroup) return;
-    const f = this.config.model.fracture;
+    const f = this.cfg.model.fracture;
     const k = this.modelRadius;
     const val = (b: string, amt: number) => (b === 'none' ? 0 : (bands as any)[b] * amt);
 
@@ -1613,7 +1642,7 @@ void main(){
 
   /** Fire an action on the rising edge of the trigger band past its threshold. */
   private detectBeat(bands: Bands) {
-    const p = this.config.model.fracture.physics;
+    const p = this.cfg.model.fracture.physics;
     const v = (bands as any)[p.beatBand] ?? 0;
     const now = performance.now();
     if (v > p.beatThreshold && this.prevBeatVal <= p.beatThreshold && now - this.lastBeat > 120) {
@@ -1641,7 +1670,7 @@ void main(){
   /** Launch every fragment outward + upward with random tumble. */
   burst() {
     if (!this.modelFragments.length) return;
-    const p = this.config.model.fracture.physics;
+    const p = this.cfg.model.fracture.physics;
     const r = this.modelRadius;
     this.imploding = false;
     for (const f of this.modelFragments) {
@@ -1676,7 +1705,7 @@ void main(){
 
   private animateFracturePhysics(bands: Bands, dt: number) {
     if (!this.fractureGroup) return;
-    const f2 = this.config.model.fracture;
+    const f2 = this.cfg.model.fracture;
     const p = f2.physics;
     const r = this.modelRadius;
     const g = p.gravity * r * 3.0;
@@ -1754,7 +1783,7 @@ void main(){
     const v = document.createElement('video');
     v.muted = true;            // the audio rig is the analyser's, not the clip's
     v.playsInline = true;
-    v.loop = this.config?.video?.loop ?? true;
+    v.loop = this.cfg?.video?.loop ?? true;
     v.preload = 'auto';
     v.src = url;
     // Deliberately NOT published to this.videoEl yet. The render loop drives
@@ -1797,7 +1826,7 @@ void main(){
     this.videoEl = v;   // loaded and measured: safe for the render loop now
 
     try {
-      if (this.config?.video?.playing !== false) await v.play();
+      if (this.cfg?.video?.playing !== false) await v.play();
     } catch (e) {}
 
     // Same throttled-upload trick as capture: Three re-uploads a VideoTexture
@@ -1825,7 +1854,7 @@ void main(){
     (tex as any).update = () => {
       if (v.readyState < v.HAVE_CURRENT_DATA) return;
       if (hasRvfc && !this.videoFrameReady) return;
-      const fps = Math.min(60, Math.max(1, this.config?.video?.fps || 30));
+      const fps = Math.min(60, Math.max(1, this.cfg?.video?.fps || 30));
       const nowMs = performance.now();
       if (nowMs - this.lastVideoUpload < 1000 / fps) return;
       this.lastVideoUpload = nowMs;
@@ -1919,7 +1948,7 @@ void main(){
    */
   private driveVideo(dt: number, bands: Bands) {
     const v = this.videoEl;
-    const cfg = this.config.video;
+    const cfg = this.cfg.video;
     if (!v || !cfg) return;
 
     // One play() attempt in flight at a time. A clip that cannot start — no
@@ -1950,7 +1979,7 @@ void main(){
     // The beat clock keeps running even with the auto trigger off, so turning
     // it on lands on the next division rather than wherever the phase happens
     // to be — and hand-fired triggers do not disturb it.
-    const bpm = this.config.camera?.bpm > 0 ? this.config.camera.bpm : 120;
+    const bpm = this.cfg.camera?.bpm > 0 ? this.cfg.camera.bpm : 120;
     this.videoBeat += dt * (bpm / 60);
     const div = Math.max(0.0625, cfg.sliceDiv || 1);
     const tick = Math.floor(this.videoBeat / div);
@@ -2013,7 +2042,7 @@ void main(){
 
   /** How far this pass's cuts have slid, in seconds. */
   private sliceOffset(len: number): number {
-    const drift = Math.min(1, Math.max(0, this.config.video?.sliceDrift ?? 0));
+    const drift = Math.min(1, Math.max(0, this.cfg.video?.sliceDrift ?? 0));
     return this.slicePhase * drift * len;
   }
 
@@ -2032,7 +2061,7 @@ void main(){
     fromClock = false,
   ) {
     const v = this.videoEl;
-    const cfg = this.config.video;
+    const cfg = this.cfg.video;
     if (!v || !cfg) return;
     const dur = v.duration;
     if (!isFinite(dur) || dur <= 0) return;
@@ -2101,7 +2130,7 @@ void main(){
    * guessed at.
    */
   private redrawText(w: number, h: number) {
-    const cfg = this.config.text;
+    const cfg = this.cfg.text;
     if (!this.textCanvas) {
       this.textCanvas = document.createElement('canvas');
       this.textCtx = this.textCanvas.getContext('2d');
@@ -2203,7 +2232,7 @@ void main(){
    * types itself out.
    */
   private applyText(dt: number, bands: Bands, w: number, h: number) {
-    const cfg = this.config.text;
+    const cfg = this.cfg.text;
     const cw = Math.min(1920, Math.max(256, Math.round(w)));
     const ch = Math.max(144, Math.round(cw * (h / Math.max(1, w))));
     const sig = [cfg.content, cfg.effect, cfg.size, cfg.align, cfg.lineHeight, cfg.wrap, cw, ch]
@@ -2214,7 +2243,7 @@ void main(){
     }
 
     // Beat-locked, so a paragraph lands with the music rather than drifting.
-    const bpm = this.config.camera?.bpm > 0 ? this.config.camera.bpm : 120;
+    const bpm = this.cfg.camera?.bpm > 0 ? this.cfg.camera.bpm : 120;
     const band = cfg.band !== 'none' ? (bands as any)[cfg.band] || 0 : 0;
     this.textBeat += dt * (bpm / 60) * (1 + band * (cfg.amount || 0));
     const beats = Math.max(0.25, cfg.beats || 8);
@@ -2236,7 +2265,7 @@ void main(){
 
   /** Feed the video pass its framing, opacity and blend for this frame. */
   private applyVideo() {
-    const cfg = this.config.video;
+    const cfg = this.cfg.video;
     const v = this.videoEl;
     if (!cfg || !v) return;
     const size = this.renderer.getSize(new THREE.Vector2());
@@ -2315,7 +2344,7 @@ void main(){
       (tex as any).update = () => {
         if (video.readyState < video.HAVE_CURRENT_DATA) return;
         if (hasRvfc && !this.captureFrameReady) return; // no new frame to upload
-        const fps = Math.min(60, Math.max(1, this.config?.model?.capture?.fps || 30));
+        const fps = Math.min(60, Math.max(1, this.cfg?.model?.capture?.fps || 30));
         const nowMs = performance.now();
         if (nowMs - this.lastCaptureUpload < 1000 / fps) return;
         this.lastCaptureUpload = nowMs;
@@ -2472,7 +2501,7 @@ void main(){
 
   /** Each camera effect's strength this frame, with its band pushing it. */
   private camFxAmounts() {
-    const c = this.config.camfx;
+    const c = this.cfg.camfx;
     const amt = (s: { on: boolean; amount: number; band: string } | undefined) => {
       if (!s || !s.on) return 0;
       const bv = s.band === 'none' ? 0 : (this.lastBands as any)[s.band] || 0;
@@ -2493,7 +2522,7 @@ void main(){
     camAspect: number,
     mirror: boolean,
   ) {
-    const c = this.config.camfx;
+    const c = this.cfg.camfx;
     const tex = this.captureTexture!;
     const size = this.renderer.getSize(new THREE.Vector2());
 
@@ -2539,7 +2568,7 @@ void main(){
 
   /** Feed the capture pass its framing, opacity and blend for this frame. */
   private applyCapture(bands: Bands) {
-    const c = this.config.model.capture;
+    const c = this.cfg.model.capture;
     if (!c) return;
     const react = c.reactive ? 1 + ((bands as any)[c.reactiveBand] || 0) * 0.2 : 1;
     const size = this.renderer.getSize(new THREE.Vector2());

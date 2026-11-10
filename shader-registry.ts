@@ -14,6 +14,7 @@ import type {
   ShaderRitualConfig,
   ShaderSetting,
 } from './types';
+import { defaultAudio, mergeAudio } from './audio-signals';
 import { TEXT_MAX } from './types';
 import { sanctum } from './shaders/sanctum';
 import { cathedral } from './shaders/cathedral';
@@ -366,6 +367,7 @@ export function defaultConfig(): ShaderRitualConfig {
     text: defaultText(),
     postfx: defaultPostFX(),
     camfx: defaultCamFx(),
+    audio: defaultAudio(),
     model: defaultModel(),
     shaders,
   };
@@ -391,6 +393,7 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     text: { ...base.text, ...(saved.text || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
     camfx: mergeCamFx(base.camfx, saved.camfx),
+    audio: mergeAudio(base.audio, saved.audio),
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },
   };

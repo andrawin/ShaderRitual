@@ -4,8 +4,59 @@
  */
 import type { Object3D, WebGLRenderer, WebGLRenderTarget } from 'three';
 
-/** Audio frequency band a visual element can be wired to. */
-export type Band = 'none' | 'low' | 'mid' | 'high';
+/**
+ * What a visual element can be wired to: one of the three fixed bands, or the
+ * id of one of the user's audio signals (see AudioSignal).
+ */
+export type Band = 'none' | 'low' | 'mid' | 'high' | (string & {});
+
+/**
+ * A named audio signal, TouchDesigner-style: a frequency range you draw on the
+ * spectrum, shaped into a 0..1 control value. Anywhere a band can be chosen,
+ * a signal can be too, and any numeric setting can be modulated by one.
+ */
+export interface AudioSignal {
+  /** Stable id; what bands and modulations refer to. Never low/mid/high/none. */
+  id: string;
+  name: string;
+  color: string;
+  /** Frequency range, Hz. */
+  lo: number;
+  hi: number;
+  /**
+   * Auto-level: track the signal's own recent floor and peak and scale
+   * between them, so it uses the full 0..1 whatever the room or mix.
+   */
+  auto: boolean;
+  /** Multiplier after levelling. */
+  gain: number;
+  /** Anything under this (0..1) reads as 0; the rest is stretched to 0..1. */
+  gate: number;
+  /** Seconds to rise to a new level, and to fall away from one. */
+  attack: number;
+  release: number;
+  /** Response curve: above 1 makes hits punchier, below 1 softer. */
+  curve: number;
+}
+
+/** One signal driving one numeric setting. */
+export interface Modulation {
+  id: string;
+  /** A signal id, or low / mid / high. */
+  source: string;
+  /** Dotted config path of the setting, e.g. postfx.rgbShift.amount. */
+  target: string;
+  /**
+   * -1..1: at full signal, how far the setting moves across its range, up
+   * or (negative) down from where its own control sits.
+   */
+  depth: number;
+}
+
+export interface AudioConfig {
+  signals: AudioSignal[];
+  mods: Modulation[];
+}
 
 /** Per-element audio-reactive allocation + visibility. */
 export interface ElementSetting {
@@ -384,6 +435,7 @@ export interface ShaderRitualConfig {
   text: TextConfig;
   postfx: PostFXConfig;
   camfx: CamFxConfig;
+  audio: AudioConfig;
   model: ModelConfig;
   shaders: Record<string, ShaderSetting>;
 }
@@ -486,4 +538,6 @@ export interface Bands {
   rawLow: number;
   rawMid: number;
   rawHigh: number;
+  /** The user's audio signals, by id. */
+  [signal: string]: number;
 }

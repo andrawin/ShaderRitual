@@ -8,7 +8,9 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { Band, CameraMode, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+import type { AudioSignal, Band, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+import { SIGNAL_PRESETS, freqToX, newSignalId, xToFreq } from './audio-signals';
+import { modulatable, paramRange } from './param-ranges';
 import { TEXT_MAX } from './types';
 
 function defaultPart(): PartSetting {
@@ -405,6 +407,14 @@ export class ShaderRitualApp extends LitElement {
   private sync: BroadcastChannel | null = null;
   private codeWindowOpen = false;
   @state() private remoteBands: any = null;
+  /** Controller copies of the render window's spectrum and signal levels. */
+  private remoteSpectrum: number[] | null = null;
+  private remoteLevels: Record<string, number> = {};
+  /** The signal being mapped: the next ● clicked becomes its target. */
+  @state() private modSource: string | null = null;
+  @state() private modNote = '';
+  @state() private selSignal: string | null = null;
+  private sigDrag: { id: string; mode: 'lo' | 'hi' | 'move'; x0: number; lo: number; hi: number } | null = null;
 
   // Live-coding code panel.
   @state() showCode = false;
@@ -527,6 +537,26 @@ export class ShaderRitualApp extends LitElement {
       box-shadow: 0 0 8px #a855f7; animation: pulse 1s infinite;
     }
     .midi-learn-btn.mapped { border-color: #10b981; color: #10b981; }
+    .midi-learn-btn.modulated { box-shadow: 0 0 0 2px #c77dff; }
+    .spectrum-wrap { position: relative; margin: 4px 0 10px; }
+    #spectrumCanvas {
+      width: 100%; height: 150px; display: block; border-radius: 6px;
+      background: #07070b; cursor: crosshair; touch-action: none;
+    }
+    .sig-card { border-left: 3px solid var(--sig, #888); }
+    .sig-card.sel { background: rgba(255,255,255,0.07); }
+    .sig-name {
+      flex: 1; min-width: 0; background: transparent; border: none; color: white;
+      font: inherit; font-weight: 700; padding: 2px 0;
+    }
+    .sig-color { width: 22px; height: 22px; padding: 0; border: none; background: none; }
+    .sig-hz { width: 64px; }
+    .map-btn { font-size: 0.65rem; padding: 3px 8px; }
+    .map-btn.active { background: #c77dff; color: #000; }
+    .mod-row { display: flex; align-items: center; gap: 6px; font-size: 0.7rem; margin: 4px 0; }
+    .mod-row .mod-label { flex: 0 0 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d9c2ff; }
+    .mod-row input[type=range] { flex: 1; }
+    .mod-note { font-size: 0.72rem; color: #d9c2ff; margin: 6px 0; min-height: 1em; }
 
     @keyframes pulse {
       0% { opacity: 1; transform: scale(1); }
@@ -1008,6 +1038,8 @@ export class ShaderRitualApp extends LitElement {
           this.error = msg.error || '';
           this.isCapturing = !!msg.isCapturing;
           if (Array.isArray(msg.cameras)) this.cameras = msg.cameras;
+          if (Array.isArray(msg.spectrum)) this.remoteSpectrum = msg.spectrum;
+          if (msg.levels) this.remoteLevels = msg.levels;
         }
         break;
       case 'command':
@@ -1203,65 +1235,7 @@ export class ShaderRitualApp extends LitElement {
     (this as any).requestUpdate();
   };
 
-  private getParamRange = (path: string) => {
-    const rangeMap: Record<string, { min: number; max: number }> = {
-      'sensitivity.low': { min: 0, max: 5 },
-      'sensitivity.mid': { min: 0, max: 5 },
-      'sensitivity.high': { min: 0, max: 10 },
-      fftSmoothing: { min: 0, max: 0.95 },
-      renderScale: { min: 0.25, max: 1 },
-      'camera.bpm': { min: 60, max: 200 },
-      'camera.orbitSpeed': { min: 0, max: 3 },
-      'camera.distance': { min: 0.3, max: 2.5 },
-      'camera.height': { min: -1, max: 1 },
-      'camera.fov': { min: 20, max: 120 },
-      'camera.reactAmount': { min: 0, max: 3 },
-      'camera.cutChance': { min: 0, max: 1 },
-      'motion.idle': { min: 0, max: 1 },
-      'motion.gain': { min: 0, max: 3 },
-      'overlay.opacity': { min: 0, max: 1 },
-      'model.scale': { min: 0.1, max: 5 },
-      'model.opacity': { min: 0, max: 1 },
-      'model.posX': { min: -3, max: 3 },
-      'model.posY': { min: -3, max: 3 },
-      'model.posZ': { min: -3, max: 3 },
-      'model.bpm': { min: 0, max: 300 },
-      'model.motionAmount': { min: 0, max: 3 },
-      'model.quality': { min: 0.25, max: 1 },
-      'model.fracture.fragments': { min: 2, max: 250 },
-      'video.opacity': { min: 0, max: 1 },
-      'video.scale': { min: 0.25, max: 3 },
-      'video.speed': { min: 0.1, max: 4 },
-      'video.speedAmount': { min: 0, max: 3 },
-      'video.surfaceThreshold': { min: 0, max: 1 },
-      'video.surfaceSoftness': { min: 0.01, max: 0.6 },
-      'video.warp': { min: 0, max: 0.35 },
-      'video.sliceDrift': { min: 0, max: 1 },
-      'text.opacity': { min: 0, max: 1 },
-      'text.size': { min: 0.02, max: 0.3 },
-      'text.posX': { min: -1, max: 1 },
-      'text.posY': { min: -1, max: 1 },
-      'text.lineHeight': { min: 0.8, max: 2.5 },
-      'text.wrap': { min: 0.2, max: 1 },
-      'text.beats': { min: 1, max: 64 },
-      'text.amount': { min: 0, max: 3 },
-      'model.capture.opacity': { min: 0, max: 1 },
-      'model.capture.scale': { min: 0.1, max: 4 },
-      'model.fracture.physics.gravity': { min: 0, max: 4 },
-      'model.fracture.physics.burstStrength': { min: 0, max: 4 },
-      'model.fracture.physics.spin': { min: 0, max: 5 },
-      'model.fracture.physics.restitution': { min: 0, max: 0.95 },
-      'model.fracture.physics.implodeStrength': { min: 1, max: 20 },
-      'model.fracture.physics.beatThreshold': { min: 0.05, max: 1 },
-    };
-    if (rangeMap[path]) return rangeMap[path];
-    if (path.startsWith('postfx') && path.endsWith('.amount')) return { min: 0, max: 1 };
-    if (path.startsWith('camfx') && (path.endsWith('.amount') || path === 'camfx.key')) return { min: 0, max: 1 };
-    if (path.endsWith('.amount')) return { min: 0, max: 3 };
-    if (path.endsWith('.level')) return { min: 0, max: 2 };
-    if (path.includes('thresholds') || path.includes('Threshold')) return { min: 0, max: 1 };
-    return { min: 0, max: 1 };
-  };
+  private getParamRange = (path: string) => paramRange(path);
 
   /** Read the current value at a dotted config path. */
   private readPath(path: string): any {
@@ -1424,7 +1398,7 @@ export class ShaderRitualApp extends LitElement {
   /** The little ● MIDI-learn dot. Works for any mappable target. */
   private learnDot = (path: string) => html`
     <button
-      class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
+      class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''} ${this.isModulated(path) ? 'modulated' : ''}"
       title="MIDI learn"
       @click=${() => this.toggleMidiLearn(path)}>●</button>
   `;
@@ -1456,6 +1430,10 @@ export class ShaderRitualApp extends LitElement {
   `;
 
   private toggleMidiLearn = (path: string) => {
+    if (this.modSource) {
+      this.finishMapping(path);
+      return;
+    }
     this.learningParam = this.learningParam === path ? null : path;
     this.lastMidiMsg = this.learningParam
       ? 'LEARN: move a knob/fader, or hit a pad...'
@@ -1470,6 +1448,306 @@ export class ShaderRitualApp extends LitElement {
     localStorage.setItem(MIDI_MAP_KEY, JSON.stringify(this.midiMappings));
     (this as any).requestUpdate();
   };
+
+  private isModulated(path: string) {
+    return (this.config.audio?.mods || []).some((m) => m.target === path);
+  }
+
+  /* ----------------------- Audio signals ------------------------- */
+
+  private bandOptions(value: string) {
+    const opt = (v: string, label: string) => html`<option value=${v} ?selected=${v === value}>${label}</option>`;
+    return html`${opt('none', 'None')}${opt('low', 'Low')}${opt('mid', 'Mid')}${opt('high', 'High')}${(
+      this.config.audio?.signals || []
+    ).map((sg) => opt(sg.id, sg.name))}`;
+  }
+
+  private setSignals(signals: AudioSignal[], mods?: Modulation[]) {
+    this.updateConfig('audio', { ...this.config.audio, signals, mods: mods ?? this.config.audio.mods });
+  }
+
+  private patchSignal(id: string, patch: Partial<AudioSignal>) {
+    this.setSignals(this.config.audio.signals.map((sg) => (sg.id === id ? { ...sg, ...patch } : sg)));
+  }
+
+  private addSignal(preset: number) {
+    const signals = this.config.audio.signals;
+    const id = newSignalId(signals);
+    this.setSignals([...signals, { id, ...SIGNAL_PRESETS[preset] }]);
+    this.selSignal = id;
+  }
+
+  private removeSignal(id: string) {
+    this.setSignals(
+      this.config.audio.signals.filter((sg) => sg.id !== id),
+      this.config.audio.mods.filter((m) => m.source !== id),
+    );
+    if (this.modSource === id) this.modSource = null;
+  }
+
+  private setMods(mods: Modulation[]) {
+    this.updateConfig('audio', { ...this.config.audio, mods });
+  }
+
+  /** A readable name for a config path: "Neon City · Windows level". */
+  private pathLabel(path: string): string {
+    const k = path.split('.');
+    if (k[0] === 'shaders' && k[2] === 'elements') {
+      const def = SHADERS.find((d) => d.id === k[1]);
+      const el = def?.elements.find((e) => e.id === k[3]);
+      return `${def?.name ?? k[1]} · ${el?.name ?? k[3]} ${k[4] ?? ''}`.trim();
+    }
+    const head: Record<string, string> = {
+      postfx: 'Post FX', camfx: 'Camera FX', camera: 'Camera', motion: 'Motion', overlay: 'Overlay',
+      video: 'Video', text: 'Text', model: 'Model',
+    };
+    return [head[k[0]] ?? k[0], ...k.slice(1)].join(' · ');
+  }
+
+  private startMapping(id: string) {
+    this.modSource = this.modSource === id ? null : id;
+    this.learningParam = null;
+    const sg = this.config.audio.signals.find((x) => x.id === id);
+    this.modNote = this.modSource
+      ? `Mapping ${sg?.name}: click the ● next to any slider or amount, anywhere in the panel.`
+      : '';
+  }
+
+  private finishMapping(path: string) {
+    const src = this.modSource!;
+    const name = this.config.audio.signals.find((x) => x.id === src)?.name ?? src;
+    const v = this.readPath(path);
+    if (path.startsWith('!') || typeof v !== 'number' || !modulatable(path)) {
+      this.modNote = `${this.pathLabel(path)} can't follow a signal — pick a slider or an amount.`;
+      return;
+    }
+    this.modSource = null;
+    const mods = this.config.audio.mods;
+    if (mods.some((m) => m.source === src && m.target === path)) {
+      this.modNote = `${name} already drives ${this.pathLabel(path)}.`;
+      return;
+    }
+    const id = `m${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
+    this.setMods([...mods, { id, source: src, target: path, depth: 0.5 }]);
+    this.modNote = `${name} → ${this.pathLabel(path)}. Set how far it pushes below.`;
+  }
+
+  /** The spectrum editor: live spectrum, each signal's range and level. */
+  private drawSpectrum(bands: any) {
+    const cv = this.shadowRoot?.querySelector('#spectrumCanvas') as HTMLCanvasElement | null;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(1, Math.round(cv.clientWidth * dpr));
+    const H = Math.max(1, Math.round(cv.clientHeight * dpr));
+    if (cv.width !== W || cv.height !== H) {
+      cv.width = W;
+      cv.height = H;
+    }
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const view = this.isController ? null : (this.shadowRoot?.querySelector('shader-ritual-view') as any);
+    const spec: number[] | null = this.isController ? this.remoteSpectrum : view?.getSpectrum?.(160);
+    const levels: Record<string, number> = this.isController ? this.remoteLevels : view?.getSignalLevels?.() || {};
+    ctx.clearRect(0, 0, W, H);
+    // Grid.
+    ctx.font = `${10 * dpr}px monospace`;
+    for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) {
+      const x = freqToX(f) * W;
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(x, 0, dpr, H);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x + 3 * dpr, H - 4 * dpr);
+    }
+    // Spectrum.
+    if (spec && spec.length) {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      spec.forEach((v, i) => ctx.lineTo(((i + 0.5) / spec.length) * W, H - v * (H - 14 * dpr)));
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.13)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = dpr;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.fillText('Ignite Audio to see the spectrum', 10 * dpr, 20 * dpr);
+    }
+    // Signals: their range, their level going in (line), their value out (fill).
+    for (const sg of this.config.audio?.signals || []) {
+      const x0 = freqToX(sg.lo) * W;
+      const x1 = freqToX(sg.hi) * W;
+      const out = Math.min(1, Math.max(0, bands?.[sg.id] || 0));
+      const lvl = levels[sg.id] ?? 0;
+      const sel = sg.id === this.selSignal;
+      ctx.fillStyle = sg.color + (sel ? '30' : '1c');
+      ctx.fillRect(x0, 0, x1 - x0, H);
+      ctx.fillStyle = sg.color + 'cc';
+      ctx.fillRect(x0, H - out * H, x1 - x0, out * H);
+      ctx.fillStyle = sg.color;
+      ctx.fillRect(x0, H - lvl * (H - 14 * dpr), x1 - x0, 1.5 * dpr);
+      ctx.strokeStyle = sg.color;
+      ctx.lineWidth = (sel ? 2 : 1) * dpr;
+      ctx.strokeRect(x0, 0.5, x1 - x0, H - 1);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(sg.name, x0 + 3 * dpr, 12 * dpr);
+    }
+  }
+
+  private onSpecDown = (e: PointerEvent) => {
+    const cv = e.currentTarget as HTMLCanvasElement;
+    const r = cv.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const sigs = [...(this.config.audio?.signals || [])];
+    // The selected one first, so overlapping ranges pick what you're editing.
+    sigs.sort((a, b) => (a.id === this.selSignal ? -1 : b.id === this.selSignal ? 1 : 0));
+    for (const sg of sigs) {
+      const xl = freqToX(sg.lo) * r.width;
+      const xh = freqToX(sg.hi) * r.width;
+      const mode = Math.abs(px - xl) < 7 ? 'lo' : Math.abs(px - xh) < 7 ? 'hi' : px > xl && px < xh ? 'move' : null;
+      if (mode) {
+        this.selSignal = sg.id;
+        this.sigDrag = { id: sg.id, mode, x0: px / r.width, lo: sg.lo, hi: sg.hi };
+        cv.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
+    this.selSignal = null;
+  };
+
+  private onSpecMove = (e: PointerEvent) => {
+    const cv = e.currentTarget as HTMLCanvasElement;
+    const r = cv.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const d = this.sigDrag;
+    if (!d) {
+      // Show what dragging here would do.
+      const px = e.clientX - r.left;
+      const near = (this.config.audio?.signals || []).some(
+        (sg) => Math.abs(px - freqToX(sg.lo) * r.width) < 7 || Math.abs(px - freqToX(sg.hi) * r.width) < 7,
+      );
+      cv.style.cursor = near ? 'ew-resize' : 'crosshair';
+      return;
+    }
+    const round = (f: number) => (f < 1000 ? Math.round(f) : Math.round(f / 10) * 10);
+    if (d.mode === 'move') {
+      const dx = x - d.x0;
+      let a = freqToX(d.lo) + dx;
+      let b = freqToX(d.hi) + dx;
+      if (a < 0) { b -= a; a = 0; }
+      if (b > 1) { a -= b - 1; b = 1; }
+      this.patchSignal(d.id, { lo: round(xToFreq(a)), hi: round(xToFreq(b)) });
+    } else if (d.mode === 'lo') {
+      this.patchSignal(d.id, { lo: round(Math.min(xToFreq(x), d.hi * 0.92)) });
+    } else {
+      this.patchSignal(d.id, { hi: round(Math.max(xToFreq(x), d.lo * 1.08)) });
+    }
+  };
+
+  private onSpecUp = () => {
+    this.sigDrag = null;
+  };
+
+  private renderSignalsSection() {
+    const a = this.config.audio;
+    if (!a) return '';
+    const ms = (v: number) => Math.round(v * 1000);
+    const slider = (sg: AudioSignal, label: string, key: keyof AudioSignal, min: number, max: number, step: number, scale = 1, unit = '') => html`
+      <div class="control-row">
+        <label>${label}</label>
+        <input type="range" min=${min} max=${max} step=${step} .value=${live(String((sg[key] as number) * scale))}
+          @input=${(e: any) => this.patchSignal(sg.id, { [key]: parseFloat(e.target.value) / scale } as any)} />
+        <span class="val" style="min-width:44px;text-align:right;font-size:0.7rem;">${
+          Math.round((sg[key] as number) * scale * 100) / 100
+        }${unit}</span>
+      </div>`;
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Audio Signals · draw them on the spectrum</span>
+        <div class="element-desc" style="margin-bottom:6px;">
+          Each coloured box is a signal: drag it along the spectrum, or drag its
+          edges to set its range. The line is its level going in, the fill its
+          value coming out. Every Audio band menu in the panel can use a signal,
+          and Map wires it to any slider or amount.
+        </div>
+        <div class="spectrum-wrap">
+          <canvas id="spectrumCanvas"
+            @pointerdown=${this.onSpecDown}
+            @pointermove=${this.onSpecMove}
+            @pointerup=${this.onSpecUp}
+            @pointercancel=${this.onSpecUp}></canvas>
+        </div>
+        <div class="mod-note">${this.modNote}</div>
+        ${a.signals.map((sg) => {
+          const mods = a.mods.filter((m) => m.source === sg.id);
+          return html`
+            <div class="element-card sig-card ${sg.id === this.selSignal ? 'sel' : ''}" style="--sig:${sg.color}"
+              @pointerdown=${() => (this.selSignal = sg.id)}>
+              <div class="element-head" style="gap:6px;">
+                <input class="sig-color" type="color" .value=${live(sg.color)}
+                  @input=${(e: any) => this.patchSignal(sg.id, { color: e.target.value })} />
+                <input class="sig-name" .value=${live(sg.name)}
+                  @change=${(e: any) => this.patchSignal(sg.id, { name: e.target.value.slice(0, 24) || sg.name })} />
+                <button class="action-btn map-btn ${this.modSource === sg.id ? 'active' : ''}"
+                  title="Then click the ● next to any slider or amount"
+                  @click=${() => this.startMapping(sg.id)}>${this.modSource === sg.id ? 'Cancel' : 'Map'}</button>
+                <button class="icon-btn" title="Remove this signal" @click=${() => this.removeSignal(sg.id)}>&times;</button>
+              </div>
+              <div class="control-row">
+                <label>Range</label>
+                <input class="sig-hz" type="number" min="20" max="20000" .value=${live(String(sg.lo))}
+                  @change=${(e: any) => this.patchSignal(sg.id, { lo: Math.max(20, Math.min(sg.hi - 1, +e.target.value || sg.lo)) })} />
+                <span style="font-size:0.7rem;">–</span>
+                <input class="sig-hz" type="number" min="20" max="20000" .value=${live(String(sg.hi))}
+                  @change=${(e: any) => this.patchSignal(sg.id, { hi: Math.min(20000, Math.max(sg.lo + 1, +e.target.value || sg.hi)) })} />
+                <span style="font-size:0.7rem;">Hz</span>
+              </div>
+              <div class="control-row">
+                <label title="Scale between the signal's own recent quietest and loudest, so it uses the whole range whatever the mix">Auto-level</label>
+                <input type="checkbox" .checked=${sg.auto}
+                  @change=${(e: any) => this.patchSignal(sg.id, { auto: e.target.checked })} />
+              </div>
+              ${slider(sg, 'Gain', 'gain', 0, 4, 0.05)}
+              ${slider(sg, 'Gate', 'gate', 0, 0.9, 0.01)}
+              ${slider(sg, 'Attack', 'attack', 1, 300, 1, 1000, ' ms')}
+              ${slider(sg, 'Release', 'release', 10, 2000, 5, 1000, ' ms')}
+              ${slider(sg, 'Curve', 'curve', 0.3, 4, 0.05)}
+              ${mods.map(
+                (m) => html`
+                  <div class="mod-row">
+                    <span class="mod-label" title=${m.target}>→ ${this.pathLabel(m.target)}</span>
+                    <input type="range" min="-1" max="1" step="0.02" .value=${live(String(m.depth))}
+                      title="How far it pushes at full signal; negative pushes down"
+                      @input=${(e: any) =>
+                        this.setMods(a.mods.map((x) => (x.id === m.id ? { ...x, depth: parseFloat(e.target.value) } : x)))} />
+                    <span style="min-width:34px;text-align:right;">${m.depth > 0 ? '+' : ''}${Math.round(m.depth * 100)}%</span>
+                    <button class="icon-btn" title="Remove this mapping"
+                      @click=${() => this.setMods(a.mods.filter((x) => x.id !== m.id))}>&times;</button>
+                  </div>`,
+              )}
+            </div>`;
+        })}
+        <div class="control-row">
+          <label>Add signal</label>
+          <select .value=${'-1'}
+            @change=${(e: any) => {
+              const i = parseInt(e.target.value, 10);
+              if (i >= 0) this.addSignal(i);
+              e.target.value = '-1';
+            }}>
+            <option value="-1">Choose a preset…</option>
+            ${SIGNAL_PRESETS.map((p, i) => html`<option value=${String(i)}>${p.name} · ${p.lo}–${p.hi} Hz</option>`)}
+          </select>
+        </div>
+        <div class="element-desc">
+          Attack and Release are how fast it follows: a kick wants a few ms up
+          and ~150 ms down; a pad wants slow both ways. Curve above 1 makes
+          hits punchier. Settings driven by a signal have a purple ring on
+          their ●; their own slider sets where they rest.
+        </div>
+      </div>`;
+  }
 
   private isMapped(path: string) {
     return Object.values(this.midiMappings).some((m) => m.path === path);
@@ -1542,6 +1820,9 @@ export class ShaderRitualApp extends LitElement {
             error: this.error,
             isCapturing: this.isCapturing,
             cameras: this.cameras,
+            // The spectrum editor, for a controller that has the panel open.
+            spectrum: view?.getSpectrum?.(160)?.map((v: number) => Math.round(v * 100) / 100) ?? null,
+            levels: view?.getSignalLevels?.() ?? {},
           });
         }
       }
@@ -1567,7 +1848,10 @@ export class ShaderRitualApp extends LitElement {
       const data = this.isController
         ? this.remoteBands
         : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getBandData?.();
-      if (!ctx || !data) return;
+      if (!ctx || !data) {
+        this.drawSpectrum(null);
+        return;
+      }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const bands = [
         { val: data.rawLow, threshold: this.config.thresholds.low, col: '#3b82f6', label: 'LOW' },
@@ -1592,6 +1876,7 @@ export class ShaderRitualApp extends LitElement {
         ctx.font = 'bold 10px monospace';
         ctx.fillText(b.label, i * w + 5, 15);
       });
+      this.drawSpectrum(data);
     };
     draw();
   };
@@ -1638,7 +1923,7 @@ export class ShaderRitualApp extends LitElement {
       <div class="control-row">
         <label>${label}</label>
         <button
-          class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''}"
+          class="midi-learn-btn ${this.learningParam === path ? 'active' : ''} ${this.isMapped(path) ? 'mapped' : ''} ${this.isModulated(path) ? 'modulated' : ''}"
           @click=${() => this.toggleMidiLearn(path)}>●</button>
         <input type="range" min=${min} max=${max} step=${step} .value=${value}
           @input=${(e: any) => this.updateConfig(path, parseFloat(e.target.value))} />
@@ -1732,10 +2017,7 @@ export class ShaderRitualApp extends LitElement {
   private renderBandSelect(path: string, value: Band) {
     return html`
       <select .value=${value} @change=${(e: any) => this.updateConfig(path, e.target.value)}>
-        <option value="none">None</option>
-        <option value="low">Low</option>
-        <option value="mid">Mid</option>
-        <option value="high">High</option>
+            ${this.bandOptions(value)}
       </select>
     `;
   }
@@ -2294,7 +2576,7 @@ export class ShaderRitualApp extends LitElement {
         <div class="control-row">
           <label>Amount</label>
           <button
-            class="midi-learn-btn ${this.learningParam === amtPath ? 'active' : ''} ${this.isMapped(amtPath) ? 'mapped' : ''}"
+            class="midi-learn-btn ${this.learningParam === amtPath ? 'active' : ''} ${this.isMapped(amtPath) ? 'mapped' : ''} ${this.isModulated(amtPath) ? 'modulated' : ''}"
             @click=${() => this.toggleMidiLearn(amtPath)}>●</button>
           <input type="range" min="0" max="1" step="0.02" .value=${fx.amount}
             @input=${(e: any) => this.updateConfig(amtPath, parseFloat(e.target.value))} />
@@ -2304,10 +2586,7 @@ export class ShaderRitualApp extends LitElement {
           ${this.learnDot(bandPath)}
           <select .value=${live(fx.band)}
             @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
-            <option value="none">None</option>
-            <option value="low">Low</option>
-            <option value="mid">Mid</option>
-            <option value="high">High</option>
+            ${this.bandOptions(fx.band)}
           </select>
         </div>
       </div>
@@ -2457,16 +2736,13 @@ export class ShaderRitualApp extends LitElement {
           <select
             .value=${live(setting.band)}
             @change=${(e: any) => this.updateConfig(bandPath, e.target.value as Band)}>
-            <option value="none">None</option>
-            <option value="low">Low</option>
-            <option value="mid">Mid</option>
-            <option value="high">High</option>
+            ${this.bandOptions(setting.band)}
           </select>
         </div>
         <div class="control-row">
           <label>Reactive amount</label>
           <button
-            class="midi-learn-btn ${this.learningParam === amountPath ? 'active' : ''} ${this.isMapped(amountPath) ? 'mapped' : ''}"
+            class="midi-learn-btn ${this.learningParam === amountPath ? 'active' : ''} ${this.isMapped(amountPath) ? 'mapped' : ''} ${this.isModulated(amountPath) ? 'modulated' : ''}"
             @click=${() => this.toggleMidiLearn(amountPath)}>●</button>
           <input type="range" min="0" max="3" step="0.05" .value=${setting.amount}
             @input=${(e: any) => this.updateConfig(amountPath, parseFloat(e.target.value))} />
@@ -2474,7 +2750,7 @@ export class ShaderRitualApp extends LitElement {
         <div class="control-row">
           <label title="Manual baseline added to the reactive value — drive this element by hand (set band to None for pure manual control)">${meta.defaultColor ? 'Intensity' : meta.options?.length ? 'Level (sweeps)' : 'Manual level'}</label>
           <button
-            class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''}"
+            class="midi-learn-btn ${this.learningParam === levelPath ? 'active' : ''} ${this.isMapped(levelPath) ? 'mapped' : ''} ${this.isModulated(levelPath) ? 'modulated' : ''}"
             @click=${() => this.toggleMidiLearn(levelPath)}>●</button>
           <input type="range" min="0" max="2" step="0.02" .value=${setting.level}
             @input=${(e: any) => this.updateConfig(levelPath, parseFloat(e.target.value))} />
@@ -2539,10 +2815,7 @@ export class ShaderRitualApp extends LitElement {
               <select
                 .value=${cam.audioBand}
                 @change=${(e: any) => this.updateConfig('camera.audioBand', e.target.value as Band)}>
-                <option value="none">None</option>
-                <option value="low">Low</option>
-                <option value="mid">Mid</option>
-                <option value="high">High</option>
+            ${this.bandOptions(cam.audioBand)}
               </select>
             </div>`
           : ''}
@@ -2729,6 +3002,9 @@ export class ShaderRitualApp extends LitElement {
 
         <!-- OVERLAY LAYER (combine elements across shaders) -->
         ${this.renderOverlaySection()}
+
+        <!-- AUDIO SIGNALS (custom bands, mapping) -->
+        ${this.renderSignalsSection()}
 
         <!-- RESPONSE PROFILE -->
         <div class="setting-group">
