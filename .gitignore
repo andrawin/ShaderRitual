@@ -12,5 +12,5 @@ tools/source/office.glb
 .claude/
 # Sketchfab downloads for tools/prep-scenes.py (150 MB); links in README > Credits.
 tools/source/control-room.glb
-tools/source/lab.glb
+tools/source/ocean.glb
 tools/source/engine-room.glb

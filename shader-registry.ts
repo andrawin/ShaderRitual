@@ -72,7 +72,7 @@ import { neonCity } from './shaders/scene-neon-city';
 import { office } from './shaders/scene-office';
 import { neapolis } from './shaders/scene-neapolis';
 import { leviathan } from './shaders/scene-leviathan';
-import { specimen } from './shaders/scene-specimen';
+import { seawall } from './shaders/scene-seawall';
 import { engineRoom } from './shaders/scene-engine-room';
 
 /** All registered shaders. Add new shaders here. */
@@ -137,7 +137,7 @@ export const SHADERS: ShaderDef[] = [
   office,
   neapolis,
   leviathan,
-  specimen,
+  seawall,
   engineRoom,
 ];
 

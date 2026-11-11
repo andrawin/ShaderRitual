@@ -1,16 +1,18 @@
 """
-Prepare the Leviathan, Specimen and Engine Room models.
+Prepare the Leviathan, Seawall and Engine Room models.
 
     python tools/prep-scenes.py            (with `pip install bpy`, or)
     Blender --background --factory-startup --python tools/prep-scenes.py
 
-Reads tools/source/{control-room,lab,engine-room}.glb (the Sketchfab downloads;
-links in README > Credits) and writes public/scenes/{leviathan,specimen,
+Reads tools/source/{control-room,ocean,engine-room}.glb (the Sketchfab downloads;
+links in README > Credits) and writes public/scenes/{leviathan,seawall,
 engine-room}.glb with Meshopt geometry and WebP textures:
 
   control-room  as it is: 47k triangles and 256px textures already
-  lab           66 textures at 2048 come down to 1024; 100 MB to a few
-  engine-room   a 1M-triangle photoscan, welded and decimated to half
+  ocean         as it is, its specular-glossiness materials converted on the way
+                through Blender (three.js no longer reads them)
+  engine-room   a 1M-triangle photoscan, welded and decimated to half; its two
+                8192 textures come down to 4096
 
 Two steps follow the export. Blender's WebP writer fails on a few of the
 textures (glass and packed roughness maps), so references to those are dropped
@@ -53,8 +55,8 @@ def drop_missing_textures(path):
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JOBS = [
     ('control-room', 'leviathan', 0, 1.0),
-    ('lab', 'specimen', 1024, 1.0),
-    ('engine-room', 'engine-room', 0, 0.5),
+    ('ocean', 'seawall', 0, 1.0),
+    ('engine-room', 'engine-room', 4096, 0.5),
 ]
 only = [a for a in sys.argv[1:] if not a.startswith('-') and not a.endswith('.py')]
 for src, dst, tex, ratio in JOBS:

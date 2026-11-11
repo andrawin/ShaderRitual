@@ -218,9 +218,9 @@ Then click the gear icon → **Ignite Audio** and play sound near your mic.
   for the scene (screens cut out, textures compressed) by `tools/prep-office.py`;
   the original and its licence are in `tools/source/`.
 - **Leviathan** uses "[animal company - Megalodon Dead End Control Room](https://sketchfab.com/3d-models/animal-company-megalodon-dead-end-control-room-e8e4db6b6048444d802fcd6574c172f9)"
-  by [Romeo rios vr](https://sketchfab.com/rrios2027); **Specimen** uses
-  "[Science Lab Assets](https://sketchfab.com/3d-models/science-lab-assets-0b71f4dd1a55457b9e69a60cb73f06dd)"
-  by [caitydesu](https://sketchfab.com/caitydesu); **Engine Room** uses
+  by [Romeo rios vr](https://sketchfab.com/rrios2027); **Seawall** uses
+  "[DAE Diorama - By the Ocean](https://sketchfab.com/3d-models/dae-diorama-by-the-ocean-e6dffd4062c64986afaf11b5a497ddff)"
+  by [Sidney Eliot Bundschuh](https://sketchfab.com/sidney-eliot); **Engine Room** uses
   "[HMS Belfast Engine Room](https://sketchfab.com/3d-models/hms-belfast-engine-room-f99d43c01604443ab731a07c7714f55c)"
   by [artfletch](https://sketchfab.com/artfletch). All three are licensed
   [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/) and were prepared
