@@ -123,6 +123,44 @@ Lag, Math and Trigger CHOPs in one):
 
 Code: `audio-signals.ts` (analysis, hits, shaping, modulation), `param-ranges.ts`.
 
+## Live events: Strudel and SuperCollider
+
+Notes and messages from live code become signals too, so they can be
+mapped to any setting, fire On hit actions, or drive the strobe in the same
+way as an audio signal. Each one is exact to the note, and lands when the
+sound plays: Strudel and SuperCollider schedule ahead, and the event carries
+how far, so the picture waits for it.
+
+1. Run the relay alongside the app: `npm run dev:live` (or `npm run relay`
+   in a second terminal next to `npm run dev`). It listens for OSC on UDP
+   **57121** and for Strudel on **ws://localhost:8787**.
+2. In the panel, **Audio Signals > Live events**, copy a snippet:
+   - **Strudel**: paste it at the top of your code, then add `.sr()` to any
+     pattern (or `all(x => x.sr())` for everything). It works from
+     strudel.cc; the browser may ask to allow access to local devices the
+     first time.
+   - **SuperCollider**: `~sr = NetAddr("127.0.0.1", 57121)`, then
+     `~sr.sendMsg("/sr", "s", "kick", "gain", 1)`, a Pbind `\finish`, or the
+     `OSCdef` that forwards everything SuperDirt plays.
+3. Events show in the log as they arrive; click one to make a signal that
+   listens for events like it, or add one with **+ Event signal**.
+
+An event signal's **Match** picks the events, with space-separated tokens
+that must all hold:
+
+| Token | Matches |
+| --- | --- |
+| `s=bd` | a parameter equal to a value; `s=bd\|sd` either, `s=hh*` wildcards |
+| `/sr/kick` | the OSC address (`/sr/*`) |
+| `strudel:` `sc:` `dirt:` | only from that sender (dirt = SuperDirt's `/dirt/play`) |
+| `kick` | any parameter equal to it |
+| `*` | everything |
+
+**Trigger** fires a pulse per event, as tall as its gain (or the number in
+**Value from**). **Follow** holds the latest number instead, which suits a
+knob sent from SuperCollider (`~sr.sendMsg("/sr/cutoff", 0.7)` with Match
+`/sr/cutoff`). **Offset** shifts every event if the projector runs behind.
+
 ## Strobe
 
 A flash over the finished picture — every shader, the camera layer and the

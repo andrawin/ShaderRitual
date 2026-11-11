@@ -8,8 +8,8 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { AudioSignal, Band, StrobeConfig, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
-import { HIT_ACTIONS, SIGNAL_PRESETS, freqToX, isCore, newSignalId, xToFreq } from './audio-signals';
+import type { AudioSignal, Band, LiveEvent, StrobeConfig, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+import { HIT_ACTIONS, SIGNAL_PRESETS, describeEvent, eventSignal, freqToX, isCore, newSignalId, suggestMatch, xToFreq } from './audio-signals';
 import { modulatable, paramRange } from './param-ranges';
 import { TEXT_MAX } from './types';
 
@@ -416,6 +416,11 @@ export class ShaderRitualApp extends LitElement {
   @state() private selSignal: string | null = null;
   /** When each signal last hit (performance.now()), for the flashes. */
   private hitAt: Record<string, number> = {};
+  /** The latest live events, newest first, for the panel's log. */
+  @state() private eventLog: { t: number; ev: LiveEvent }[] = [];
+  private eventLogDirty = false;
+  private eventLogTimer: any = null;
+  private eventCount = 0;
   private hitSeen: Record<string, number> = {};
   private actionAt: Record<string, number> = {};
   private remoteHits: Record<string, number> = {};
@@ -545,6 +550,43 @@ export class ShaderRitualApp extends LitElement {
     .midi-learn-btn.mapped { border-color: #10b981; color: #10b981; }
     .midi-learn-btn.modulated { box-shadow: 0 0 0 2px #c77dff; }
     .spectrum-wrap { position: relative; margin: 4px 0 10px; }
+    .event-log {
+      font: 10px/1.35 monospace;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      padding: 4px;
+      margin-bottom: 6px;
+      max-height: 150px;
+      overflow: hidden;
+    }
+    .event-row {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 1px 3px;
+      cursor: pointer;
+      border-radius: 2px;
+      opacity: 0.75;
+    }
+    .event-row:hover { background: rgba(255, 255, 255, 0.08); opacity: 1; }
+    .event-row.fresh { opacity: 1; color: #fff; }
+    .event-src {
+      display: inline-block;
+      min-width: 48px;
+      color: #7cff6b;
+      text-transform: uppercase;
+    }
+    .sig-match {
+      flex: 1;
+      min-width: 0;
+      background: rgba(0, 0, 0, 0.35);
+      color: inherit;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+      padding: 3px 5px;
+      font: 11px monospace;
+    }
     #spectrumCanvas {
       width: 100%; height: 150px; display: block; border-radius: 6px;
       background: #07070b; cursor: crosshair; touch-action: none;
@@ -838,6 +880,13 @@ export class ShaderRitualApp extends LitElement {
     if (!override && !location.hostname) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const target = override || `${location.hostname}:8787`;
+    if (this.ws) {
+      // Never two sockets at once.
+      const old = this.ws;
+      old.onclose = old.onmessage = old.onerror = null;
+      try { old.close(); } catch (e) {}
+      this.ws = null;
+    }
     try {
       this.ws = new WebSocket(`${proto}://${target}`);
     } catch (e) {
@@ -885,7 +934,8 @@ export class ShaderRitualApp extends LitElement {
   private watchRemoteWake() {
     const wake = () => {
       if (document.visibilityState !== 'visible') return;
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+      // Connecting counts too: a second socket would get every message twice.
+      if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
       this.wsRetryDelay = 1000;
       clearTimeout(this.wsRetryTimer);
       this.connectRemote();
@@ -922,6 +972,11 @@ export class ShaderRitualApp extends LitElement {
     if (msg.type === 'remoteHello') {
       // The relay announces the LAN URLs it's serving on.
       this.remoteUrls = Array.isArray(msg.urls) ? msg.urls : [];
+      return;
+    }
+    if (msg.type === 'liveEvent') {
+      // Straight from Strudel or the relay's OSC port, never echoed.
+      this.onLiveEvent(msg);
       return;
     }
     if (msg._sid) {
@@ -1536,6 +1591,125 @@ export class ShaderRitualApp extends LitElement {
     this.setSignals(this.config.audio.signals.map((sg) => (sg.id === id ? { ...sg, ...patch } : sg)));
   }
 
+  /* ------------------------- Live events -------------------------- */
+
+  private onLiveEvent(msg: any) {
+    const params = msg.params && typeof msg.params === 'object' && !Array.isArray(msg.params)
+      ? msg.params
+      : { value: msg.params };
+    const ev: LiveEvent = {
+      src: String(msg.src || 'osc').toLowerCase(),
+      address: typeof msg.address === 'string' ? msg.address : '',
+      params,
+      delay: Number.isFinite(+msg.delay) ? +msg.delay : 0,
+    };
+    if (this.isMain) this.viewEl?.pushEvent?.(ev);
+    this.eventCount++;
+    this.eventLog.unshift({ t: performance.now(), ev });
+    if (this.eventLog.length > 10) this.eventLog.length = 10;
+    // Redraw the log a few times a second at most: a 16th-note hat line
+    // would otherwise re-render the panel on every note.
+    if (!this.eventLogTimer) {
+      this.eventLogTimer = setTimeout(() => {
+        this.eventLogTimer = null;
+        this.eventLog = [...this.eventLog];
+      }, 200);
+    }
+  }
+
+  private addEventSignal(match = '*', name = 'Event') {
+    const signals = this.config.audio.signals;
+    const id = newSignalId(signals);
+    const hues = ['#7cff6b', '#ff6bd6', '#6bd0ff', '#ffe66b', '#b36bff', '#ff8a5c'];
+    const n = signals.filter((sg) => sg.kind === 'event').length;
+    this.setSignals([...signals, eventSignal(id, name.slice(0, 24), match, hues[n % hues.length])]);
+    this.selSignal = id;
+  }
+
+  private copyText(text: string, what: string) {
+    navigator.clipboard?.writeText(text).then(
+      () => (this.modNote = `${what} copied.`),
+      () => (this.modNote = `Could not reach the clipboard; select the text and copy it.`),
+    );
+  }
+
+  private get strudelSnippet() {
+    return `// ShaderRitual: .sr() sends a pattern's events to the visuals
+const sr = globalThis.__sr?.readyState < 2 ? globalThis.__sr
+  : (globalThis.__sr = new WebSocket('ws://localhost:8787'))
+register('sr', (pat) => pat.onTrigger((hap, now, cps, t) => {
+  if (sr.readyState !== 1) return
+  const v = hap.value
+  sr.send(JSON.stringify({ type: 'liveEvent', src: 'strudel', address: '',
+    params: v && typeof v === 'object' ? v : { value: v },
+    delay: (t - now) * 1000 }))
+}, false))
+
+// then: s("bd*4").sr()   or every pattern: all(x => x.sr())`;
+  }
+
+  private get scSnippet() {
+    return `// ShaderRitual: OSC to the relay, UDP 57121
+~sr = NetAddr("127.0.0.1", 57121);
+
+// one message: an address, then name / value pairs
+~sr.sendMsg("/sr", "s", "kick", "gain", 1);
+
+// a knob: a Follow signal with Match /sr/cutoff
+~sr.sendMsg("/sr/cutoff", 0.7);
+
+// every note of a Pbind, timed to land with the sound
+Pbind(\\degree, Pwhite(0, 7), \\dur, 0.25,
+  \\finish, { |ev| ~sr.sendBundle(s.latency, ["/sr", "s", "lead", "gain", ev[\\amp] ? 0.1]) }
+).play;
+
+// everything SuperDirt plays (Strudel or Tidal through SuperCollider)
+OSCdef(\\srDirt, { |msg, time|
+  ~sr.sendBundle((time - SystemClock.seconds).max(0), msg)
+}, '/dirt/play');`;
+  }
+
+  private renderLiveEvents() {
+    const a = this.config.audio;
+    const off = a.eventOffset || 0;
+    const now = performance.now();
+    return html`
+      <div class="element-card">
+        <div class="element-head">
+          <span class="element-name">Live events · Strudel, SuperCollider, OSC</span>
+          <span style="font-size:0.65rem;opacity:0.8;">
+            ${this.wsOk ? html`<span style="color:#7cff6b;">● relay</span>` : html`<span style="color:#ff6b6b;">○ no relay</span>`}
+          </span>
+        </div>
+        <div class="element-desc">
+          Notes and messages from your live code become signals, sharp to the
+          note and timed to land with the sound. Run the relay
+          (<code>npm run relay</code>, or <code>npm run dev:live</code> for both),
+          then paste a snippet. Click an event below to make a signal from it.
+          ${this.wsOk ? '' : html`<b>Not connected to the relay yet.</b>`}
+        </div>
+        <div style="display:flex;gap:6px;margin:6px 0;">
+          <button class="mini" @click=${() => this.copyText(this.strudelSnippet, 'Strudel snippet')}>COPY STRUDEL</button>
+          <button class="mini" @click=${() => this.copyText(this.scSnippet, 'SuperCollider snippet')}>COPY SUPERCOLLIDER</button>
+          <button class="mini" @click=${() => this.addEventSignal('*', 'Event')}>+ EVENT SIGNAL</button>
+        </div>
+        <div class="event-log">
+          ${this.eventLog.length === 0
+            ? html`<div class="event-row" style="opacity:0.5;cursor:default;">Waiting for events…</div>`
+            : this.eventLog.map(({ t, ev }) => html`
+                <div class="event-row ${now - t < 250 ? 'fresh' : ''}" title="Make a signal from events like this"
+                  @click=${() => this.addEventSignal(suggestMatch(ev), suggestMatch(ev).split('=').pop()!.replace(/[:/]/g, ' ').trim() || 'Event')}>
+                  <span class="event-src">${ev.src}</span>${describeEvent(ev)}
+                </div>`)}
+        </div>
+        <div class="control-row">
+          <label title="Added to every event: positive if the picture runs ahead of the sound">Offset ${off} ms</label>
+          <input type="range" min="-200" max="400" step="5" .value=${live(String(off))}
+            @input=${(e: any) => this.updateConfig('audio', { ...this.config.audio, eventOffset: parseInt(e.target.value, 10) })} />
+        </div>
+      </div>`;
+  }
+
   private addSignal(preset: number) {
     const signals = this.config.audio.signals;
     const id = newSignalId(signals);
@@ -1642,6 +1816,7 @@ export class ShaderRitualApp extends LitElement {
     }
     // Signals: their range, their level going in (line), their value out (fill).
     for (const sg of this.config.audio?.signals || []) {
+      if (sg.kind === 'event') continue;
       const x0 = freqToX(sg.lo) * W;
       const x1 = freqToX(sg.hi) * W;
       const out = Math.min(1, Math.max(0, bands?.[sg.id] || 0));
@@ -1666,7 +1841,7 @@ export class ShaderRitualApp extends LitElement {
     const cv = e.currentTarget as HTMLCanvasElement;
     const r = cv.getBoundingClientRect();
     const px = e.clientX - r.left;
-    const sigs = [...(this.config.audio?.signals || [])];
+    const sigs = (this.config.audio?.signals || []).filter((sg) => sg.kind !== 'event');
     // The selected one first, so overlapping ranges pick what you're editing.
     sigs.sort((a, b) => (a.id === this.selSignal ? -1 : b.id === this.selSignal ? 1 : 0));
     for (const sg of sigs) {
@@ -1691,7 +1866,7 @@ export class ShaderRitualApp extends LitElement {
     if (!d) {
       // Show what dragging here would do.
       const px = e.clientX - r.left;
-      const near = (this.config.audio?.signals || []).some(
+      const near = (this.config.audio?.signals || []).filter((sg) => sg.kind !== 'event').some(
         (sg) => Math.abs(px - freqToX(sg.lo) * r.width) < 7 || Math.abs(px - freqToX(sg.hi) * r.width) < 7,
       );
       cv.style.cursor = near ? 'ew-resize' : 'crosshair';
@@ -1746,6 +1921,7 @@ export class ShaderRitualApp extends LitElement {
             @pointercancel=${this.onSpecUp}></canvas>
         </div>
         <div class="mod-note">${this.modNote}</div>
+        ${this.renderLiveEvents()}
         ${a.signals.map((sg) => {
           const mods = a.mods.filter((m) => m.source === sg.id);
           return html`
@@ -1763,6 +1939,31 @@ export class ShaderRitualApp extends LitElement {
                   ? ''
                   : html`<button class="icon-btn" title="Remove this signal" @click=${() => this.removeSignal(sg.id)}>&times;</button>`}
               </div>
+              ${sg.kind === 'event'
+                ? html`
+                  <div class="control-row">
+                    <label title="Space-separated, and all must match. s=bd a parameter (s=bd|sd either, s=hh* wildcards), /sr/kick an OSC address, strudel: / sc: / dirt: only that sender, a bare word any parameter equal to it, * everything">Match</label>
+                    <input class="sig-match" .value=${live(sg.match || '')} placeholder="s=bd  /sr/kick  strudel:"
+                      @change=${(e: any) => this.patchSignal(sg.id, { match: e.target.value.trim().slice(0, 120) })} />
+                  </div>
+                  <div class="control-row">
+                    <label title="The parameter whose number is the value: each pulse's height (Trigger) or the level (Follow). Empty: gain, velocity, amp or the first number.">Value from</label>
+                    <input class="sig-match" .value=${live(sg.key || '')} placeholder="gain"
+                      @change=${(e: any) => this.patchSignal(sg.id, { key: e.target.value.trim().slice(0, 40) })} />
+                  </div>
+                  <div class="control-row">
+                    <label title="Trigger: each event fires a pulse. Follow: the value holds the latest event's number (a knob), eased by Attack and Release.">Mode</label>
+                    <select .value=${live(sg.mode || 'trigger')}
+                      @change=${(e: any) => this.patchSignal(sg.id, { mode: e.target.value })}>
+                      <option value="trigger">Trigger</option>
+                      <option value="follow">Follow</option>
+                    </select>
+                  </div>
+                  ${slider(sg, 'Gain', 'gain', 0, 4, 0.05)}
+                  ${slider(sg, 'Attack', 'attack', 1, 300, 1, 1000, ' ms')}
+                  ${slider(sg, 'Release', 'release', 10, 2000, 5, 1000, ' ms')}
+                  ${slider(sg, 'Curve', 'curve', 0.3, 4, 0.05)}`
+                : html`
               <div class="control-row">
                 <label>Range</label>
                 <input class="sig-hz" type="number" min="20" max="20000" .value=${live(String(sg.lo))}
@@ -1790,7 +1991,7 @@ export class ShaderRitualApp extends LitElement {
               ${slider(sg, 'Attack', 'attack', 1, 300, 1, 1000, ' ms')}
               ${slider(sg, 'Release', 'release', 10, 2000, 5, 1000, ' ms')}
               ${slider(sg, 'Curve', 'curve', 0.3, 4, 0.05)}
-              ${slider(sg, 'Hit sensitivity', 'onset', 0, 1, 0.01)}
+              ${slider(sg, 'Hit sensitivity', 'onset', 0, 1, 0.01)}`}
               <div class="control-row">
                 <label title="A one-shot action fired on each hit">On hit</label>
                 <select .value=${live(sg.action || '')}
@@ -1819,11 +2020,13 @@ export class ShaderRitualApp extends LitElement {
           <select .value=${'-1'}
             @change=${(e: any) => {
               const i = parseInt(e.target.value, 10);
-              if (i >= 0) this.addSignal(i);
+              if (i === 99) this.addEventSignal();
+              else if (i >= 0) this.addSignal(i);
               e.target.value = '-1';
             }}>
             <option value="-1">Choose a preset…</option>
             ${SIGNAL_PRESETS.map((p, i) => html`<option value=${String(i)}>${p.name} · ${p.lo}–${p.hi} Hz</option>`)}
+            <option value="99">Live event (Strudel / SuperCollider)</option>
           </select>
         </div>
         <div class="element-desc">

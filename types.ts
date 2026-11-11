@@ -47,6 +47,42 @@ export interface AudioSignal {
   onset: number;
   /** A one-shot action fired on each hit ('' for none), e.g. '!camCut'. */
   action: string;
+  /**
+   * Where the signal comes from. audio (the default): a frequency range of
+   * the mic. event: notes and messages from Strudel, SuperCollider or any OSC
+   * sender, through the relay; Range, Auto-level, Gate and Hit sensitivity do
+   * not apply.
+   */
+  kind?: 'audio' | 'event';
+  /**
+   * Which events count (event signals). Space-separated, all must hold.
+   * `s=bd` a parameter equal to a value (`s=bd|sd`, `s=hh*`), `/sr/kick` an
+   * OSC address, `strudel:` / `sc:` / `dirt:` only from that sender, a bare word any
+   * parameter equal to it, `*` everything.
+   */
+  match?: string;
+  /**
+   * The parameter whose number becomes the value (event signals): in
+   * Trigger mode each pulse's height, in Follow mode the level itself (a
+   * knob sent from SuperCollider, say). Empty: gain, velocity, amp or the
+   * first number, and 1 if there is none.
+   */
+  key?: string;
+}
+
+/** One note or message from a live-coding environment, as the relay forwards it. */
+export interface LiveEvent {
+  /**
+   * strudel (straight from the Strudel REPL), sc (any OSC message, usually
+   * SuperCollider), dirt (SuperDirt's /dirt/play, forwarded from SuperCollider).
+   */
+  src: string;
+  /** OSC address, or '' from Strudel. */
+  address: string;
+  /** The event's parameters: Strudel's hap value, or OSC key/value pairs. */
+  params: Record<string, any>;
+  /** Milliseconds until it sounds (the sender schedules ahead). */
+  delay: number;
 }
 
 /** One signal driving one numeric setting. */
@@ -66,6 +102,11 @@ export interface Modulation {
 export interface AudioConfig {
   signals: AudioSignal[];
   mods: Modulation[];
+  /**
+   * Milliseconds added to every live event before it lands, to line the
+   * picture up with the sound (a projector or audio interface that lags).
+   */
+  eventOffset?: number;
 }
 
 /** Per-element audio-reactive allocation + visibility. */

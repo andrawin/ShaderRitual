@@ -21,7 +21,7 @@ function captureMirrored(config: any): boolean {
   return !!c && c.source === 'camera' && !!c.mirror;
 }
 import { getShader } from './shader-registry';
-import type { Bands, PartInfo, ShaderRitualConfig } from './types';
+import type { Bands, LiveEvent, PartInfo, ShaderRitualConfig } from './types';
 
 const BLEND_INDEX: Record<string, number> = { add: 0, screen: 1, mix: 2 };
 
@@ -476,7 +476,7 @@ export class ShaderRitualView extends LitElement {
   private get cfg(): ShaderRitualConfig {
     return this.frameConfig ?? this.config;
   }
-  private signals: SignalEngine | null = null;
+  private signals = new SignalEngine();
   /** Shared with every layer: the live audio, and the Text feature's words. */
   private audioData = new Uint8Array(512 * 2 * 4);
   private audioTex = (() => {
@@ -491,7 +491,7 @@ export class ShaderRitualView extends LitElement {
 
   @property()
   set inputNode(node: AudioNode) {
-    this.signals = new SignalEngine(node);
+    this.signals.attach(node);
   }
 
   static styles = css`
@@ -511,6 +511,11 @@ export class ShaderRitualView extends LitElement {
   /** The live spectrum on the signal editor's log axis, 0..1 per point. */
   getSpectrum(points = 160): number[] | null {
     return this.signals ? this.signals.spectrum(points) : null;
+  }
+
+  /** A note or message from Strudel / SuperCollider, for the event signals. */
+  pushEvent(ev: LiveEvent) {
+    this.signals.push(ev, this.config.audio?.eventOffset || 0);
   }
 
   /** Hits detected so far, by signal id (counters). */
@@ -1384,7 +1389,7 @@ void main(){
       b.rawHigh = this.signals.levels.high ?? 0;
       this.lastBands = b;
     }
-    if (this.signals) {
+    if (this.signals.listening) {
       this.signals.fillAudioTexture(this.audioData, 512);
       this.audioTex.needsUpdate = true;
     }

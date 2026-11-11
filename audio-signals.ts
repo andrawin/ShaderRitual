@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import type { AudioConfig, AudioSignal, Bands, Modulation } from './types';
+import type { AudioConfig, AudioSignal, Bands, LiveEvent, Modulation } from './types';
 import { modulatable, paramRange } from './param-ranges';
 
 /*
@@ -89,7 +89,86 @@ export function mergeAudio(base: AudioConfig, saved: any): AudioConfig {
   const mods: Modulation[] = Array.isArray(saved.mods)
     ? saved.mods.filter((m: any) => m && ids.has(m.source) && typeof m.target === 'string')
     : [];
-  return { signals, mods };
+  const eventOffset = Number.isFinite(saved.eventOffset) ? saved.eventOffset : 0;
+  return { signals, mods, eventOffset };
+}
+
+/** A new event signal listening for `match`. */
+export function eventSignal(id: string, name: string, match: string, color = '#7cff6b'): AudioSignal {
+  return {
+    id, name, color, lo: 20, hi: 20000, auto: false, gain: 1, gate: 0,
+    attack: 0.004, release: 0.2, curve: 1.4, mode: 'trigger', onset: 0.6, action: '',
+    kind: 'event', match, key: '',
+  };
+}
+
+const glob = (pat: string, v: any) => {
+  const s = String(v);
+  if (!pat.includes('*')) return s === pat;
+  const re = new RegExp('^' + pat.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+  return re.test(s);
+};
+
+/**
+ * Whether an event matches a signal's Match text. Tokens are separated by
+ * spaces and all must hold; `|` gives alternatives within one.
+ *   s=bd       a parameter equal to a value (`s=bd|sd`, `s=hh*`)
+ *   /sr/kick   the OSC address (`/sr/*`)
+ *   strudel:   only from that sender (strudel, sc, dirt; several = any of them)
+ *   kick       any parameter equal to it
+ *   *          everything
+ */
+export function eventMatches(match: string, ev: LiveEvent): boolean {
+  let tokens = (match || '').trim().split(/[\s,]+/).filter(Boolean);
+  const isFrom = (t: string) => /^[a-z]+:$/i.test(t);
+  const from = tokens.filter(isFrom).map((t) => t.slice(0, -1).toLowerCase());
+  if (from.length && !from.includes(ev.src)) return false;
+  tokens = tokens.filter((t) => !isFrom(t));
+  if (tokens.length === 0) return from.length > 0;
+  const any = (alts: string, v: any) => alts.split('|').some((p) => glob(p, v));
+  return tokens.every((t) => {
+    if (t === '*') return true;
+    if (t.startsWith('/')) return any(t, ev.address);
+    const eq = t.indexOf('=');
+    if (eq > 0) {
+      const k = t.slice(0, eq);
+      return k in ev.params && any(t.slice(eq + 1), ev.params[k]);
+    }
+    return Object.values(ev.params).some((v) => (typeof v === 'string' || typeof v === 'number') && any(t, v));
+  });
+}
+
+/** The number an event carries for a signal: its `key`, or its loudness. */
+export function eventValue(key: string | undefined, ev: LiveEvent): number | null {
+  const p = ev.params;
+  const num = (v: any) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(+v) ? +v : null);
+  if (key) return num(p[key]);
+  for (const k of ['gain', 'velocity', 'amp', 'value']) {
+    const v = num(p[k]);
+    if (v !== null) return v;
+  }
+  if (Array.isArray(p.args)) for (const a of p.args) if (num(a) !== null) return num(a);
+  return null;
+}
+
+/** A short readable form of an event, for the panel's log. */
+export function describeEvent(ev: LiveEvent): string {
+  const parts = Object.entries(ev.params)
+    .filter(([k, v]) => k !== 'args' && (typeof v === 'string' || typeof v === 'number'))
+    .slice(0, 5)
+    .map(([k, v]) => `${k}=${typeof v === 'number' ? Math.round(v * 1000) / 1000 : v}`);
+  if (Array.isArray(ev.params.args)) parts.push(ev.params.args.slice(0, 4).join(' '));
+  return `${ev.address ? ev.address + ' ' : ''}${parts.join(' ')}`.trim();
+}
+
+/** The Match text that picks out events like this one. */
+export function suggestMatch(ev: LiveEvent): string {
+  const p = ev.params;
+  for (const k of ['s', 'sound', 'instrument', 'name']) {
+    if (typeof p[k] === 'string' && p[k]) return `${k}=${p[k]}`;
+  }
+  if (ev.address && ev.address !== '/dirt/play') return ev.address;
+  return `${ev.src}:`;
 }
 
 const DB_FLOOR = -85;
@@ -118,10 +197,12 @@ interface SignalState {
 }
 
 export class SignalEngine {
-  private analyser: AnalyserNode;
-  private db: Float32Array;
-  private wave: Float32Array;
-  private sampleRate: number;
+  private analyser: AnalyserNode | null = null;
+  private db = new Float32Array(1024);
+  private wave = new Float32Array(2048);
+  private sampleRate = 48000;
+  /** Live events waiting for the moment they sound (performance.now() ms). */
+  private pending: { at: number; ev: LiveEvent }[] = [];
   private state = new Map<string, SignalState>();
   /** Last frame's levels before shaping, by id, for the editor's meters. */
   readonly levels: Record<string, number> = {};
@@ -129,21 +210,38 @@ export class SignalEngine {
   readonly hits: Record<string, number> = {};
   private clock = 0;
 
-  constructor(node: AudioNode) {
-    this.analyser = node.context.createAnalyser();
-    this.analyser.fftSize = 2048;
-    this.analyser.smoothingTimeConstant = 0;
-    this.analyser.minDecibels = -100;
-    this.analyser.maxDecibels = -10;
-    this.db = new Float32Array(this.analyser.frequencyBinCount);
-    this.wave = new Float32Array(this.analyser.fftSize);
+  /** Whether a mic (or other input) is feeding the audio signals. */
+  get listening() {
+    return !!this.analyser;
+  }
+
+  /**
+   * A live event, landing `ev.delay` + `offset` ms from now, when it sounds.
+   * Event signals read it whether or not a mic is on.
+   */
+  push(ev: LiveEvent, offset = 0) {
+    const at = performance.now() + Math.min(4000, Math.max(0, (ev.delay || 0) + offset));
+    this.pending.push({ at, ev });
+    if (this.pending.length > 512) this.pending.splice(0, this.pending.length - 512);
+  }
+
+  /** Listen to an audio node (the mic). Hit counters carry over. */
+  attach(node: AudioNode) {
+    const an = node.context.createAnalyser();
+    an.fftSize = 2048;
+    an.smoothingTimeConstant = 0;
+    an.minDecibels = -100;
+    an.maxDecibels = -10;
+    this.analyser = an;
+    this.db = new Float32Array(an.frequencyBinCount);
+    this.wave = new Float32Array(an.fftSize);
     this.sampleRate = node.context.sampleRate;
     node.connect(this.analyser);
   }
 
   /** Mean power over a range of frequencies, in dB. */
   private rangeDb(lo: number, hi: number): number {
-    const binHz = this.sampleRate / this.analyser.fftSize;
+    const binHz = this.sampleRate / 2048;
     const n = this.db.length;
     let a = Math.max(1, Math.floor(Math.min(lo, hi) / binHz));
     let b = Math.min(n - 1, Math.ceil(Math.max(lo, hi) / binHz));
@@ -162,15 +260,35 @@ export class SignalEngine {
    * the frame time in seconds.
    */
   update(signals: AudioSignal[], dt: number, out: Record<string, number>) {
-    this.analyser.getFloatFrequencyData(this.db as any);
+    if (this.analyser) this.analyser.getFloatFrequencyData(this.db as any);
     this.clock += dt;
     const now = this.clock;
+    // The live events whose moment has come.
+    const t = performance.now();
+    let due: LiveEvent[] = [];
+    if (this.pending.length) {
+      due = this.pending.filter((p) => p.at <= t).map((p) => p.ev);
+      if (due.length) this.pending = this.pending.filter((p) => p.at > t);
+    }
     for (const s of signals) {
       let st = this.state.get(s.id);
       if (!st) {
         st = { env: 0, peak: 0.3, floor: 0.3, level: 0, avg: 0, last: -10, armed: true };
         this.state.set(s.id, st);
         this.hits[s.id] = this.hits[s.id] || 0;
+      }
+      if (s.kind === 'event') {
+        this.updateEvent(s, st, due, dt, now);
+        out[s.id] = Math.pow(Math.min(1, Math.max(0, st.env)), Math.max(0.1, s.curve));
+        this.levels[s.id] = st.level;
+        continue;
+      }
+      if (!this.analyser) {
+        // No mic: audio signals rest at 0 and fall away from where they were.
+        st.env *= Math.exp(-dt / Math.max(0.01, s.release));
+        out[s.id] = Math.pow(st.env, Math.max(0.1, s.curve));
+        this.levels[s.id] = 0;
+        continue;
       }
       let v = Math.min(1, Math.max(0, (this.rangeDb(s.lo, s.hi) - DB_FLOOR) / DB_RANGE));
       st.level = v;
@@ -222,13 +340,45 @@ export class SignalEngine {
   }
 
   /**
+   * An event signal. Trigger: each matching event is a hit and fires an
+   * envelope as tall as its value. Follow: the value holds the latest
+   * matching event's number, approached over Attack and Release.
+   */
+  private updateEvent(s: AudioSignal, st: SignalState, due: LiveEvent[], dt: number, now: number) {
+    for (const ev of due) {
+      if (!eventMatches(s.match || '', ev)) continue;
+      const raw = eventValue(s.key, ev);
+      const v = Math.min(1, Math.max(0, (raw ?? 1) * s.gain));
+      st.level = v;
+      if (s.mode === 'follow') {
+        st.peak = v;
+      } else {
+        st.peak = v;
+        st.last = now;
+      }
+      this.hits[s.id] = (this.hits[s.id] || 0) + 1;
+    }
+    if (s.mode === 'follow') {
+      const tc = st.peak > st.env ? s.attack : s.release;
+      st.env += (st.peak - st.env) * (1 - Math.exp(-dt / Math.max(0.001, tc)));
+    } else {
+      const age = now - st.last;
+      const a = Math.max(0.001, s.attack);
+      st.env = st.peak * (age < a ? age / a : Math.exp((-3 * (age - a)) / Math.max(0.01, s.release)));
+      // The meter's line falls with the pulse, so a held value does not linger.
+      st.level *= Math.exp(-dt / 0.25);
+    }
+  }
+
+  /**
    * Fill an RGBA byte texture `w` texels wide and 2 high, for shaders
    * (iAudio): row 0 is the spectrum on the log axis, row 1 the waveform,
    * starting at a rising zero crossing so it stands still on a steady tone.
    * The value is in every channel.
    */
   fillAudioTexture(data: Uint8Array, w: number) {
-    const spec = this.spectrum(w);
+    if (!this.analyser) return;
+    const spec = this.spectrum(w)!;
     this.analyser.getFloatTimeDomainData(this.wave as any);
     const n = this.wave.length;
     let start = 0;
@@ -251,9 +401,10 @@ export class SignalEngine {
   }
 
   /** The spectrum on the editor's log-frequency axis, `points` values 0..1. */
-  spectrum(points: number): number[] {
+  spectrum(points: number): number[] | null {
+    if (!this.analyser) return null;
     const out: number[] = new Array(points);
-    const binHz = this.sampleRate / this.analyser.fftSize;
+    const binHz = this.sampleRate / 2048;
     for (let i = 0; i < points; i++) {
       const f0 = xToFreq(i / points);
       const f1 = xToFreq((i + 1) / points);
