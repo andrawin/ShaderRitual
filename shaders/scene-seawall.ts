@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { SceneRuntime, ShaderDef } from '../types';
-import { beatPulse, hash, imageHead, linColour, makeMotes, option, react, sceneBuffer, shown } from './scene-kit';
+import { Walker, beatPulse, hash, imageHead, linColour, makeMotes, option, react, sceneBuffer, shown } from './scene-kit';
 
 /*
  * "Seawall" — a scene shader: a slice of a coastal town as a diorama at night.
@@ -17,11 +17,14 @@ import { beatPulse, hash, imageHead, linColour, makeMotes, option, react, sceneB
  * behind it, a tunnel runs into the rock with something red-eyed inside, and
  * fireflies hang over the gardens.
  *
- * A set piece, seen from outside: the camera swings round the ocean side.
+ * The houses are below the road, behind the wall, so the set is seen from
+ * its cut-open side, or walked at street level.
  *
  * Elements:
- *   route     -> Swing (an arc round the ocean side), Close (lower and nearer,
- *                over the water), or Above (straight down, turning slowly)
+ *   route     -> Town (an arc round the open side, where the houses sit behind
+ *                the wall), Walk (down the street between the houses, into
+ *                the tunnel and back), Ocean (low over the water, facing the
+ *                wall), or Above (straight down, turning slowly)
  *   moon      -> the moonlight: colour, and how much
  *   waves     -> the swell rising and falling, and the foam glowing
  *   lamps     -> the red lights, the eyes in the tunnel, and the town's windows
@@ -31,7 +34,10 @@ import { beatPulse, hash, imageHead, linColour, makeMotes, option, react, sceneB
  *   bloom     -> how far the light spills
  */
 
-const ROUTES = ['Swing', 'Close', 'Above'];
+const ROUTES = ['Town', 'Walk', 'Ocean', 'Above'];
+// A loop at eye height through the street behind the wall and into the tunnel
+// and back, planned in Blender (tools/walk-plan.py), glTF axes.
+const PATH: number[][] = [[0.2, 1.52, 10.71], [0.26, 1.52, 9.93], [0.32, 1.52, 8.92], [0.32, 1.52, 7.91], [0.32, 1.52, 6.9], [0.31, 1.52, 5.88], [0.04, 1.52, 4.87], [-0.45, 1.52, 3.86], [-0.38, 1.52, 2.84], [-0.32, 1.52, 1.83], [-0.32, 1.52, 0.82], [-0.32, 1.52, -0.2], [-0.32, 1.52, -1.21], [-0.31, 1.52, -2.23], [-0.1, 1.52, -3.24], [0.25, 1.52, -4.25], [0.32, 1.52, -5.27], [0.32, 1.52, -6.28], [0.32, 1.52, -7.29], [0.32, 1.52, -8.31], [0.32, 1.52, -9.32], [0.32, 1.52, -10.33], [0.32, 1.52, -11.22], [0.32, 1.52, -11.22], [0.32, 1.52, -10.33], [0.32, 1.52, -9.32], [0.33, 1.52, -8.31], [0.47, 1.52, -7.29], [0.47, 1.52, -6.28], [0.33, 1.52, -5.27], [0.32, 1.52, -4.25], [0.39, 1.52, -3.24], [0.73, 1.52, -2.23], [0.94, 1.52, -1.21], [1.03, 1.53, -0.2], [1.66, 1.57, 0.82], [2.56, 1.6, 1.83], [2.85, 1.6, 2.84], [2.86, 1.6, 3.86], [2.86, 1.6, 4.87], [2.87, 1.6, 5.88], [3.16, 1.6, 6.9], [4.11, 1.6, 7.91], [4.8, 1.6, 8.92], [4.1, 1.57, 9.94], [2.86, 1.53, 10.83], [1.59, 1.52, 11.06], [0.47, 1.52, 10.89]];
 
 function setupSeawall(root: THREE.Object3D): SceneRuntime {
   const scene = new THREE.Scene();
@@ -90,9 +96,10 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
   redLamp.position.set(-1.4, 2.4, -7.6);
   scene.add(redLamp);
   const townLamps: THREE.PointLight[] = [];
-  for (const [x, y, z] of [[9, 4.5, -2], [4, 4, 2], [8, 9, 4], [1, 4, -1]]) {
-    const l = new THREE.PointLight(0xffb060, 0, 14, 1.6);
-    l.position.set(x, y, z);
+  // Street lamps: every sixth point of the walk, overhead.
+  for (let i = 2; i < PATH.length; i += 6) {
+    const l = new THREE.PointLight(0xffb060, 0, 16, 1.6);
+    l.position.set(PATH[i][0], PATH[i][1] + 1.6, PATH[i][2]);
     scene.add(l);
     townLamps.push(l);
   }
@@ -102,7 +109,8 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
 
   scene.fog = new THREE.FogExp2(0x060a12, 0.01);
   scene.background = new THREE.Color(0x02040a);
-  const camera = new THREE.PerspectiveCamera(40, 16 / 9, 0.3, 400);
+  const camera = new THREE.PerspectiveCamera(40, 16 / 9, 0.05, 400);
+  const walker = new Walker(PATH);
   const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.5, 1.0);
   const cM = new THREE.Color(), cW = new THREE.Color(), cL = new THREE.Color(), cF = new THREE.Color(),
     cZ = new THREE.Color(), cH = new THREE.Color();
@@ -144,7 +152,7 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
       redLamp.color.copy(cL);
       redLamp.intensity = lv * 10 * pulse;
       for (const m of warm) m.emissiveIntensity = lv * 1.2;
-      townLamps.forEach((l, i) => (l.intensity = lv * 25 * (0.85 + 0.15 * Math.sin(t * 7 + i * 2.3))));
+      townLamps.forEach((l, i) => (l.intensity = lv * 14 * (0.85 + 0.15 * Math.sin(t * 7 + i * 2.3))));
 
       const fv = shown(u, 'fireflies') ? react(u, 'fireflies') : 0;
       for (const m of flies) {
@@ -154,7 +162,7 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
       motes.points.visible = fv > 0;
       motes.uniforms.uTime.value = t;
       motes.uniforms.uRise.value = 0.05;
-      motes.uniforms.uSize.value = 60;
+      motes.uniforms.uSize.value = 16;
       motes.uniforms.uColor.value.copy(cF).multiplyScalar(fv * 1.5);
 
       // Lightning: a strike now and then (two quick flickers), and the beat.
@@ -176,24 +184,30 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
       const orbit = u.iCamOrbit.value as number;
       const dist = Math.min(3, Math.max(0.35, u.iCamDist.value as number));
       const hgt = u.iCamHeight.value as number;
-      camera.fov = Math.min(100, Math.max(20, (u.iCamFov.value as number) - 20));
+      const fov = u.iCamFov.value as number;
+      camera.fov = Math.min(100, Math.max(20, route === 1 ? fov + 5 : fov - 20));
       if (route === 0) {
-        // Back and forth across the ocean side; the cliff's back stays unseen.
-        const a = -0.8 + Math.sin(t * 0.07 + orbit) * 0.6;
-        const r = 62 * dist;
-        camera.position.set(centre.x + Math.sin(a) * r, 24 + hgt * 20, centre.z + Math.cos(a) * r);
-        target.copy(centre).setY(9);
+        // Back and forth across the cut-open side, looking in at the houses.
+        const a = 0.95 + Math.sin(t * 0.07 + orbit) * 0.5;
+        const r = 50 * dist;
+        camera.position.set(4 + Math.sin(a) * r, 16 + hgt * 16, 2 + Math.cos(a) * r);
+        target.set(3, 4, 0);
+        camera.lookAt(target);
       } else if (route === 1) {
+        walker.place(camera, t * 0.6 + orbit * 2, t, -0.02);
+        camera.position.y += Math.sin(t * 5) * 0.02 + hgt * 0.4;
+      } else if (route === 2) {
         const a = -1.0 + Math.sin(t * 0.09 + orbit) * 0.45;
         const r = 34 * dist;
         camera.position.set(centre.x + Math.sin(a) * r, 9 + hgt * 8, centre.z + Math.cos(a) * r);
         target.set(1, 5, -2);
+        camera.lookAt(target);
       } else {
         const a = orbit + t * 0.04;
         camera.position.set(centre.x + Math.sin(a) * 3, 70 * dist, centre.z + Math.cos(a) * 3);
         target.set(centre.x, 0, centre.z);
+        camera.lookAt(target);
       }
-      camera.lookAt(target);
       camera.updateProjectionMatrix();
     },
     render(r, rt) {
@@ -243,7 +257,7 @@ export const seawall: ShaderDef = {
     { name: 'Storm', colors: { moon: '#4a5260', waves: '#f2f6ff', lamps: '#ffb238', fireflies: '#ffffff', lightning: '#ffffff', haze: '#0c0e12' } },
   ],
   elements: [
-    { id: 'route', name: 'Route', description: 'Swing round the ocean side, come in close over the water, or look straight down.', defaultBand: 'none', defaultAmount: 0, defaultLevel: 1 / ROUTES.length, canHide: false, defaultVisible: true, options: ROUTES },
+    { id: 'route', name: 'Route', description: 'Swing round the open side where the houses are, walk the street and the tunnel, sit low over the water facing the wall, or look straight down.', defaultBand: 'none', defaultAmount: 0, defaultLevel: 1 / ROUTES.length, canHide: false, defaultVisible: true, options: ROUTES },
     { id: 'moon', name: 'Moonlight', description: 'The moon on everything: colour, and how much.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.6, canHide: false, defaultVisible: true, defaultColor: '#8fa8ff' },
     { id: 'waves', name: 'Waves', description: 'The swell rising and falling, and the foam glowing. Put it on the bass and the sea heaves.', defaultBand: 'low', defaultAmount: 0.8, defaultLevel: 0.4, canHide: false, defaultVisible: true, defaultColor: '#bfe4ff' },
     { id: 'lamps', name: 'Lamps', description: 'The red lights, the eyes in the tunnel and the lamps of the town.', defaultBand: 'mid', defaultAmount: 0.6, defaultLevel: 0.6, canHide: false, defaultVisible: true, defaultColor: '#ff2a1a' },
