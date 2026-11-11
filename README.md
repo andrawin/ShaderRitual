@@ -169,7 +169,9 @@ panes (click a section's title; folds are remembered). Its Media Player
 monitor has working transport buttons: previous and next shader,
 play/pause for the audio, and a strobe flash; the seek bar runs through each
 bar of four beats. Switch with **View: Classic skin** in the menu bar, or the
-◧ button in Classic. The choice is per browser.
+◧ button in Classic. The choice is per browser. The skin only changes the
+panel: the buttons and status on the stage stay plain and see-through in
+both, since they are on the main screen during a show.
 
 ## Strobe
 

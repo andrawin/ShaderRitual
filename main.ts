@@ -975,27 +975,8 @@ export class ShaderRitualApp extends LitElement {
       background: linear-gradient(90deg, #c8d6fb 0%, #bccffb 50%, #b2c5f5 100%);
     }
 
-    /* The stage buttons: a start button and a taskbar button */
-    :host(.xp) .settings-btn {
-      padding: 0 16px 0 10px; height: 34px; border-radius: 0 14px 14px 0 / 0 17px 17px 0; border: none;
-      display: inline-flex; align-items: center; gap: 6px; color: #fff; backdrop-filter: none;
-      font: italic bold 16px 'Trebuchet MS', Tahoma, sans-serif; text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
-      background: linear-gradient(180deg, #5eac56 0%, #3c9c3c 15%, #3a993a 80%, #2e7b2e 100%);
-      box-shadow: inset 0 1px 2px rgba(255,255,255,0.6), inset -2px -2px 3px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.4);
-    }
-    :host(.xp) .settings-btn::after { content: 'start'; }
-    :host(.xp) .settings-btn svg { width: 18px; height: 18px; }
-    :host(.xp) .settings-btn:hover { filter: brightness(1.12); background: linear-gradient(180deg, #5eac56 0%, #3c9c3c 15%, #3a993a 80%, #2e7b2e 100%); }
-    :host(.xp) .code-btn {
-      height: 34px; right: 120px; border-radius: 3px; color: #fff; border: 1px solid #1941a5; backdrop-filter: none;
-      background: linear-gradient(180deg, #3c81f3 0%, #2a6ae0 50%, #1f5bd0 100%);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
-    }
-    :host(.xp) .code-btn.active { background: linear-gradient(180deg, #1e52b7, #1a48a3); color: #fff; border-color: #0d2f75; }
-    :host(.xp) #status {
-      font: 11px Tahoma, sans-serif; color: #000; background: #ffffe1; border: 1px solid #000;
-      border-radius: 0; letter-spacing: 0; text-transform: none; backdrop-filter: none;
-    }
+    /* The stage buttons and status stay as they are in both skins: they show
+       on the main screen during a show. */
   `;
 
   firstUpdated() {
