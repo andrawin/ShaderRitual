@@ -4,6 +4,7 @@
  */
 import type {
   CamFxConfig,
+  StrobeConfig,
   CameraConfig,
   ModelConfig,
   MotionConfig,
@@ -287,6 +288,21 @@ export function defaultText(): TextConfig {
 }
 
 /** Fresh global post-FX defaults (all off). */
+export function defaultStrobe(): StrobeConfig {
+  return {
+    on: false,
+    drive: 'tempo',
+    rate: 8,
+    division: 1,
+    source: 'low',
+    threshold: 0.6,
+    style: 'white',
+    color: '#ffffff',
+    intensity: 1,
+    length: 40,
+  };
+}
+
 export function defaultCamFx(): CamFxConfig {
   return {
     silhouette: { on: false, amount: 1.0, band: 'none' },
@@ -375,6 +391,7 @@ export function defaultConfig(): ShaderRitualConfig {
     text: defaultText(),
     postfx: defaultPostFX(),
     camfx: defaultCamFx(),
+    strobe: defaultStrobe(),
     audio: defaultAudio(),
     model: defaultModel(),
     shaders,
@@ -401,6 +418,9 @@ export function sanitizeConfig(saved: any): ShaderRitualConfig {
     text: { ...base.text, ...(saved.text || {}) },
     postfx: mergePostFX(base.postfx, saved.postfx),
     camfx: mergeCamFx(base.camfx, saved.camfx),
+    // A strobe never starts running from a saved session: it waits to be
+    // switched on, whatever it was doing when the page closed.
+    strobe: { ...base.strobe, ...(saved.strobe || {}), on: false },
     audio: mergeAudio(base.audio, saved.audio),
     model: mergeModel(base.model, saved.model),
     shaders: { ...base.shaders },

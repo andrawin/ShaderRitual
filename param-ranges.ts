@@ -56,6 +56,10 @@ const RANGES: Record<string, { min: number; max: number }> = {
   'model.fracture.physics.restitution': { min: 0, max: 0.95 },
   'model.fracture.physics.implodeStrength': { min: 1, max: 20 },
   'model.fracture.physics.beatThreshold': { min: 0.05, max: 1 },
+  'strobe.rate': { min: 1, max: 15 },
+  'strobe.threshold': { min: 0, max: 1 },
+  'strobe.intensity': { min: 0, max: 1 },
+  'strobe.length': { min: 10, max: 250 },
 };
 
 export function paramRange(path: string): { min: number; max: number } {
@@ -83,5 +87,6 @@ export function modulatable(path: string): boolean {
     'camera.bpm',
     'model.bpm',
     'text.beats',
+    'strobe.division',
   ].includes(path);
 }

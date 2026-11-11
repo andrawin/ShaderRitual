@@ -123,6 +123,25 @@ Lag, Math and Trigger CHOPs in one):
 
 Code: `audio-signals.ts` (analysis, hits, shaping, modulation), `param-ranges.ts`.
 
+## Strobe
+
+A flash over the finished picture — every shader, the camera layer and the
+model included. It lives in the panel under **Strobe · all shaders**.
+
+- **Run** latches it on. **Drive** sets the clock: *Tempo* (one flash every
+  1/16 to 4 beats at the Camera · Motion BPM), *Free* (Rate per second),
+  *Hits* (one flash per hit of any audio signal, e.g. Kick), *Gate* (Rate
+  per second while a signal is above a level).
+- **Hold** strobes at Rate while pressed — the button, the **S** key in the
+  render window, or a MIDI pad (momentary: note off stops it). **Flash** fires
+  one. Run, Hold and Flash are all MIDI-learnable, and so is every setting.
+- **Style**: White, Colour, Blackout or Invert; **Intensity** and **Length**
+  (10–250 ms) shape each flash. Rate is capped at 15/s.
+- Run always starts off when the app opens, whatever it was when it closed.
+
+Flashing light can trigger seizures in people with photosensitive epilepsy;
+warn the audience when a set uses it.
+
 ## Architecture
 
 | File | Responsibility |

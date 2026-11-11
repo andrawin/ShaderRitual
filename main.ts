@@ -8,7 +8,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
-import type { AudioSignal, Band, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
+import type { AudioSignal, Band, StrobeConfig, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
 import { HIT_ACTIONS, SIGNAL_PRESETS, freqToX, isCore, newSignalId, xToFreq } from './audio-signals';
 import { modulatable, paramRange } from './param-ranges';
 import { TEXT_MAX } from './types';
@@ -709,7 +709,15 @@ export class ShaderRitualApp extends LitElement {
         if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey) {
           this.showCode = !this.showCode;
         }
+        // S held: strobe at the free rate until it is let go.
+        if ((e.key === 's' || e.key === 'S') && !e.metaKey && !e.ctrlKey && !e.repeat) {
+          this.setStrobeHold(true);
+        }
       });
+      window.addEventListener('keyup', (e) => {
+        if (e.key === 's' || e.key === 'S') this.setStrobeHold(false);
+      });
+      window.addEventListener('blur', () => this.setStrobeHold(false));
     }
   }
 
@@ -1115,6 +1123,8 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
     else if (name === 'camCut') this.viewEl?.cameraCut?.();
+    else if (name === 'strobeFlash') this.viewEl?.strobeFlash?.();
+    else if (name === 'strobeHold:1' || name === 'strobeHold:0') this.setStrobeHold(name.endsWith('1'));
     else if (name.startsWith('vid:')) this.viewEl?.videoTrigger?.(name.slice(4));
     else if (name === 'textFire') this.viewEl?.textTrigger?.();
     else if (name === 'removeVideo') {
@@ -1209,6 +1219,9 @@ export class ShaderRitualApp extends LitElement {
       this.processMidiEvent(`cc-${channel}-${data1}`, data2, 'cc');
     } else if (msgType === 0x90 && data2 > 0) {
       this.processMidiEvent(`note-${channel}-${data1}`, data2, 'note');
+    } else if (msgType === 0x80 || msgType === 0x90) {
+      // Note off matters only to the strobe's Hold, which is momentary.
+      if (this.midiMappings[`note-${channel}-${data1}`]?.path === '!strobeHold') this.setStrobeHold(false);
     }
   };
 
@@ -1276,6 +1289,10 @@ export class ShaderRitualApp extends LitElement {
     if (path === 'model.fracture.physics.beatAction') return ['burst', 'implode', 'pulse', 'alternate'];
     if (path === 'renderScale' || path === 'model.quality') return [1, 0.75, 0.5, 0.35];
     if (path === 'model.capture.fps') return [60, 30, 15, 8];
+    if (path === 'strobe.drive') return ['tempo', 'free', 'hits', 'gate'];
+    if (path === 'strobe.style') return ['white', 'colour', 'black', 'invert'];
+    if (path === 'strobe.division') return [0.25, 0.5, 1, 2, 4];
+    if (path === 'strobe.source') return ['none', ...this.config.audio.signals.map((g) => g.id)];
     if (path.endsWith('.target')) return ['scale', 'emissive', 'explode', 'rotate'];
     if (path.endsWith('.band') || path.endsWith('Band')) return ['none', 'low', 'mid', 'high'];
     return null;
@@ -1306,6 +1323,8 @@ export class ShaderRitualApp extends LitElement {
       if (this.isController) this.post({ type: 'command', name: 'camCut' });
       else this.viewEl?.cameraCut?.();
     },
+    '!strobe': () => this.strobeFlash(),
+    '!strobeOn': () => this.updateConfig('strobe.on', !this.config.strobe.on),
     '!palNext': () => {
       const def = getShader(this.config.activeShader);
       const n = def.palettes?.length || 0;
@@ -1362,6 +1381,11 @@ export class ShaderRitualApp extends LitElement {
     this.lastMidiNorm[id] = norm;
     const rising = type === 'note' || (norm >= 0.5 && prev < 0.5);
 
+    if (path === '!strobeHold') {
+      // Momentary: on while the pad or button is down.
+      this.setStrobeHold(type === 'note' || norm >= 0.5);
+      return;
+    }
     if (path.startsWith('!')) {
       if (rising) {
         if (path.startsWith('!pal:')) this.applyPalette(path.slice(5));
@@ -1540,7 +1564,7 @@ export class ShaderRitualApp extends LitElement {
       return `${def?.name ?? k[1]} · ${el?.name ?? k[3]} ${k[4] ?? ''}`.trim();
     }
     const head: Record<string, string> = {
-      postfx: 'Post FX', camfx: 'Camera FX', camera: 'Camera', motion: 'Motion', overlay: 'Overlay',
+      postfx: 'Post FX', camfx: 'Camera FX', strobe: 'Strobe', camera: 'Camera', motion: 'Motion', overlay: 'Overlay',
       video: 'Video', text: 'Text', model: 'Model',
     };
     return [head[k[0]] ?? k[0], ...k.slice(1)].join(' · ');
@@ -2655,6 +2679,133 @@ export class ShaderRitualApp extends LitElement {
     `;
   };
 
+  /* ---------------------------- Strobe ---------------------------- */
+
+  @state() private strobeHeld = false;
+
+  /** Hold the strobe on (button, S key, a MIDI pad), from either window. */
+  private setStrobeHold(on: boolean) {
+    if (this.strobeHeld === on) return;
+    this.strobeHeld = on;
+    if (this.isController) this.post({ type: 'command', name: on ? 'strobeHold:1' : 'strobeHold:0' });
+    else this.viewEl?.setStrobeHold?.(on);
+  }
+
+  private strobeFlash = () => {
+    if (this.isController) this.post({ type: 'command', name: 'strobeFlash' });
+    else this.viewEl?.strobeFlash?.();
+  };
+
+  private renderStrobeSection() {
+    const s = this.config.strobe;
+    const set = (k: string, v: any) => this.updateConfig(`strobe.${k}`, v);
+    const drives: [StrobeConfig['drive'], string][] = [
+      ['tempo', 'Tempo'], ['free', 'Free'], ['hits', 'Hits'], ['gate', 'Gate'],
+    ];
+    const styles: [StrobeConfig['style'], string][] = [
+      ['white', 'White'], ['colour', 'Colour'], ['black', 'Blackout'], ['invert', 'Invert'],
+    ];
+    const usesRate = s.drive === 'free' || s.drive === 'gate';
+    const usesSource = s.drive === 'hits' || s.drive === 'gate';
+    return html`
+      <div class="setting-group">
+        <span class="group-title">Strobe · all shaders</span>
+        <div class="element-desc" style="margin-bottom:10px;">
+          A flash over the whole picture. <b>Run</b> latches it on, clocked by
+          Drive. <b>Hold</b> (or the S key in the render window) strobes at the
+          Rate while pressed; <b>Flash</b> fires one. Each is a MIDI pad.
+        </div>
+        <div class="control-row" style="gap:6px;flex-wrap:wrap;">
+          ${this.learnDot('!strobeOn')}
+          <button class="mini ${s.on ? 'on' : ''}" @click=${() => set('on', !s.on)}>RUN</button>
+          ${this.learnDot('!strobeHold')}
+          <button class="mini ${this.strobeHeld ? 'on' : ''}" style="touch-action:none;"
+            @pointerdown=${(e: PointerEvent) => {
+              (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+              this.setStrobeHold(true);
+            }}
+            @pointerup=${() => this.setStrobeHold(false)}
+            @pointercancel=${() => this.setStrobeHold(false)}
+            @lostpointercapture=${() => this.setStrobeHold(false)}>HOLD</button>
+          ${this.learnDot('!strobe')}
+          <button class="mini" @click=${this.strobeFlash}>FLASH</button>
+        </div>
+        <div class="control-row">
+          <label>Drive</label>
+          ${this.learnDot('strobe.drive')}
+          <select @change=${(e: any) => set('drive', e.target.value)}>
+            ${drives.map(([v, n]) => html`<option value=${v} ?selected=${s.drive === v}>${n}</option>`)}
+          </select>
+        </div>
+        ${s.drive === 'tempo'
+          ? html`<div class="control-row">
+              <label>Every</label>
+              ${this.learnDot('strobe.division')}
+              <select @change=${(e: any) => set('division', parseFloat(e.target.value))}>
+                ${[0.25, 0.5, 1, 2, 4].map((d) => html`<option value=${d} ?selected=${s.division === d}>
+                  ${d === 0.25 ? '1/16 (¼ beat)' : d === 0.5 ? '1/8 (½ beat)' : d === 1 ? '1 beat' : `${d} beats`}</option>`)}
+              </select>
+            </div>
+            <div class="element-desc" style="margin-bottom:8px;">
+              Locked to the tempo in Camera · Motion (${this.config.camera.bpm} BPM).
+            </div>`
+          : ''}
+        ${usesSource
+          ? html`<div class="control-row">
+              <label>Signal</label>
+              ${this.learnDot('strobe.source')}
+              <select @change=${(e: any) => set('source', e.target.value)}>
+                ${this.bandOptions(s.source)}
+              </select>
+            </div>`
+          : ''}
+        ${s.drive === 'gate'
+          ? html`<div class="control-row">
+              <label>Above</label>
+              ${this.learnDot('strobe.threshold')}
+              <input type="range" min="0" max="1" step="0.01" .value=${s.threshold}
+                @input=${(e: any) => set('threshold', parseFloat(e.target.value))} />
+            </div>`
+          : ''}
+        <div class="control-row">
+          <label>Rate ${s.rate.toFixed(1)}/s</label>
+          ${this.learnDot('strobe.rate')}
+          <input type="range" min="1" max="15" step="0.5" .value=${s.rate}
+            @input=${(e: any) => set('rate', parseFloat(e.target.value))} />
+        </div>
+        ${usesRate ? '' : html`<div class="element-desc" style="margin-bottom:8px;">Rate also sets Hold.</div>`}
+        <div class="control-row">
+          <label>Style</label>
+          ${this.learnDot('strobe.style')}
+          <select @change=${(e: any) => set('style', e.target.value)}>
+            ${styles.map(([v, n]) => html`<option value=${v} ?selected=${s.style === v}>${n}</option>`)}
+          </select>
+          ${s.style === 'colour'
+            ? html`<input type="color" .value=${s.color} style="margin-left:6px;"
+                @input=${(e: any) => set('color', e.target.value)} />`
+            : ''}
+        </div>
+        <div class="control-row">
+          <label>Intensity</label>
+          ${this.learnDot('strobe.intensity')}
+          <input type="range" min="0" max="1" step="0.01" .value=${s.intensity}
+            @input=${(e: any) => set('intensity', parseFloat(e.target.value))} />
+        </div>
+        <div class="control-row">
+          <label>Length ${Math.round(s.length)}ms</label>
+          ${this.learnDot('strobe.length')}
+          <input type="range" min="10" max="250" step="5" .value=${s.length}
+            @input=${(e: any) => set('length', parseFloat(e.target.value))} />
+        </div>
+        <div class="element-desc" style="margin-top:6px;opacity:0.85;">
+          ⚠ Flashing light can trigger seizures in people with photosensitive
+          epilepsy. Rate is capped at 15 per second; tell the audience when a
+          set uses strobe.
+        </div>
+      </div>
+    `;
+  }
+
   private renderCamFxSection() {
     const c = this.config.camfx;
     const live0 = this.isCapturing;
@@ -3087,6 +3238,7 @@ export class ShaderRitualApp extends LitElement {
 
         <!-- CAMERA FX (global, all shaders) -->
         ${this.renderCamFxSection()}
+        ${this.renderStrobeSection()}
 
         <!-- TEXT -->
         ${this.renderTextSection()}

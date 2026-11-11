@@ -518,6 +518,106 @@ export class ShaderRitualView extends LitElement {
     return this.signals ? this.signals.hits : {};
   }
 
+  /* ---------------------------- Strobe ---------------------------- */
+
+  private strobeHold = false;
+  private strobeFlashAt = -1;
+  private strobeHitSeen = -1;
+  private strobeHitAt = -1;
+  private strobeLevel = 0;
+  private strobeScene: THREE.Scene | null = null;
+  private strobeMat: THREE.ShaderMaterial | null = null;
+
+  /** One flash now (a pad, a click). */
+  strobeFlash() {
+    this.strobeFlashAt = performance.now();
+  }
+
+  /** Strobe at the free rate while held (the Hold button, the S key). */
+  setStrobeHold(on: boolean) {
+    this.strobeHold = on;
+  }
+
+  /** This frame's flash, 0..1, or 0. */
+  private strobeAmount(): number {
+    const s = this.config.strobe;
+    if (!s) return 0;
+    const now = performance.now();
+    const len = Math.min(250, Math.max(10, s.length));
+    const rate = Math.min(15, Math.max(1, s.rate));
+    // A flash is square, with a short tail so it reads as light, not a cut.
+    const pulse = (age: number) => (age < 0 ? 0 : age < len ? 1 : Math.max(0, 1 - (age - len) / (len * 0.6)));
+    // Hit counting runs always, so switching to Hits does not fire at once.
+    const hits = this.signals ? this.signals.hits[s.source] ?? 0 : 0;
+    if (this.strobeHitSeen >= 0 && hits > this.strobeHitSeen) this.strobeHitAt = now;
+    this.strobeHitSeen = hits;
+
+    let v = pulse(now - this.strobeFlashAt);
+    const free = (r: number) => pulse(((now / 1000) % (1 / r)) * 1000);
+    if (this.strobeHold) v = Math.max(v, free(rate));
+    if (s.on) {
+      if (s.drive === 'free') v = Math.max(v, free(rate));
+      else if (s.drive === 'tempo') {
+        const bpm = this.config.camera?.bpm || 120;
+        const period = (60 / bpm) * Math.max(0.25, s.division);
+        v = Math.max(v, pulse(((now / 1000) % period) * 1000));
+      } else if (s.drive === 'hits') v = Math.max(v, pulse(now - this.strobeHitAt));
+      else if (s.drive === 'gate') {
+        const lvl = (this.lastBands as any)[s.source] || 0;
+        if (lvl > s.threshold) v = Math.max(v, free(rate));
+      }
+    }
+    return v * Math.min(1, Math.max(0, s.intensity));
+  }
+
+  /** Draw the flash over everything on screen. */
+  private renderStrobe() {
+    const a = this.strobeAmount();
+    this.strobeLevel = a;
+    if (a <= 0.002) return;
+    const s = this.config.strobe;
+    if (!this.strobeScene) {
+      this.strobeMat = new THREE.ShaderMaterial({
+        uniforms: { uColor: { value: new THREE.Color() }, uAmount: { value: 0 } },
+        vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: 'uniform vec3 uColor; uniform float uAmount; void main(){ gl_FragColor = vec4(uColor, uAmount); }',
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+      });
+      this.strobeScene = new THREE.Scene();
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.strobeMat);
+      quad.frustumCulled = false;
+      this.strobeScene.add(quad);
+    }
+    const m = this.strobeMat!;
+    const u = m.uniforms;
+    u.uAmount.value = a;
+    if (s.style === 'invert') {
+      // result = (1 - dst) * a + dst * (1 - a)
+      m.blending = THREE.CustomBlending;
+      m.blendEquation = THREE.AddEquation;
+      m.blendSrc = THREE.OneMinusDstColorFactor;
+      m.blendDst = THREE.OneMinusSrcAlphaFactor;
+      u.uColor.value.setRGB(a, a, a);
+    } else {
+      m.blending = THREE.NormalBlending;
+      if (s.style === 'black') u.uColor.value.setRGB(0, 0, 0);
+      else if (s.style === 'colour') u.uColor.value.set(s.color || '#ffffff');
+      else u.uColor.value.setRGB(1, 1, 1);
+    }
+    m.needsUpdate = true;
+    this.renderer.setRenderTarget(null);
+    this.renderer.autoClear = false;
+    this.renderer.render(this.strobeScene!, this.camera);
+    this.renderer.autoClear = true;
+  }
+
+  /** The strobe's flash this frame, for the panel's indicator. */
+  getStrobeLevel() {
+    return this.strobeLevel;
+  }
+
   /** Cut the camera rig to a new framing now. */
   cameraCut() {
     this.cameraRig.cut();
@@ -1558,6 +1658,9 @@ void main(){
         this.renderer.autoClear = true;
       }
     }
+
+    // Last of all: the strobe, over the picture, the capture and the model.
+    this.renderStrobe();
   };
 
   /* ----------------------- Model animation ----------------------- */

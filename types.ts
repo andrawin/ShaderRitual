@@ -169,6 +169,35 @@ export type PostFXConfig = Record<FxName, FxSetting>;
  */
 export type CamFxName = 'silhouette' | 'displace' | 'colourise' | 'trails';
 
+/**
+ * The strobe: a flash over the finished picture, every shader. It runs while
+ * `on` (or while the Hold button or the S key is held), clocked by `drive`;
+ * a one-shot Flash fires regardless.
+ */
+export interface StrobeConfig {
+  on: boolean;
+  /**
+   * free   -> flashes at `rate` per second
+   * tempo  -> one flash every `division` beats, at the Camera · Motion tempo
+   * hits   -> one flash on each hit of `source`
+   * gate   -> flashes at `rate` while `source` is above `threshold`
+   */
+  drive: 'free' | 'tempo' | 'hits' | 'gate';
+  /** Flashes per second, 1..15 (free, gate and Hold). */
+  rate: number;
+  /** Beats per flash (tempo): 0.25, 0.5, 1, 2 or 4. */
+  division: number;
+  source: Band;
+  threshold: number;
+  /** white, a colour, a blackout, or the picture inverted. */
+  style: 'white' | 'colour' | 'black' | 'invert';
+  color: string;
+  /** 0..1: how hard each flash hits. */
+  intensity: number;
+  /** How long each flash lasts, in milliseconds (10..250). */
+  length: number;
+}
+
 export interface CamFxConfig {
   silhouette: FxSetting;
   displace: FxSetting;
@@ -445,6 +474,7 @@ export interface ShaderRitualConfig {
   text: TextConfig;
   postfx: PostFXConfig;
   camfx: CamFxConfig;
+  strobe: StrobeConfig;
   audio: AudioConfig;
   model: ModelConfig;
   shaders: Record<string, ShaderSetting>;
