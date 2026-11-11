@@ -85,6 +85,7 @@ interface SignalState {
 export class SignalEngine {
   private analyser: AnalyserNode;
   private db: Float32Array;
+  private wave: Float32Array;
   private sampleRate: number;
   private state = new Map<string, SignalState>();
   /** Last frame's levels before shaping, by id, for the editor's meters. */
@@ -97,6 +98,7 @@ export class SignalEngine {
     this.analyser.minDecibels = -100;
     this.analyser.maxDecibels = -10;
     this.db = new Float32Array(this.analyser.frequencyBinCount);
+    this.wave = new Float32Array(this.analyser.fftSize);
     this.sampleRate = node.context.sampleRate;
     node.connect(this.analyser);
   }
@@ -155,6 +157,35 @@ export class SignalEngine {
           delete this.levels[id];
         }
       }
+    }
+  }
+
+  /**
+   * Fill an RGBA byte texture `w` texels wide and 2 high, for shaders
+   * (iAudio): row 0 is the spectrum on the log axis, row 1 the waveform,
+   * starting at a rising zero crossing so it stands still on a steady tone.
+   * The value is in every channel.
+   */
+  fillAudioTexture(data: Uint8Array, w: number) {
+    const spec = this.spectrum(w);
+    this.analyser.getFloatTimeDomainData(this.wave as any);
+    const n = this.wave.length;
+    let start = 0;
+    for (let i = 1; i < n - w; i++) {
+      if (this.wave[i - 1] < 0 && this.wave[i] >= 0) {
+        start = i;
+        break;
+      }
+    }
+    for (let i = 0; i < w; i++) {
+      const s = Math.round(Math.min(1, Math.max(0, spec[i])) * 255);
+      const v = Math.round(Math.min(1, Math.max(0, this.wave[Math.min(n - 1, start + i)] * 0.5 + 0.5)) * 255);
+      const a = i * 4;
+      const b = (w + i) * 4;
+      data[a] = data[a + 1] = data[a + 2] = s;
+      data[a + 3] = 255;
+      data[b] = data[b + 1] = data[b + 2] = v;
+      data[b + 3] = 255;
     }
   }
 

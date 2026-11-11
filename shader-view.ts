@@ -480,6 +480,17 @@ export class ShaderRitualView extends LitElement {
     return this.frameConfig ?? this.config;
   }
   private signals: SignalEngine | null = null;
+  /** Shared with every layer: the live audio, and the Text feature's words. */
+  private audioData = new Uint8Array(512 * 2 * 4);
+  private audioTex = (() => {
+    const t = new THREE.DataTexture(this.audioData, 512, 2, THREE.RGBAFormat);
+    t.minFilter = t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+  })();
+  private plainCanvas: HTMLCanvasElement | null = null;
+  private plainTex: THREE.CanvasTexture | null = null;
+  private plainKey = '';
 
   @property()
   set inputNode(node: AudioNode) {
@@ -1265,6 +1276,10 @@ void main(){
       this.lastBands = computeBands(this.analyser.data, this.config.sensitivity, this.config.thresholds);
       this.signals?.update(this.config.audio?.signals || [], dt, this.lastBands);
     }
+    if (this.signals) {
+      this.signals.fillAudioTexture(this.audioData, 512);
+      this.audioTex.needsUpdate = true;
+    }
     // Then the modulations, for everything below to read.
     this.frameConfig = applyModulation(this.config, this.config.audio?.mods || [], this.lastBands);
 
@@ -1307,6 +1322,8 @@ void main(){
     const capMirror = captureMirrored(this.cfg);
     const cAspect = this.captureAspect();
     this.baseLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
+    const plain = this.plainText();
+    this.baseLayer.setShared(this.audioTex, plain);
 
     // Screen capture is composited last, and it needs the finished image as a
     // texture to blend against — so while it is up, every pass that would
@@ -1353,6 +1370,7 @@ void main(){
       this.overlayLayer.setUniforms(time, cam, this.lastBands, ovCfg);
       this.overlayLayer.setVideo(this.videoTexture || null, vAspect);
       this.overlayLayer.setCapture(this.captureTexture || null, cAspect, capMirror);
+      this.overlayLayer.setShared(this.audioTex, plain);
       this.overlayLayer.render(this.camera, this.overlayTarget);
       this.compositeUniforms.uOpacity.value = ov.opacity;
       this.compositeUniforms.uBlend.value = BLEND_INDEX[ov.blend] ?? 0;
@@ -2129,6 +2147,69 @@ void main(){
    * With a transparent background the premultiplication would have to be
    * guessed at.
    */
+  /**
+   * The Text feature's words set plainly for shaders and scenes (iText):
+   * white on clear, wrapped and sized to fill a 1024x512 canvas, redrawn only
+   * when the words or alignment change. Null when there are no words. It does
+   * not depend on the text layer being shown, so a scene can carry the words
+   * with the full-screen text hidden.
+   */
+  private plainText(): THREE.Texture | null {
+    const cfg = this.config.text;
+    const content = (cfg?.content || '').trim();
+    if (!content) return null;
+    const key = content + '|' + cfg.align;
+    if (key === this.plainKey && this.plainTex) return this.plainTex;
+    this.plainKey = key;
+    const W = 1024, H = 512, pad = 48;
+    if (!this.plainCanvas) {
+      this.plainCanvas = document.createElement('canvas');
+      this.plainCanvas.width = W;
+      this.plainCanvas.height = H;
+    }
+    const ctx = this.plainCanvas.getContext('2d')!;
+    const font = (px: number) => `700 ${px}px "Helvetica Neue", Arial, "Segoe UI", sans-serif`;
+    const layout = (px: number) => {
+      ctx.font = font(px);
+      const lines: string[] = [];
+      for (const para of content.split('\n')) {
+        let line = '';
+        for (const word of para.split(' ')) {
+          const next = line ? line + ' ' + word : word;
+          if (line && ctx.measureText(next).width > W - pad * 2) {
+            lines.push(line);
+            line = word;
+          } else line = next;
+        }
+        lines.push(line);
+      }
+      const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      return { lines, fits: lines.length * px * 1.15 <= H - pad * 2 && widest <= W - pad * 2 };
+    };
+    // The largest size that fits.
+    let lo = 12, hi = 220;
+    while (hi - lo > 2) {
+      const mid = (lo + hi) / 2;
+      if (layout(mid).fits) lo = mid;
+      else hi = mid;
+    }
+    const { lines } = layout(lo);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = cfg.align === 'left' ? 'left' : cfg.align === 'right' ? 'right' : 'center';
+    const x = cfg.align === 'left' ? pad : cfg.align === 'right' ? W - pad : W / 2;
+    const lh = lo * 1.15;
+    const y0 = H / 2 - ((lines.length - 1) * lh) / 2;
+    lines.forEach((l, i) => ctx.fillText(l, x, y0 + i * lh));
+    if (!this.plainTex) {
+      this.plainTex = new THREE.CanvasTexture(this.plainCanvas);
+      this.plainTex.colorSpace = THREE.SRGBColorSpace;
+    }
+    this.plainTex.needsUpdate = true;
+    return this.plainTex;
+  }
+
   private redrawText(w: number, h: number) {
     const cfg = this.cfg.text;
     if (!this.textCanvas) {

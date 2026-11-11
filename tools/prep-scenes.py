@@ -9,7 +9,8 @@ links in README > Credits) and writes public/scenes/{leviathan,seawall,
 engine-room}.glb with Meshopt geometry and WebP textures:
 
   control-room  as it is: 47k triangles and 256px textures already
-  ocean         as it is, its specular-glossiness materials converted on the way
+  ocean         wrecked by a landslide (tools/wreck-seawall.py), its
+                specular-glossiness materials converted on the way
                 through Blender (three.js no longer reads them)
   engine-room   a 1M-triangle photoscan, welded and decimated to half; its two
                 8192 textures come down to 4096
@@ -64,6 +65,14 @@ for src, dst, tex, ratio in JOBS:
         continue
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, 'tools', 'source', src + '.glb'))
+    if dst == 'seawall':
+        # A landslide has been through the town first.
+        sys.path.insert(0, os.path.join(ROOT, 'tools'))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('wreck', os.path.join(ROOT, 'tools', 'wreck-seawall.py'))
+        wmod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(wmod)
+        wmod.wreck()
     if tex:
         for img in bpy.data.images:
             w, h = img.size

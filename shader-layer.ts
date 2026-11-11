@@ -128,6 +128,12 @@ export class ShaderLayer {
       iCaptureOn: { value: 0 },
       iCaptureAspect: { value: 16 / 9 },
       iCaptureMirror: { value: 0 },
+      // The live audio: spectrum in row 0 (log frequency, left to right) and
+      // waveform in row 1, 512 texels wide; sample at y 0.25 and 0.75.
+      iAudio: { value: whiteTexture() },
+      // The Text feature's words, set plainly and fitted: white on clear.
+      iText: { value: whiteTexture() },
+      iTextOn: { value: 0 },
     };
     for (const el of def.elements) {
       this.uniforms[`${el.id}_react`] = { value: 0 };
@@ -213,6 +219,14 @@ export class ShaderLayer {
   }
 
   /** Push the per-frame uniform values (time, camera, element react/visible). */
+  /** Hand the layer the live audio texture and the text texture. */
+  setShared(audio: THREE.Texture | null, text: THREE.Texture | null) {
+    if (!this.uniforms || !this.uniforms.iAudio) return;
+    this.uniforms.iAudio.value = audio || whiteTexture();
+    this.uniforms.iText.value = text || whiteTexture();
+    this.uniforms.iTextOn.value = text ? 1 : 0;
+  }
+
   /** Hand the layer the live capture feed, or null when there is none. */
   setCapture(tex: THREE.Texture | null, aspect: number, mirror: boolean) {
     if (!this.uniforms || !this.uniforms.iCapture) return;
@@ -261,6 +275,14 @@ export class ShaderLayer {
       const ca = this.renderer.getClearAlpha();
       if (this.sceneRuntime) {
         this.sceneRuntime.update(this.uniforms);
+        // A test hook: window.__srCam = [x, y, z, lookX, lookY, lookZ] parks a
+        // scene's camera, for checking a spot without waiting for a route.
+        const pin = (window as any).__srCam;
+        const cam = (this.sceneRuntime as any).camera as THREE.PerspectiveCamera | undefined;
+        if (pin && cam) {
+          cam.position.set(pin[0], pin[1], pin[2]);
+          cam.lookAt(pin[3], pin[4], pin[5]);
+        }
         this.sceneRuntime.render(this.renderer, this.sceneTarget);
       } else {
         this.renderer.setRenderTarget(this.sceneTarget);

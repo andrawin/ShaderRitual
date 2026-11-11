@@ -160,6 +160,16 @@ The renderer feeds these from the global camera rig each frame:
 | `iCamReact` | 0..1 motion energy (beat pulse / audio level) |
 | `iBeat` | continuous beat phase = `time * bpm / 60` |
 
+### Live inputs available to every shader
+
+Besides the camera uniforms, every shader (GLSL or scene) receives:
+
+| Uniform | What it is |
+|---|---|
+| `iAudio` | The live audio, 512×2: the spectrum in row 0 (log frequency, left to right; sample at `y = 0.25`) and the waveform in row 1 (`y = 0.75`, 0.5 is silence). |
+| `iText`, `iTextOn` | The Text feature's words, set plainly in white on clear and sized to fill the texture, whether or not the full-screen text is shown. Leviathan writes them on its whiteboards. |
+| `iCapture`, `iCaptureOn`, `iCaptureAspect`, `iCaptureMirror` | Whatever Screen & Camera is capturing. Overtime shows it on its CRTs and projects it onto its windows. |
+
 ### How an element maps to the shader
 
 For each element `<id>` the renderer auto-creates two uniforms:
@@ -224,7 +234,9 @@ Then click the gear icon → **Ignite Audio** and play sound near your mic.
   "[HMS Belfast Engine Room](https://sketchfab.com/3d-models/hms-belfast-engine-room-f99d43c01604443ab731a07c7714f55c)"
   by [artfletch](https://sketchfab.com/artfletch). All three are licensed
   [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/) and were prepared
-  (textures and geometry compressed, the scan decimated) by `tools/prep-scenes.py`.
+  (textures and geometry compressed, the scan decimated, the Seawall town
+  wrecked by a landslide in `tools/wreck-seawall.py`) by `tools/prep-scenes.py`;
+  the Engine Room's cables were hung by `tools/engine-cables.py`.
 - **Neapolis** uses six models from Sketchfab, all licensed
   [CC-BY-4.0](http://creativecommons.org/licenses/by/4.0/):
   "[Neapolis Greek Walls](https://sketchfab.com/3d-models/neapolis-greek-walls-734c2106e82840e7a79e7a4a6d806238)" by [artfletch](https://sketchfab.com/artfletch);

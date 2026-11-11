@@ -12,10 +12,15 @@ import type { SceneRuntime, ShaderDef } from '../types';
 import { Walker, beatPulse, hash, imageHead, linColour, makeMotes, option, react, sceneBuffer, shown } from './scene-kit';
 
 /*
- * "Seawall" — a scene shader: a slice of a coastal town as a diorama at night.
- * Waves break against a seawall road, houses and power poles climb the cliff
- * behind it, a tunnel runs into the rock with something red-eyed inside, and
- * fireflies hang over the gardens.
+ * "Seawall" — a scene shader: a slice of a coastal town as a diorama, the night
+ * after a landslide. Waves break against the seawall road; behind it the houses
+ * have slumped and split, their roofs fallen in, the poles leaning and the
+ * lines down, and boulders from the cliff lie across the gardens
+ * (tools/wreck-seawall.py). A tunnel runs into the rock with something
+ * red-eyed inside, and fireflies still hang over what is left.
+ *
+ * There is no sky, only a black hole: lensed disk and photon ring, with the
+ * music's waveform rippling out from it in rings (iAudio).
  *
  * The houses are below the road, behind the wall, so the set is seen from
  * its cut-open side, or walked at street level.
@@ -30,6 +35,8 @@ import { Walker, beatPulse, hash, imageHead, linColour, makeMotes, option, react
  *   lamps     -> the red lights, the eyes in the tunnel, and the town's windows
  *   fireflies -> the fireflies over the gardens
  *   lightning -> flashes from out at sea; on the beat with a band on it
+ *   blackhole -> the hole's accretion disk: colour, and how bright
+ *   soundwave -> the rings of waveform rippling out of it: colour, and how hard
  *   haze      -> sea mist: colour and density
  *   bloom     -> how far the light spills
  */
@@ -37,7 +44,7 @@ import { Walker, beatPulse, hash, imageHead, linColour, makeMotes, option, react
 const ROUTES = ['Town', 'Walk', 'Ocean', 'Above'];
 // A loop at eye height through the street behind the wall and into the tunnel
 // and back, planned in Blender (tools/walk-plan.py), glTF axes.
-const PATH: number[][] = [[0.2, 1.52, 10.71], [0.26, 1.52, 9.93], [0.32, 1.52, 8.92], [0.32, 1.52, 7.91], [0.32, 1.52, 6.9], [0.31, 1.52, 5.88], [0.04, 1.52, 4.87], [-0.45, 1.52, 3.86], [-0.38, 1.52, 2.84], [-0.32, 1.52, 1.83], [-0.32, 1.52, 0.82], [-0.32, 1.52, -0.2], [-0.32, 1.52, -1.21], [-0.31, 1.52, -2.23], [-0.1, 1.52, -3.24], [0.25, 1.52, -4.25], [0.32, 1.52, -5.27], [0.32, 1.52, -6.28], [0.32, 1.52, -7.29], [0.32, 1.52, -8.31], [0.32, 1.52, -9.32], [0.32, 1.52, -10.33], [0.32, 1.52, -11.22], [0.32, 1.52, -11.22], [0.32, 1.52, -10.33], [0.32, 1.52, -9.32], [0.33, 1.52, -8.31], [0.47, 1.52, -7.29], [0.47, 1.52, -6.28], [0.33, 1.52, -5.27], [0.32, 1.52, -4.25], [0.39, 1.52, -3.24], [0.73, 1.52, -2.23], [0.94, 1.52, -1.21], [1.03, 1.53, -0.2], [1.66, 1.57, 0.82], [2.56, 1.6, 1.83], [2.85, 1.6, 2.84], [2.86, 1.6, 3.86], [2.86, 1.6, 4.87], [2.87, 1.6, 5.88], [3.16, 1.6, 6.9], [4.11, 1.6, 7.91], [4.8, 1.6, 8.92], [4.1, 1.57, 9.94], [2.86, 1.53, 10.83], [1.59, 1.52, 11.06], [0.47, 1.52, 10.89]];
+const PATH: number[][] = [[0.97, 1.52, 11.25], [0.64, 1.52, 10.3], [0.63, 1.52, 9.09], [0.63, 1.52, 7.86], [0.63, 1.52, 6.64], [0.62, 1.52, 5.43], [0.38, 1.52, 4.4], [-0.02, 1.52, 3.51], [-0.1, 1.52, 2.36], [-0.1, 1.52, 1.13], [-0.1, 1.52, -0.09], [-0.1, 1.52, -1.32], [-0.1, 1.52, -2.54], [-0.1, 1.52, -3.76], [-0.1, 1.52, -4.99], [-0.1, 1.52, -6.21], [-0.1, 1.52, -7.44], [-0.1, 1.52, -8.66], [-0.1, 1.52, -9.88], [-0.02, 1.52, -11.02], [0.38, 1.52, -11.36], [0.62, 1.52, -10.49], [0.63, 1.52, -9.27], [0.62, 1.52, -8.06], [0.38, 1.52, -7.03], [-0.02, 1.52, -6.14], [-0.1, 1.52, -4.99], [-0.1, 1.52, -3.76], [-0.02, 1.52, -2.61], [0.38, 1.52, -1.72], [0.62, 1.52, -0.69], [0.63, 1.52, 0.52], [0.72, 1.52, 1.68], [1.36, 1.6, 2.42], [2.06, 1.95, 2.29], [2.31, 2.18, 1.89], [2.15, 1.96, 2.43], [2.08, 1.64, 3.58], [2.08, 1.55, 4.8], [2.08, 1.52, 6.03], [2.08, 1.52, 7.25], [2.17, 1.52, 8.4], [2.9, 1.55, 9.01], [4.1, 1.59, 9.17], [4.42, 1.6, 9.77], [3.95, 1.57, 10.64], [3.05, 1.53, 11.12], [2.01, 1.52, 11.46]];
 
 function setupSeawall(root: THREE.Object3D): SceneRuntime {
   const scene = new THREE.Scene();
@@ -103,6 +110,102 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
     scene.add(l);
     townLamps.push(l);
   }
+
+  // The sky: a dome round the camera with a black hole in it.
+  const sky = {
+    uTime: { value: 0 },
+    uDir: { value: new THREE.Vector3(-0.8, 0.2, -0.55).normalize() },
+    uAudio: { value: null as THREE.Texture | null },
+    uDisk: { value: new THREE.Color() },
+    uRing: { value: new THREE.Color() },
+    uLevel: { value: 1 },
+    uWave: { value: 1 },
+    uFlash: { value: 0 },
+    uBase: { value: new THREE.Color() },
+  };
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(300, 48, 24),
+    new THREE.ShaderMaterial({
+      uniforms: sky,
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      toneMapped: false,
+      vertexShader: `
+varying vec3 vDir;
+void main(){
+  vDir = normalize((modelMatrix * vec4(position, 1.0)).xyz - cameraPosition);
+  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
+}`,
+      fragmentShader: `
+uniform float uTime;
+uniform vec3 uDir;
+uniform sampler2D uAudio;
+uniform vec3 uDisk;
+uniform vec3 uRing;
+uniform float uLevel;
+uniform float uWave;
+uniform float uFlash;
+uniform vec3 uBase;
+varying vec3 vDir;
+float h3(vec3 p){ p = fract(p * 0.3183 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float stars(vec3 d){
+  vec3 g = floor(d * 160.0);
+  float s = h3(g);
+  return step(0.996, s) * (0.4 + 0.6 * h3(g + 7.0));
+}
+void main(){
+  vec3 v = normalize(vDir);
+  vec3 h = normalize(uDir);
+  vec3 rt = normalize(cross(h, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, h);
+  float facing = dot(v, h);
+  // Flat coordinates round the hole (gnomonic), radius in the same units.
+  vec2 p = vec2(dot(v, rt), dot(v, up)) / max(facing, 0.04);
+  float r = length(p);
+  float phi = atan(p.y, p.x);
+  float R = 0.2;                       // shadow radius
+  // Stars, pulled round the hole as the light bends.
+  float bend = facing > 0.0 ? R * R * 1.6 / max(r * r, 1e-4) : 0.0;
+  vec3 sd = normalize(v - (rt * p.x + up * p.y) / max(r, 1e-4) * bend * 0.25);
+  vec3 col = uBase + vec3(stars(sd)) * 0.7;
+  if(facing > 0.0){
+    // The accretion disk, edge-on and a little tilted, Doppler-bright on one side.
+    float tilt = 0.18;
+    float dy = p.y - p.x * tilt;
+    float disk = exp(-abs(dy) * 60.0) * smoothstep(R * 1.2, R * 1.6, abs(p.x)) * smoothstep(R * 5.0, R * 2.0, abs(p.x));
+    float doppler = 0.6 + 0.5 * tanh(-p.x * 4.0);
+    // Its far side, lensed up over and down under the hole.
+    float halo = exp(-abs(r - R * 1.45) * 28.0) * (0.35 + 0.65 * abs(sin(phi)));
+    float photon = exp(-abs(r - R * 1.06) * 160.0);
+    vec3 hot = mix(uDisk, vec3(1.0), 0.35);
+    col += hot * (disk * doppler * 2.4 + halo * 0.9) * uLevel + vec3(1.0, 0.95, 0.9) * photon * 1.6 * uLevel;
+    // The soundwave: rings born at the hole and spreading, each one the
+    // waveform wrapped round the circle, brightest where the spectrum is.
+    float a = phi / 6.2831853 + 0.5;
+    float wave = texture2D(uAudio, vec2(a, 0.75)).r - 0.5;
+    float spec = texture2D(uAudio, vec2(abs(a - 0.5) * 1.6 + 0.02, 0.25)).r;
+    for(int k = 0; k < 6; k++){
+      float fk = float(k);
+      float age = fract(uTime * 0.12 + fk / 6.0);
+      float rr = R * (1.7 + age * 7.0) + wave * R * 0.9 * uWave * (1.0 - age * 0.5);
+      float ring = exp(-abs(r - rr) * (90.0 - age * 50.0));
+      col += uRing * ring * (1.0 - age) * (0.25 + spec * 1.5) * uWave;
+    }
+    // The shadow itself: nothing gets out.
+    col *= smoothstep(R * 0.96, R * 1.02, r);
+  }
+  col += uBase * uFlash * 3.0;
+  gl_FragColor = vec4(col, 1.0);
+}`,
+    }),
+  );
+  dome.renderOrder = -1;
+  dome.frustumCulled = false;
+  scene.add(dome);
+  const holeDir = new THREE.Vector3(-0.8, 0.2, -0.55).normalize();
+  const fwd = new THREE.Vector3();
+  let skyT = -1;
 
   const motes = makeMotes(new THREE.Box3(new THREE.Vector3(-2, 0.5, -3), new THREE.Vector3(13, 10, 13)), 500);
   scene.add(motes.points);
@@ -174,6 +277,16 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
       flash.color.copy(cZ);
       flash.intensity = z * 9;
 
+      // The black hole, behind wherever the camera is looking, drifting after it.
+      linColour(u.blackhole_color.value, sky.uDisk.value);
+      linColour(u.soundwave_color.value, sky.uRing.value);
+      sky.uTime.value = t;
+      sky.uLevel.value = react(u, 'blackhole') * (1 + beat * 0.4);
+      sky.uWave.value = shown(u, 'soundwave') ? react(u, 'soundwave') : 0;
+      sky.uAudio.value = (u.iAudio?.value as THREE.Texture) || null;
+      sky.uFlash.value = z * 0.3;
+      sky.uBase.value.copy(cH).multiplyScalar(0.15);
+
       const fog = scene.fog as THREE.FogExp2;
       fog.color.copy(cH).lerp(cZ, Math.min(0.1, z * 0.08));
       fog.density = shown(u, 'haze') ? 0.002 + react(u, 'haze') * 0.014 : 0;
@@ -198,8 +311,10 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
         camera.position.y += Math.sin(t * 5) * 0.02 + hgt * 0.4;
       } else if (route === 2) {
         const a = -1.0 + Math.sin(t * 0.09 + orbit) * 0.45;
-        const r = 34 * dist;
-        camera.position.set(centre.x + Math.sin(a) * r, 9 + hgt * 8, centre.z + Math.cos(a) * r);
+        // Cuts can push the distance; past ~38 the camera leaves the box's edge.
+        const r = Math.min(38, 34 * dist);
+        // Never below the top of the sea, or all it sees is the base of the box.
+        camera.position.set(centre.x + Math.sin(a) * r, 10 + Math.max(0, hgt) * 8, centre.z + Math.cos(a) * r);
         target.set(1, 5, -2);
         camera.lookAt(target);
       } else {
@@ -209,6 +324,17 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
         camera.lookAt(target);
       }
       camera.updateProjectionMatrix();
+      dome.position.copy(camera.position);
+      camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      if (fwd.lengthSq() > 1e-4) {
+        fwd.normalize().y = 0.1;
+        fwd.normalize();
+        const gap = skyT < 0 ? 1 : Math.abs(t - skyT);
+        holeDir.lerp(fwd, gap > 0.5 ? 1 : 1 - Math.exp(-gap * 0.15)).normalize();
+      }
+      skyT = t;
+      sky.uDir.value.copy(holeDir);
     },
     render(r, rt) {
       r.setRenderTarget(rt);
@@ -223,6 +349,8 @@ function setupSeawall(root: THREE.Object3D): SceneRuntime {
       bloom.setSize(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
     },
   };
+  (runtime as any).camera = camera;
+  (runtime as any).scene = scene;
   return runtime;
 }
 
@@ -244,17 +372,17 @@ export const seawall: ShaderDef = {
   id: 'seawall',
   name: 'Seawall',
   description:
-    'A scene shader: a coastal town as a diorama at night — waves on the seawall, lamps up the cliff, fireflies, and lightning out at sea. ' +
+    'A scene shader: a coastal town the night after a landslide, under a black hole whose rings are the music\'s waveform — waves on the seawall, wrecked houses, fireflies, lightning out at sea. ' +
     'Model: "DAE Diorama - By the Ocean" by Sidney Eliot Bundschuh (sketchfab.com/sidney-eliot), CC-BY-4.0.',
   bufferShader: sceneBuffer('Seawall', 'scene-seawall.ts'),
   imageShader,
   scene: { url: 'scenes/seawall.glb', setup: setupSeawall },
   palettes: [
-    { name: 'Night tide', colors: { moon: '#8fa8ff', waves: '#bfe4ff', lamps: '#ff2a1a', fireflies: '#ffd05c', lightning: '#e8f0ff', haze: '#060a12' } },
-    { name: 'Dusk', colors: { moon: '#ffb38a', waves: '#ffd9c2', lamps: '#ff5a1f', fireflies: '#fff0a0', lightning: '#ffe7c2', haze: '#2a1a24' } },
-    { name: 'Red tide', colors: { moon: '#5a2030', waves: '#ff3d5a', lamps: '#ff1a1a', fireflies: '#ff8a7a', lightning: '#ff2a1a', haze: '#120406' } },
-    { name: 'Phosphor', colors: { moon: '#1f5a4a', waves: '#3dffb0', lamps: '#22e6ff', fireflies: '#b6ff1a', lightning: '#9cffe0', haze: '#03100c' } },
-    { name: 'Storm', colors: { moon: '#4a5260', waves: '#f2f6ff', lamps: '#ffb238', fireflies: '#ffffff', lightning: '#ffffff', haze: '#0c0e12' } },
+    { name: 'Night tide', colors: { blackhole: '#ff9a4a', soundwave: '#8ad8ff', moon: '#8fa8ff', waves: '#bfe4ff', lamps: '#ff2a1a', fireflies: '#ffd05c', lightning: '#e8f0ff', haze: '#060a12' } },
+    { name: 'Dusk', colors: { blackhole: '#ffcf7a', soundwave: '#ff8ac0', moon: '#ffb38a', waves: '#ffd9c2', lamps: '#ff5a1f', fireflies: '#fff0a0', lightning: '#ffe7c2', haze: '#2a1a24' } },
+    { name: 'Red tide', colors: { blackhole: '#ff3d1a', soundwave: '#ff2a4a', moon: '#5a2030', waves: '#ff3d5a', lamps: '#ff1a1a', fireflies: '#ff8a7a', lightning: '#ff2a1a', haze: '#120406' } },
+    { name: 'Phosphor', colors: { blackhole: '#9cffe0', soundwave: '#3dffb0', moon: '#1f5a4a', waves: '#3dffb0', lamps: '#22e6ff', fireflies: '#b6ff1a', lightning: '#9cffe0', haze: '#03100c' } },
+    { name: 'Storm', colors: { blackhole: '#f2f6ff', soundwave: '#c0d0ff', moon: '#4a5260', waves: '#f2f6ff', lamps: '#ffb238', fireflies: '#ffffff', lightning: '#ffffff', haze: '#0c0e12' } },
   ],
   elements: [
     { id: 'route', name: 'Route', description: 'Swing round the open side where the houses are, walk the street and the tunnel, sit low over the water facing the wall, or look straight down.', defaultBand: 'none', defaultAmount: 0, defaultLevel: 1 / ROUTES.length, canHide: false, defaultVisible: true, options: ROUTES },
@@ -263,7 +391,9 @@ export const seawall: ShaderDef = {
     { id: 'lamps', name: 'Lamps', description: 'The red lights, the eyes in the tunnel and the lamps of the town.', defaultBand: 'mid', defaultAmount: 0.6, defaultLevel: 0.6, canHide: false, defaultVisible: true, defaultColor: '#ff2a1a' },
     { id: 'fireflies', name: 'Fireflies', description: 'The fireflies over the gardens.', defaultBand: 'high', defaultAmount: 0.8, defaultLevel: 0.5, canHide: true, defaultVisible: true, defaultColor: '#ffd05c' },
     { id: 'lightning', name: 'Lightning', description: 'Flashes from out at sea, now and then by themselves and on the beat.', defaultBand: 'high', defaultAmount: 0.8, defaultLevel: 0.5, canHide: true, defaultVisible: true, defaultColor: '#e8f0ff' },
-    { id: 'haze', name: 'Sea mist', description: 'Mist colour and density. Hide for clear air.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.35, canHide: true, defaultVisible: true, defaultColor: '#060a12' },
+    { id: 'blackhole', name: 'Black hole', description: 'The hole that is all the sky there is: the colour of its disk, and how bright it burns. On the kick it swells.', defaultBand: 'low', defaultAmount: 0.5, defaultLevel: 0.8, canHide: false, defaultVisible: true, defaultColor: '#ff9a4a' },
+    { id: 'soundwave', name: 'Soundwave', description: 'Rings of the live waveform rippling out of the hole, brightest where the spectrum is loud. Colour, and how hard they ripple.', defaultBand: 'mid', defaultAmount: 0.8, defaultLevel: 0.6, canHide: true, defaultVisible: true, defaultColor: '#8ad8ff' },
+    { id: 'haze', name: 'Sea mist', description: 'Mist colour and density. Hide for clear air.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.2, canHide: true, defaultVisible: true, defaultColor: '#060a12' },
     { id: 'bloom', name: 'Bloom', description: 'How far the light spills.', defaultBand: 'low', defaultAmount: 0.5, defaultLevel: 0.6, canHide: false, defaultVisible: true },
   ],
 };

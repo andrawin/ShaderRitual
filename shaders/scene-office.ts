@@ -224,6 +224,13 @@ function setupOffice(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Scene
 
   const screenPos: THREE.Vector3[] = [];
   let blinds: THREE.MeshStandardMaterial | null = null;
+  const win = {
+    uWinCap: { value: null as THREE.Texture | null },
+    uWinLevel: { value: 0 },
+    uWinAspect: { value: 16 / 9 },
+    uWinMirror: { value: 0 },
+    uWinFlick: { value: 1 },
+  };
   root.traverse((o: any) => {
     if (!o.isMesh) return;
     const m = o.material as THREE.MeshStandardMaterial;
@@ -251,6 +258,34 @@ function setupOffice(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Scene
       m.emissiveMap = m.map;
       m.emissive = new THREE.Color(0, 0, 0);
       blinds = m;
+      // And whatever Screen & Camera is capturing is projected onto them:
+      // brightest on the slats, still there in the gaps between.
+      m.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, win);
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform sampler2D uWinCap;\nuniform float uWinLevel;\nuniform float uWinAspect;\nuniform float uWinMirror;\nuniform float uWinFlick;',
+          )
+          .replace(
+            '#include <emissivemap_fragment>',
+            `#include <emissivemap_fragment>
+#ifdef USE_MAP
+{
+  // Each window is 3 m by 2 m; crop the capture to fill it.
+  // The blinds' texture runs sideways; turn the picture upright.
+  vec2 cu = vec2(vMapUv.y, 1.0 - vMapUv.x) - 0.5;
+  float r = 1.5 / max(uWinAspect, 0.001);
+  cu = cu * (r > 1.0 ? vec2(1.0, 1.0 / r) : vec2(r, 1.0)) + 0.5;
+  if(uWinMirror > 0.5) cu.x = 1.0 - cu.x;
+  vec3 cap = texture2D(uWinCap, cu).rgb;
+  float slat = dot(texture2D(map, vMapUv).rgb, vec3(0.333));
+  totalEmissiveRadiance += cap * uWinLevel * uWinFlick * (0.25 + 1.1 * smoothstep(0.15, 0.7, slat));
+}
+#endif`,
+          );
+      };
+      m.customProgramCacheKey = () => 'overtime-window';
     }
   });
 
@@ -406,6 +441,14 @@ function setupOffice(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Scene
       if (blinds) {
         (blinds as THREE.MeshStandardMaterial).emissive.copy(cM).multiplyScalar(mv * 0.07);
       }
+      // The window: the capture, when there is one, flickering like a cheap
+      // projector and dropping out for a frame now and then.
+      const winOn = capOn && vis('window');
+      win.uWinCap.value = winOn ? (u.iCapture.value as THREE.Texture) : blank;
+      win.uWinLevel.value = winOn ? rv('window') * 1.4 : 0;
+      win.uWinAspect.value = (u.iCaptureAspect?.value as number) || 16 / 9;
+      win.uWinMirror.value = (u.iCaptureMirror?.value as number) || 0;
+      win.uWinFlick.value = (0.9 + 0.1 * Math.sin(t * 60)) * (Math.random() > 0.985 ? 0.2 : 1) * (1 + beat * 0.4);
 
       // Dust: lit by whatever is burning.
       dust.visible = vis('dust');
@@ -479,6 +522,7 @@ function setupOffice(root: THREE.Object3D, renderer: THREE.WebGLRenderer): Scene
     },
   };
   (runtime as any).scene = scene;
+  (runtime as any).camera = camera;
   return runtime;
 }
 
@@ -582,9 +626,19 @@ export const office: ShaderDef = {
       defaultColor: '#5dff9a',
     },
     {
+      id: 'window',
+      name: 'Window',
+      description: 'Whatever Screen & Camera is capturing (a shared window, or the camera), projected onto the big blinds at both ends of the room. Hide the capture layer itself to see it only here.',
+      defaultBand: 'none',
+      defaultAmount: 0.3,
+      defaultLevel: 0.8,
+      canHide: true,
+      defaultVisible: true,
+    },
+    {
       id: 'feed',
-      name: 'Camera feed',
-      description: 'How many of the intact screens show the live camera while Screen & Camera is running. Hide to keep the camera off them.',
+      name: 'Screens feed',
+      description: 'How many of the intact CRTs show what Screen & Camera is capturing (a shared window, or the camera). Hide to keep it off them.',
       defaultBand: 'none',
       defaultAmount: 0,
       defaultLevel: 0.6,

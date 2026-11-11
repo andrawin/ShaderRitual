@@ -26,6 +26,9 @@ import { Walker, beatPulse, imageHead, linColour, makeMotes, option, react, scen
  *              they kick on the beat
  *   flesh   -> the carcass itself glowing from inside, like a heartbeat
  *   servers -> the rack lights and the one live screen
+ *   board   -> the whiteboards: with words in the Text feature, they are wiped
+ *              and the words written up in marker (the old drawing a ghost);
+ *              ink colour, and how much it glows
  *   spores  -> motes drifting up through the air
  *   crunch  -> pixelation and dither in the image pass
  *   haze    -> fog colour and density
@@ -44,6 +47,15 @@ function setupLeviathan(root: THREE.Object3D): SceneRuntime {
   const floorY = -4.09;
 
   const flesh: THREE.MeshStandardMaterial[] = [];
+  const blankTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+  blankTex.needsUpdate = true;
+  const board = {
+    uBoardText: { value: blankTex as THREE.Texture },
+    uBoardOn: { value: 0 },
+    uInk: { value: new THREE.Color() },
+    uInkGlow: { value: 0 },
+    uBoardTime: { value: 0 },
+  };
   const blink: THREE.MeshStandardMaterial[] = [];
   const seen = new Set<THREE.Material>();
   root.traverse((o: any) => {
@@ -63,6 +75,35 @@ function setupLeviathan(root: THREE.Object3D): SceneRuntime {
       // Chunky texels, as the model was made to be seen.
       m.map.magFilter = THREE.NearestFilter;
       m.map.needsUpdate = true;
+    }
+    if (/Whiteboard/.test(name)) {
+      m.onBeforeCompile = (shader) => {
+        Object.assign(shader.uniforms, board);
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform sampler2D uBoardText;\nuniform float uBoardOn;\nuniform vec3 uInk;\nuniform float uInkGlow;\nuniform float uBoardTime;\nfloat inkMask = 0.0;',
+          )
+          .replace(
+            '#include <map_fragment>',
+            `#include <map_fragment>
+#ifdef USE_MAP
+if(uBoardOn > 0.5){
+  // Marker: the words a little shaky, as if written by hand.
+  vec2 tu = vec2(vMapUv.x, 1.0 - vMapUv.y);
+  tu += vec2(sin(tu.y * 90.0) * 0.0015, sin(tu.x * 70.0 + 1.3) * 0.002);
+  inkMask = texture2D(uBoardText, tu).a;
+  vec3 wiped = mix(vec3(0.78, 0.79, 0.8), diffuseColor.rgb, 0.12);
+  diffuseColor.rgb = mix(wiped, uInk * 0.6, inkMask);
+}
+#endif`,
+          )
+          .replace(
+            '#include <emissivemap_fragment>',
+            '#include <emissivemap_fragment>\ntotalEmissiveRadiance += uInk * inkMask * uInkGlow;',
+          );
+      };
+      m.customProgramCacheKey = () => 'leviathan-board';
     }
     if (/Bone|Guts/.test(name)) {
       m.emissiveMap = m.map;
@@ -130,6 +171,12 @@ function setupLeviathan(root: THREE.Object3D): SceneRuntime {
       heart.color.copy(cF);
       heart.intensity = glow * 30;
 
+      // The boards: the Text feature's words, when there are any.
+      const textOn = ((u.iTextOn?.value as number) ?? 0) > 0.5;
+      board.uBoardOn.value = textOn ? 1 : 0;
+      board.uBoardText.value = textOn ? (u.iText.value as THREE.Texture) : blankTex;
+      linColour(u.board_color.value, board.uInk.value);
+      board.uInkGlow.value = react(u, 'board') * 1.4 * (0.85 + 0.15 * Math.sin(t * 31) * Math.sin(t * 17));
       const sv = react(u, 'servers');
       const flick = 0.6 + 0.4 * Math.sin(t * 13) * Math.sin(t * 7.3);
       for (const m of blink) m.emissive.copy(cS).multiplyScalar(sv * 3.2 * flick);
@@ -185,6 +232,7 @@ function setupLeviathan(root: THREE.Object3D): SceneRuntime {
     },
   };
   void box;
+  (runtime as any).camera = camera;
   return runtime;
 }
 
@@ -224,17 +272,18 @@ export const leviathan: ShaderDef = {
   imageShader,
   scene: { url: 'scenes/leviathan.glb', setup: setupLeviathan },
   palettes: [
-    { name: 'Dead end', colors: { alarm: '#ff2a1a', flesh: '#ff5a3c', servers: '#5dff9a', haze: '#120608' } },
-    { name: 'Abyss', colors: { alarm: '#1f6bff', flesh: '#19d3c5', servers: '#bfe4ff', haze: '#030a14' } },
-    { name: 'Bile', colors: { alarm: '#b6ff1a', flesh: '#e8ff5a', servers: '#ff3d8a', haze: '#0a1004' } },
-    { name: 'Autopsy', colors: { alarm: '#f2f6ff', flesh: '#ff9a9a', servers: '#ffb238', haze: '#0c0c10' } },
-    { name: 'Ultraviolet', colors: { alarm: '#8a2bff', flesh: '#ff2bd6', servers: '#22e6ff', haze: '#0a0414' } },
+    { name: 'Dead end', colors: { alarm: '#ff2a1a', flesh: '#ff5a3c', servers: '#5dff9a', board: '#ff2a1a', haze: '#120608' } },
+    { name: 'Abyss', colors: { alarm: '#1f6bff', flesh: '#19d3c5', servers: '#bfe4ff', board: '#19d3c5', haze: '#030a14' } },
+    { name: 'Bile', colors: { alarm: '#b6ff1a', flesh: '#e8ff5a', servers: '#ff3d8a', board: '#b6ff1a', haze: '#0a1004' } },
+    { name: 'Autopsy', colors: { alarm: '#f2f6ff', flesh: '#ff9a9a', servers: '#ffb238', board: '#c0101a', haze: '#0c0c10' } },
+    { name: 'Ultraviolet', colors: { alarm: '#8a2bff', flesh: '#ff2bd6', servers: '#22e6ff', board: '#ff2bd6', haze: '#0a0414' } },
   ],
   elements: [
     { id: 'route', name: 'Route', description: 'Walk the loop between the racks, lie on the deck looking up into the ribs, or watch from above.', defaultBand: 'none', defaultAmount: 0, defaultLevel: 1 / ROUTES.length, canHide: false, defaultVisible: true, options: ROUTES },
     { id: 'alarm', name: 'Alarm', description: 'Emergency lamps chasing each other round the walk. On the kick, they slam.', defaultBand: 'low', defaultAmount: 0.8, defaultLevel: 0.7, canHide: true, defaultVisible: true, defaultColor: '#ff2a1a' },
     { id: 'flesh', name: 'Flesh', description: 'The ribs and guts glowing from inside, on a heartbeat of their own plus whatever you feed them.', defaultBand: 'low', defaultAmount: 0.6, defaultLevel: 0.5, canHide: false, defaultVisible: true, defaultColor: '#ff5a3c' },
     { id: 'servers', name: 'Servers', description: 'The rack lights and the one screen still on.', defaultBand: 'high', defaultAmount: 0.8, defaultLevel: 0.6, canHide: false, defaultVisible: true, defaultColor: '#5dff9a' },
+    { id: 'board', name: 'Whiteboard', description: 'The two whiteboards. Type words into the Text feature and they are wiped and written up in marker (hide the full-screen text if you only want them here). Ink colour, and how much it glows.', defaultBand: 'mid', defaultAmount: 0.5, defaultLevel: 0.5, canHide: false, defaultVisible: true, defaultColor: '#ff2a1a' },
     { id: 'spores', name: 'Spores', description: 'Motes drifting up through the carcass.', defaultBand: 'mid', defaultAmount: 0.5, defaultLevel: 0.5, canHide: true, defaultVisible: true },
     { id: 'crunch', name: 'Crunch', description: 'Chunky pixels and dither, to match the low-poly model. 0 is clean; past 1 it gets brutal.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.8, canHide: true, defaultVisible: true },
     { id: 'haze', name: 'Haze', description: 'Fog colour and density. Hide for clear air.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.4, canHide: true, defaultVisible: true, defaultColor: '#120608' },

@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { SceneRuntime, ShaderDef } from '../types';
+import { buildWiring } from './engine-wiring';
 import { Walker, beatPulse, hash, imageHead, linColour, loopPoint, makeMotes, option, react, sceneBuffer, shown } from './scene-kit';
 
 /*
@@ -28,6 +29,11 @@ import { Walker, beatPulse, hash, imageHead, linColour, loopPoint, makeMotes, op
  *   furnace   -> a hot glow from below, breathing
  *   steam     -> vapour rising through the room
  *   rumble    -> the camera shaking with the machinery
+ *   cables    -> hundreds of cables strung through the room, in loose sagging
+ *                bundles; colour and strength of the current running along
+ *                the live ones (hide to strip the rig out)
+ *   sparks    -> the cut ends arcing: sputtering with the signal, and bursting
+ *                on the beat with a flash on the pipes
  *   haze      -> fog colour and density
  *   bloom     -> how far the light spills
  */
@@ -77,6 +83,11 @@ function setupEngineRoom(root: THREE.Object3D): SceneRuntime {
     furnace.push(light);
   }
 
+  const wiring = buildWiring();
+  scene.add(wiring.cables, wiring.sparks, ...wiring.lights);
+  let lastBeat = -1;
+  let lastT = 0;
+
   const steam = makeMotes(new THREE.Box3(new THREE.Vector3(-9, box.min.y + 1.5, -1), new THREE.Vector3(7, box.max.y, 8.5)), 2200);
   scene.add(steam.points);
 
@@ -115,6 +126,25 @@ function setupEngineRoom(root: THREE.Object3D): SceneRuntime {
         l.intensity = fv * 16 * (0.7 + 0.3 * Math.sin(t * 0.8 + i * 2.1)) * (1 + beat * 0.6);
       });
 
+      // The rig: current along the live cables, and the cut ends arcing.
+      const dt = Math.min(0.1, Math.max(0, t - lastT));
+      lastT = t;
+      const b = Math.floor(u.iBeat.value as number);
+      const newBeat = b !== lastBeat;
+      lastBeat = b;
+      linColour(u.cables_color.value, cT);
+      const pulseC = cT.clone();
+      linColour(u.sparks_color.value, cT);
+      wiring.update(t, dt, {
+        glow: wv * 0.35,
+        pulse: react(u, 'cables'),
+        pulseColour: pulseC,
+        sparks: shown(u, 'sparks') ? react(u, 'sparks') : 0,
+        sparkColour: cT,
+        burst: newBeat && shown(u, 'sparks') && react(u, 'sparks') > 0.05,
+        show: shown(u, 'cables'),
+      });
+
       steam.points.visible = shown(u, 'steam');
       const sv = react(u, 'steam');
       steam.uniforms.uTime.value = t;
@@ -147,7 +177,8 @@ function setupEngineRoom(root: THREE.Object3D): SceneRuntime {
         target.set(camera.position.x + Math.sin(a), camera.position.y - 0.1 + hgt * 0.3, camera.position.z + Math.cos(a));
         camera.lookAt(target);
       } else {
-        walker.place(camera, t * (route === 2 ? 2.4 : 0.7) + orbit * 2, t);
+        // Looking a touch up, into the cables.
+        walker.place(camera, t * (route === 2 ? 2.4 : 0.7) + orbit * 2, t, 0.12);
         camera.position.y += Math.sin(t * (route === 2 ? 11 : 5.5)) * 0.025 + hgt * 0.3;
       }
       // Rumble: the deck shaking through the camera.
@@ -169,6 +200,7 @@ function setupEngineRoom(root: THREE.Object3D): SceneRuntime {
       bloom.setSize(Math.max(1, Math.floor(w)), Math.max(1, Math.floor(h)));
     },
   };
+  (runtime as any).camera = camera;
   return runtime;
 }
 
@@ -198,11 +230,11 @@ export const engineRoom: ShaderDef = {
   imageShader,
   scene: { url: 'scenes/engine-room.glb', setup: setupEngineRoom },
   palettes: [
-    { name: 'Action stations', colors: { worklight: '#ffe2c0', alarm: '#ff2a1a', furnace: '#ff7a1a', haze: '#0a0c0e' } },
-    { name: 'Dry dock', colors: { worklight: '#f2f6ff', alarm: '#ffd23a', furnace: '#ff9a40', haze: '#10141a' } },
-    { name: 'Flooded', colors: { worklight: '#3a8a8a', alarm: '#19d3c5', furnace: '#1f6bff', haze: '#03121a' } },
-    { name: 'Blackout', colors: { worklight: '#20242c', alarm: '#ff2a1a', furnace: '#ff3d00', haze: '#020203' } },
-    { name: 'Reactor', colors: { worklight: '#5a7a3a', alarm: '#b6ff1a', furnace: '#3dff8a', haze: '#060c04' } },
+    { name: 'Action stations', colors: { cables: '#7fe0ff', sparks: '#9fd8ff', worklight: '#ffe2c0', alarm: '#ff2a1a', furnace: '#ff7a1a', haze: '#0a0c0e' } },
+    { name: 'Dry dock', colors: { cables: '#ffd23a', sparks: '#fff0c0', worklight: '#f2f6ff', alarm: '#ffd23a', furnace: '#ff9a40', haze: '#10141a' } },
+    { name: 'Flooded', colors: { cables: '#3dffd0', sparks: '#bff6ff', worklight: '#3a8a8a', alarm: '#19d3c5', furnace: '#1f6bff', haze: '#03121a' } },
+    { name: 'Blackout', colors: { cables: '#ff3d00', sparks: '#ffb070', worklight: '#20242c', alarm: '#ff2a1a', furnace: '#ff3d00', haze: '#020203' } },
+    { name: 'Reactor', colors: { cables: '#b6ff1a', sparks: '#e8ffb0', worklight: '#5a7a3a', alarm: '#b6ff1a', furnace: '#3dff8a', haze: '#060c04' } },
   ],
   elements: [
     { id: 'route', name: 'Route', description: 'Walk the gangways, hold at one spot and pan (cutting every two bars), or take the walk at a run.', defaultBand: 'none', defaultAmount: 0, defaultLevel: 1 / ROUTES.length, canHide: false, defaultVisible: true, options: ROUTES },
@@ -211,6 +243,8 @@ export const engineRoom: ShaderDef = {
     { id: 'furnace', name: 'Furnace', description: 'A hot glow from under the machinery, breathing.', defaultBand: 'mid', defaultAmount: 0.6, defaultLevel: 0.5, canHide: false, defaultVisible: true, defaultColor: '#ff7a1a' },
     { id: 'steam', name: 'Steam', description: 'Vapour rising through the room; more signal, faster and thicker.', defaultBand: 'high', defaultAmount: 0.6, defaultLevel: 0.6, canHide: true, defaultVisible: true },
     { id: 'rumble', name: 'Rumble', description: 'The camera shaking with the machinery. Put it on the bass.', defaultBand: 'low', defaultAmount: 1.0, defaultLevel: 0.15, canHide: true, defaultVisible: true },
+    { id: 'cables', name: 'Cables', description: 'Hundreds of cables strung through the room. Colour and strength of the current pulsing along the live ones. Hide to strip the rig out.', defaultBand: 'mid', defaultAmount: 0.8, defaultLevel: 0.4, canHide: true, defaultVisible: true, defaultColor: '#7fe0ff' },
+    { id: 'sparks', name: 'Sparks', description: 'The cut cable ends arcing: sputtering with the signal, bursting on the beat with a flash on the pipes. Put it on Snare or Hats.', defaultBand: 'high', defaultAmount: 1.0, defaultLevel: 0.3, canHide: true, defaultVisible: true, defaultColor: '#9fd8ff' },
     { id: 'haze', name: 'Haze', description: 'Fog colour and density. Hide for clear air.', defaultBand: 'none', defaultAmount: 0.3, defaultLevel: 0.35, canHide: true, defaultVisible: true, defaultColor: '#0a0c0e' },
     { id: 'bloom', name: 'Bloom', description: 'How far the light spills.', defaultBand: 'low', defaultAmount: 0.5, defaultLevel: 0.6, canHide: false, defaultVisible: true },
   ],

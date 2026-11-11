@@ -14,3 +14,4 @@ tools/source/office.glb
 tools/source/control-room.glb
 tools/source/ocean.glb
 tools/source/engine-room.glb
+__pycache__/
