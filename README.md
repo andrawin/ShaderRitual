@@ -161,6 +161,16 @@ that must all hold:
 knob sent from SuperCollider (`~sr.sendMsg("/sr/cutoff", 0.7)` with Match
 `/sr/cutoff`). **Offset** shifts every event if the projector runs behind.
 
+## Skins
+
+The control panel comes in two skins: **XP** (the default) and **Classic**,
+the original dark one. The XP skin has a blue window and fold-away task
+panes (click a section's title; folds are remembered). Its Media Player
+monitor has working transport buttons: previous and next shader,
+play/pause for the audio, and a strobe flash; the seek bar runs through each
+bar of four beats. Switch with **View: Classic skin** in the menu bar, or the
+◧ button in Classic. The choice is per browser.
+
 ## Strobe
 
 A flash over the finished picture — every shader, the camera layer and the

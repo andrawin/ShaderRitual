@@ -19,6 +19,8 @@ function defaultPart(): PartSetting {
 
 const STORAGE_KEY = 'shader-ritual-settings-v1';
 const MIDI_MAP_KEY = 'shader-ritual-midi-map-v1';
+const THEME_KEY = 'shader-ritual-skin';
+const FOLD_KEY = 'shader-ritual-folded';
 // Cross-window bus that keeps a detached control panel and the render window
 // in lock-step (config edits, live band meter, audio start/stop).
 const SYNC_CHANNEL = 'shader-ritual-sync';
@@ -733,6 +735,267 @@ export class ShaderRitualApp extends LitElement {
     .code-values::-webkit-scrollbar-thumb, .code-textarea::-webkit-scrollbar-thumb {
       background: rgba(255,255,255,0.06); border-radius: 3px;
     }
+
+    /* ================================================================
+     * XP skin: a Luna-blue window, Explorer task panes for the sections
+     * (click a title to fold it), a Media Player monitor with transport
+     * buttons, and a status bar. Classic skin = everything above as is.
+     * ================================================================ */
+    :host(.xp) .settings-panel {
+      --xp-blue: #0054e3;
+      --xp-text: #000;
+      width: 384px; padding: 0; color: var(--xp-text);
+      font: 11px Tahoma, 'Segoe UI', Verdana, sans-serif;
+      background: linear-gradient(180deg, #7ba2e7 0%, #6375d6 100%);
+      backdrop-filter: none; border-left: 3px solid #0831d9;
+      box-shadow: -2px 0 12px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column;
+    }
+    :host(.xp) .settings-panel.controller { width: auto; border-left: none; }
+    :host(.xp) .settings-panel > .setting-group,
+    :host(.xp) .settings-panel > .wmp,
+    :host(.xp) .settings-panel > .monitor-container { margin-left: 12px; margin-right: 12px; }
+
+    /* Title bar */
+    :host(.xp) .panel-header {
+      position: sticky; top: 0; z-index: 5; margin: 0; padding: 0 4px 0 8px; height: 30px;
+      border: none; flex-shrink: 0;
+      background: linear-gradient(180deg, #0997ff 0%, #0053ee 8%, #0050ee 40%, #06f 88%, #06f 93%, #005bff 95%, #003dd7 96%, #003dd7 100%);
+      border-top-left-radius: 7px; border-top-right-radius: 7px;
+      box-shadow: inset 0 -1px 0 #002ea8;
+    }
+    :host(.xp) .panel-header h2 {
+      font: bold 13px 'Trebuchet MS', Tahoma, sans-serif; color: #fff; letter-spacing: 0.2px;
+      text-shadow: 1px 1px #0f1089; display: flex; align-items: center; gap: 6px;
+    }
+    :host(.xp) .panel-header h2::before {
+      content: ''; width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
+      background: conic-gradient(from 45deg, #ff5a36, #ffcf33, #47d14a, #2f9bff, #b45cff, #ff5a36);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.6), 0 0 0 1px #0f1089;
+    }
+    :host(.xp) .icon-btn {
+      width: 21px; height: 21px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid #fff; border-radius: 3px; color: #fff; font: bold 13px Tahoma, sans-serif;
+      background: radial-gradient(circle at 70% 75%, #3f7bff 0%, #1b5cf5 40%, #2d6bff 70%, #5b92ff 100%);
+      box-shadow: inset -1px -1px 2px rgba(0,0,0,0.25), inset 1px 1px 2px rgba(255,255,255,0.4);
+    }
+    :host(.xp) .icon-btn:hover { filter: brightness(1.18); color: #fff; }
+    :host(.xp) .icon-btn.xp-close {
+      background: radial-gradient(circle at 75% 80%, #c2401c 0%, #e2562c 45%, #ee7a55 80%, #f39a7c 100%);
+    }
+    :host(.xp) .sig-card .icon-btn, :host(.xp) .mod-row .icon-btn, :host(.xp) .element-card .icon-btn {
+      width: 16px; height: 16px; font-size: 11px;
+      background: radial-gradient(circle at 75% 80%, #c2401c 0%, #e2562c 45%, #ee7a55 80%, #f39a7c 100%);
+    }
+    :host(.xp) .live-dot { color: #fff; }
+
+    /* Menu bar */
+    .xp-menubar { display: none; }
+    :host(.xp) .xp-menubar {
+      display: flex; gap: 0; padding: 1px 4px; background: #ece9d8; flex-shrink: 0;
+      border-bottom: 1px solid #aca899; position: sticky; top: 30px; z-index: 5;
+    }
+    :host(.xp) .xp-menubar button {
+      background: none; border: 1px solid transparent; padding: 2px 7px; font: 11px Tahoma, sans-serif;
+      color: #000; cursor: pointer;
+    }
+    :host(.xp) .xp-menubar button:hover { background: #316ac5; color: #fff; }
+    .xp-menubar u { text-decoration: underline; }
+
+    /* Task panes */
+    :host(.xp) .setting-group {
+      margin-top: 12px; margin-bottom: 0; background: #d6dff7; border-radius: 4px 4px 0 0;
+      padding: 8px 10px 6px; border: 1px solid #fff; border-top: none;
+    }
+    :host(.xp) .setting-group:last-of-type { margin-bottom: 12px; }
+    :host(.xp) .group-title {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      margin: -8px -11px 8px; padding: 0 6px 0 11px; height: 25px; border: none;
+      border-radius: 5px 5px 0 0; cursor: pointer; user-select: none;
+      font: bold 11px Tahoma, sans-serif; text-transform: none; letter-spacing: 0;
+      color: #215dc6; background: linear-gradient(90deg, #fff 0%, #fff 30%, #c6d3f7 100%);
+    }
+    :host(.xp) .group-title:hover { color: #428eff; }
+    :host(.xp) .group-title::after {
+      content: ''; flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%;
+      border: 1px solid #b4c3e8; background-color: #fff;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 17 17'%3E%3Cpath d='M5 9l3.5-3.5L12 9M5 12.5L8.5 9 12 12.5' fill='none' stroke='%23215dc6' stroke-width='1.6'/%3E%3C/svg%3E");
+      box-shadow: 0 1px 1px rgba(0,0,0,0.15);
+    }
+    :host(.xp) .setting-group.collapsed { padding-bottom: 0; background: transparent; border: none; }
+    :host(.xp) .setting-group.collapsed > :not(.group-title) { display: none !important; }
+    :host(.xp) .setting-group.collapsed > .group-title { margin-bottom: 0; border-radius: 5px; }
+    :host(.xp) .setting-group.collapsed > .group-title::after { transform: rotate(180deg); }
+
+    /* Controls */
+    :host(.xp) .control-row { font-size: 11px; margin-bottom: 6px; }
+    :host(.xp) .control-row label, :host(.xp) label { color: #000; }
+    :host(.xp) .element-desc { color: #4d4d4d; font-size: 10.5px; }
+    :host(.xp) .element-desc b, :host(.xp) .element-desc code { color: #000; }
+    :host(.xp) .element-card {
+      background: #fff; border: 1px solid #b0bfe6; border-radius: 3px; padding: 7px 9px; margin-bottom: 8px;
+    }
+    :host(.xp) .element-name { color: #000; font-size: 11px; }
+    :host(.xp) .sig-card { border-left: 4px solid var(--sig, #888); }
+    :host(.xp) .sig-card.sel { background: #fffbe0; }
+    :host(.xp) .sig-name { color: #000; font: bold 11px Tahoma, sans-serif; }
+    :host(.xp) .mod-row .mod-label, :host(.xp) .mod-note { color: #5a2ca0; }
+
+    :host(.xp) button.mini, :host(.xp) .action-btn, :host(.xp) .vis-toggle, :host(.xp) .del-map {
+      font: 11px Tahoma, sans-serif; color: #000; padding: 3px 9px; min-height: 21px; cursor: pointer;
+      border: 1px solid #003c74; border-radius: 3px;
+      background: linear-gradient(180deg, #fff 0%, #ecebe6 86%, #d6d0c5 100%);
+      box-shadow: inset -1px -1px 0 rgba(0,0,0,0.08);
+    }
+    :host(.xp) button.mini:hover, :host(.xp) .action-btn:hover, :host(.xp) .vis-toggle:hover {
+      box-shadow: inset 0 0 0 1px #fdd889, inset 0 -2px 0 #f8b030; background: linear-gradient(180deg, #fff 0%, #ecebe6 86%, #d6d0c5 100%);
+    }
+    :host(.xp) button.mini:active, :host(.xp) .action-btn:active {
+      background: linear-gradient(180deg, #cdcac3 0%, #e3e2da 20%, #efeee9 100%);
+    }
+    :host(.xp) button.mini.on, :host(.xp) .action-btn.active, :host(.xp) .map-btn.active, :host(.xp) .vis-toggle.on {
+      color: #000; border-color: #003c74;
+      background: linear-gradient(180deg, #cfe3ff 0%, #9ec5fb 100%);
+      box-shadow: inset 0 0 0 1px #6b9ef2;
+    }
+    :host(.xp) .vis-toggle.off { color: #a00; }
+
+    :host(.xp) select, :host(.xp) input[type="text"], :host(.xp) input[type="number"], :host(.xp) textarea, :host(.xp) .sig-match {
+      background: #fff; color: #000; border: 1px solid #7f9db9; border-radius: 0; font: 11px Tahoma, sans-serif;
+      padding: 2px 4px;
+    }
+    :host(.xp) select:focus, :host(.xp) input:focus, :host(.xp) textarea:focus { outline: 1px dotted #000; outline-offset: -3px; }
+    :host(.xp) input[type="color"] { border: 1px solid #7f9db9; background: #fff; padding: 1px; }
+
+    :host(.xp) input[type="checkbox"] {
+      appearance: none; -webkit-appearance: none; width: 13px; height: 13px; margin: 0; cursor: pointer;
+      border: 1px solid #1c5180; background: linear-gradient(135deg, #dcdcd7 0%, #fff 100%);
+    }
+    :host(.xp) input[type="checkbox"]:hover { box-shadow: inset 0 0 0 2px #f8b636; }
+    :host(.xp) input[type="checkbox"]:checked {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 13'%3E%3Cpath d='M3 6.2l2.2 2.3L10 3.6' fill='none' stroke='%2321a121' stroke-width='2'/%3E%3C/svg%3E"), linear-gradient(135deg, #dcdcd7 0%, #fff 100%);
+    }
+
+    :host(.xp) input[type="range"] { -webkit-appearance: none; appearance: none; height: 22px; background: transparent; }
+    :host(.xp) input[type="range"]::-webkit-slider-runnable-track {
+      height: 3px; background: #ecebe4; border: 1px solid; border-color: #9d9c99 #fff #fff #9d9c99; border-radius: 1px;
+    }
+    :host(.xp) input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 11px; height: 21px; margin-top: -10px; cursor: pointer;
+      border: 1px solid #1c5180; border-radius: 2px 2px 5px 5px / 2px 2px 7px 7px;
+      background: linear-gradient(180deg, #fff 0%, #f0f0ea 60%, #21a121 60%, #21a121 70%, #e5e5dc 70%);
+    }
+    :host(.xp) input[type="range"]::-moz-range-track {
+      height: 3px; background: #ecebe4; border: 1px solid; border-color: #9d9c99 #fff #fff #9d9c99;
+    }
+    :host(.xp) input[type="range"]::-moz-range-thumb {
+      width: 9px; height: 19px; border: 1px solid #1c5180; border-radius: 2px 2px 5px 5px;
+      background: linear-gradient(180deg, #fff 0%, #f0f0ea 60%, #21a121 60%, #21a121 70%, #e5e5dc 70%);
+    }
+
+    :host(.xp) .midi-learn-btn {
+      width: 13px; height: 13px; border: 1px solid #1c5180; color: transparent; font-size: 0;
+      background: radial-gradient(circle at 35% 35%, #fff 0%, #dcdcd7 100%);
+    }
+    :host(.xp) .midi-learn-btn:hover { box-shadow: inset 0 0 0 2px #f8b636; }
+    :host(.xp) .midi-learn-btn.mapped { background: radial-gradient(circle, #21a121 0 3px, #fff 3.5px, #dcdcd7 100%); }
+    :host(.xp) .midi-learn-btn.modulated { box-shadow: 0 0 0 2px #b45cff; }
+    :host(.xp) .midi-learn-btn.active { background: radial-gradient(circle, #f8b030 0 4px, #fff 4.5px); box-shadow: 0 0 6px #f8b030; }
+    :host(.xp) .midi-log { background: #fff; color: #003c74; border: 1px solid #7f9db9; border-radius: 0; font: 11px 'Lucida Console', monospace; }
+    :host(.xp) .mapping-table { color: #000; font-size: 10.5px; }
+    :host(.xp) .mapping-table th { color: #000; background: linear-gradient(#fff, #ebeadb); border-bottom: 2px solid #c7c5b2; }
+    :host(.xp) .mapping-table td { border-bottom: 1px solid #e5e5e5; }
+
+    /* Media Player monitor */
+    .wmp { display: contents; }
+    .wmp-bar, .wmp-title { display: none; }
+    :host(.xp) .wmp {
+      display: block; margin-top: 12px; padding: 0 0 6px; border-radius: 10px 10px 14px 14px;
+      background: linear-gradient(180deg, #34508b 0%, #17264a 45%, #0c1730 100%);
+      border: 1px solid #0a1226; box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 2px 4px rgba(0,0,0,0.35);
+    }
+    :host(.xp) .wmp-title {
+      display: flex; justify-content: space-between; gap: 8px; padding: 5px 10px 4px;
+      font: bold 10px Tahoma, sans-serif; color: #cfe3ff; text-shadow: 0 1px #000;
+    }
+    :host(.xp) .wmp-title .wmp-track { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #fff; }
+    :host(.xp) .wmp-title .wmp-time { font-family: 'Lucida Console', monospace; color: #7dff9a; }
+    :host(.xp) .wmp .monitor-container {
+      margin: 0 8px; border: 1px solid #000; border-radius: 2px; height: 72px;
+      box-shadow: inset 0 0 0 1px #2e4a80;
+    }
+    :host(.xp) .wmp-bar {
+      display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px 0;
+    }
+    :host(.xp) .wmp-btn {
+      width: 26px; height: 26px; border-radius: 50%; border: 1px solid #0a1226; cursor: pointer;
+      color: #dfe9ff; font: 10px Tahoma, sans-serif; display: inline-flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 50% 30%, #7d95c4 0%, #3a5590 45%, #1d2f59 100%);
+      box-shadow: inset 0 1px 1px rgba(255,255,255,0.5);
+    }
+    :host(.xp) .wmp-btn:hover { filter: brightness(1.25); }
+    :host(.xp) .wmp-btn.play {
+      width: 38px; height: 38px; font-size: 14px; color: #fff;
+      background: radial-gradient(circle at 50% 28%, #b6f7a0 0%, #3fbf2a 45%, #1d7a12 100%);
+      border-color: #0b3d06; box-shadow: inset 0 2px 2px rgba(255,255,255,0.6), 0 0 8px rgba(80,220,60,0.45);
+    }
+    :host(.xp) .wmp-btn.play.on {
+      background: radial-gradient(circle at 50% 28%, #a8d1ff 0%, #2f7bea 45%, #12408f 100%);
+      border-color: #062456; box-shadow: inset 0 2px 2px rgba(255,255,255,0.6), 0 0 8px rgba(60,140,255,0.5);
+    }
+    :host(.xp) .wmp-seek {
+      flex: 1; height: 5px; margin: 0 4px; border-radius: 3px; background: #0a1226;
+      box-shadow: inset 0 1px 1px #000, 0 1px 0 rgba(255,255,255,0.15); position: relative; overflow: hidden;
+    }
+    :host(.xp) .wmp-seek i {
+      position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 3px;
+      background: linear-gradient(180deg, #a6f390, #2fa71c);
+    }
+
+    :host(.xp) .event-log { background: #0c1730; border: 1px solid #000; border-radius: 0; color: #cfe3ff; }
+    :host(.xp) .event-row:hover { background: #316ac5; }
+
+    /* Status bar */
+    .xp-status { display: none; }
+    :host(.xp) .xp-status {
+      display: flex; gap: 0; margin-top: auto; position: sticky; bottom: 0; z-index: 5; flex-shrink: 0;
+      background: #ece9d8; border-top: 1px solid #aca899; font: 11px Tahoma, sans-serif; color: #000;
+    }
+    :host(.xp) .xp-status span {
+      padding: 3px 6px; border-left: 1px solid #fff; border-right: 1px solid #aca899;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    :host(.xp) .xp-status span:first-child { flex: 1; }
+
+    /* Scroll bar */
+    :host(.xp) .settings-panel::-webkit-scrollbar { width: 17px; }
+    :host(.xp) .settings-panel::-webkit-scrollbar-track { background: #f4f4f0; border-left: 1px solid #eeede5; }
+    :host(.xp) .settings-panel::-webkit-scrollbar-thumb {
+      border: 1px solid #fff; border-radius: 3px; box-shadow: inset 0 0 0 1px #b8cbf6;
+      background: linear-gradient(90deg, #c8d6fb 0%, #bccffb 50%, #b2c5f5 100%);
+    }
+
+    /* The stage buttons: a start button and a taskbar button */
+    :host(.xp) .settings-btn {
+      padding: 0 16px 0 10px; height: 34px; border-radius: 0 14px 14px 0 / 0 17px 17px 0; border: none;
+      display: inline-flex; align-items: center; gap: 6px; color: #fff; backdrop-filter: none;
+      font: italic bold 16px 'Trebuchet MS', Tahoma, sans-serif; text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+      background: linear-gradient(180deg, #5eac56 0%, #3c9c3c 15%, #3a993a 80%, #2e7b2e 100%);
+      box-shadow: inset 0 1px 2px rgba(255,255,255,0.6), inset -2px -2px 3px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.4);
+    }
+    :host(.xp) .settings-btn::after { content: 'start'; }
+    :host(.xp) .settings-btn svg { width: 18px; height: 18px; }
+    :host(.xp) .settings-btn:hover { filter: brightness(1.12); background: linear-gradient(180deg, #5eac56 0%, #3c9c3c 15%, #3a993a 80%, #2e7b2e 100%); }
+    :host(.xp) .code-btn {
+      height: 34px; right: 120px; border-radius: 3px; color: #fff; border: 1px solid #1941a5; backdrop-filter: none;
+      background: linear-gradient(180deg, #3c81f3 0%, #2a6ae0 50%, #1f5bd0 100%);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.4);
+    }
+    :host(.xp) .code-btn.active { background: linear-gradient(180deg, #1e52b7, #1a48a3); color: #fff; border-color: #0d2f75; }
+    :host(.xp) #status {
+      font: 11px Tahoma, sans-serif; color: #000; background: #ffffe1; border: 1px solid #000;
+      border-radius: 0; letter-spacing: 0; text-transform: none; backdrop-filter: none;
+    }
   `;
 
   firstUpdated() {
@@ -764,6 +1027,8 @@ export class ShaderRitualApp extends LitElement {
   }
 
   updated() {
+    this.classList.toggle('xp', this.uiTheme === 'xp');
+    this.applyFolds();
     // Render window: keep the code editor in sync with the active shader's
     // source and push it to any detached code window.
     if (this.isMain && this.config.activeShader !== this.codeShaderId) {
@@ -775,6 +1040,55 @@ export class ShaderRitualApp extends LitElement {
       this.codeError = '';
       this.broadcastCodeState();
     }
+  }
+
+  /* ----------------------------- Skin ----------------------------- */
+
+  @state() private uiTheme: 'xp' | 'classic' = (() => {
+    try {
+      return localStorage.getItem(THEME_KEY) === 'classic' ? 'classic' : 'xp';
+    } catch (e) {
+      return 'xp';
+    }
+  })();
+  /** Task panes folded in the XP skin, by title. */
+  private folded = new Set<string>(
+    (() => {
+      try {
+        return JSON.parse(localStorage.getItem(FOLD_KEY) || '[]');
+      } catch (e) {
+        return [];
+      }
+    })(),
+  );
+
+  private setTheme(t: 'xp' | 'classic') {
+    this.uiTheme = t;
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  }
+
+  private paneKey(title: Element) {
+    // Titles that carry the shader's name fold together across shaders.
+    return (title.textContent || '').trim().replace(/^.*·\s*Element Allocation$/, 'Element Allocation');
+  }
+
+  private onPanelClick = (e: Event) => {
+    if (this.uiTheme !== 'xp') return;
+    const el = e.composedPath()[0] as HTMLElement;
+    if (!el?.classList?.contains('group-title')) return;
+    const key = this.paneKey(el);
+    if (this.folded.has(key)) this.folded.delete(key);
+    else this.folded.add(key);
+    try { localStorage.setItem(FOLD_KEY, JSON.stringify([...this.folded])); } catch (e) {}
+    this.applyFolds();
+  };
+
+  private applyFolds() {
+    const xp = this.uiTheme === 'xp';
+    this.shadowRoot?.querySelectorAll('.setting-group').forEach((g) => {
+      const t = g.querySelector(':scope > .group-title');
+      g.classList.toggle('collapsed', xp && !!t && this.folded.has(this.paneKey(t)));
+    });
   }
 
   private get viewEl(): any {
@@ -2136,6 +2450,16 @@ OSCdef(\\srDirt, { |msg, time|
       }
 
       if (!this.showSettings) return;
+      if (this.uiTheme === 'xp') {
+        // The player's clock (time since the page opened) and its seek bar,
+        // which runs through each bar of four beats.
+        const t = performance.now() / 1000;
+        const tm = this.shadowRoot?.querySelector('#wmpTime');
+        const txt = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+        if (tm && tm.textContent !== txt) tm.textContent = txt;
+        const sk = this.shadowRoot?.querySelector('#wmpSeek') as HTMLElement | null;
+        if (sk) sk.style.width = `${(((t * (this.config.camera?.bpm || 120)) / 60 / 4) % 1) * 100}%`;
+      }
       const canvas = this.shadowRoot?.querySelector('#monitorCanvas') as HTMLCanvasElement;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
@@ -3332,21 +3656,45 @@ OSCdef(\\srDirt, { |msg, time|
   private renderSettings() {
     const def = getShader(this.config.activeShader);
     return html`
-      <div class="settings-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}">
+      <div class="settings-panel ${this.showSettings ? 'open' : ''} ${this.isController ? 'controller' : ''}"
+        @click=${this.onPanelClick}>
         <div class="panel-header">
-          <h2>Shader Ritual</h2>
+          <h2>${this.uiTheme === 'xp' ? 'Shader Ritual - Control Panel' : 'Shader Ritual'}</h2>
           <div class="header-actions">
+            ${this.uiTheme === 'xp'
+              ? ''
+              : html`<button class="icon-btn" title="Switch to the XP skin" @click=${() => this.setTheme('xp')}>◧</button>`}
             ${this.isController
               ? html`<span class="live-dot">Live control</span>`
               : html`
                   <button class="icon-btn" title="Pop controls out to a separate window"
                     @click=${this.detachControls}>⧉</button>
-                  <button class="icon-btn" @click=${() => (this.showSettings = false)}>&times;</button>
+                  <button class="icon-btn xp-close" @click=${() => (this.showSettings = false)}>&times;</button>
                 `}
           </div>
         </div>
+        <div class="xp-menubar">
+          <button @click=${this.toggleAudio}><u>P</u>lay${this.isRecording ? ' (on)' : ''}</button>
+          <button @click=${() => this.stepShader(1)}><u>N</u>ext shader</button>
+          ${this.isController ? '' : html`<button @click=${this.detachControls}><u>W</u>indow</button>`}
+          <button @click=${() => this.setTheme('classic')}><u>V</u>iew: Classic skin</button>
+        </div>
 
-        <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
+        <div class="wmp">
+          <div class="wmp-title">
+            <span class="wmp-track">Now Playing: ${def.name}</span>
+            <span class="wmp-time" id="wmpTime">00:00</span>
+          </div>
+          <div class="monitor-container"><canvas id="monitorCanvas" width="300" height="80"></canvas></div>
+          <div class="wmp-bar">
+            <button class="wmp-btn" title="Previous shader" @click=${() => this.stepShader(-1)}>◀◀</button>
+            <button class="wmp-btn play ${this.isRecording ? 'on' : ''}" title=${this.isRecording ? 'Stop audio' : 'Start audio'}
+              @click=${this.toggleAudio}>${this.isRecording ? '❚❚' : '▶'}</button>
+            <button class="wmp-btn" title="Next shader" @click=${() => this.stepShader(1)}>▶▶</button>
+            <div class="wmp-seek" title="The beat"><i id="wmpSeek"></i></div>
+            <button class="wmp-btn" title="Flash the strobe" @click=${this.strobeFlash}>✶</button>
+          </div>
+        </div>
 
         <!-- SHADER SELECT -->
         <div class="setting-group">
@@ -3546,6 +3894,11 @@ OSCdef(\\srDirt, { |msg, time|
                     </div>`
                   : ''}
               </div>`}
+        </div>
+      <div class="xp-status">
+          <span>${this.error || this.status}</span>
+          <span>${this.wsOk ? 'Relay: connected' : 'Relay: off'}</span>
+          <span>${Object.keys(this.midiMappings).length} MIDI</span>
         </div>
       </div>
     `;
