@@ -37,6 +37,16 @@ export interface AudioSignal {
   release: number;
   /** Response curve: above 1 makes hits punchier, below 1 softer. */
   curve: number;
+  /**
+   * follow:  the value follows the level, with Attack and Release.
+   * trigger: each detected hit fires an envelope, rising over Attack and
+   *          falling away over Release, however long the sound lasts.
+   */
+  mode: 'follow' | 'trigger';
+  /** How easily a hit is detected, 0..1: higher catches quieter hits. */
+  onset: number;
+  /** A one-shot action fired on each hit ('' for none), e.g. '!camCut'. */
+  action: string;
 }
 
 /** One signal driving one numeric setting. */

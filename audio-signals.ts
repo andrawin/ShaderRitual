@@ -25,13 +25,40 @@ import { modulatable, paramRange } from './param-ranges';
  * leave the smoothing to each one's own attack and release.
  */
 
+const S = { mode: 'follow' as const, onset: 0.6, action: '' };
 export const SIGNAL_PRESETS: Omit<AudioSignal, 'id'>[] = [
-  { name: 'Kick', color: '#ff4d4d', lo: 40, hi: 100, auto: true, gain: 1, gate: 0.3, attack: 0.004, release: 0.14, curve: 2 },
-  { name: 'Bass', color: '#ff9f1c', lo: 60, hi: 250, auto: true, gain: 1, gate: 0.15, attack: 0.03, release: 0.35, curve: 1.2 },
-  { name: 'Snare', color: '#ffd93d', lo: 1500, hi: 4500, auto: true, gain: 1, gate: 0.35, attack: 0.004, release: 0.12, curve: 2 },
-  { name: 'Hats', color: '#4dd2ff', lo: 7000, hi: 14000, auto: true, gain: 1, gate: 0.35, attack: 0.002, release: 0.06, curve: 1.6 },
-  { name: 'Vocal', color: '#c77dff', lo: 300, hi: 3000, auto: true, gain: 1, gate: 0.2, attack: 0.05, release: 0.4, curve: 1 },
-  { name: 'Air', color: '#e0e0e0', lo: 12000, hi: 18000, auto: true, gain: 1, gate: 0.2, attack: 0.02, release: 0.3, curve: 1 },
+  { name: 'Kick', color: '#ff4d4d', lo: 40, hi: 100, auto: true, gain: 1, gate: 0.3, attack: 0.004, release: 0.14, curve: 2, ...S },
+  { name: 'Bass', color: '#ff9f1c', lo: 60, hi: 250, auto: true, gain: 1, gate: 0.15, attack: 0.03, release: 0.35, curve: 1.2, ...S },
+  { name: 'Snare', color: '#ffd93d', lo: 1500, hi: 4500, auto: true, gain: 1, gate: 0.35, attack: 0.004, release: 0.12, curve: 2, ...S },
+  { name: 'Hats', color: '#4dd2ff', lo: 7000, hi: 14000, auto: true, gain: 1, gate: 0.35, attack: 0.002, release: 0.06, curve: 1.6, ...S },
+  { name: 'Vocal', color: '#c77dff', lo: 300, hi: 3000, auto: true, gain: 1, gate: 0.2, attack: 0.05, release: 0.4, curve: 1, ...S },
+  { name: 'Air', color: '#e0e0e0', lo: 12000, hi: 18000, auto: true, gain: 1, gate: 0.2, attack: 0.02, release: 0.3, curve: 1, ...S },
+];
+
+/**
+ * Low, Mid and High: the three broad bands every shader's defaults use, as
+ * signals like any other (their ids are fixed, so saved settings and shader
+ * defaults that say low / mid / high keep working). They cannot be removed.
+ */
+export const CORE_SIGNALS: AudioSignal[] = [
+  { id: 'low', name: 'Low', color: '#3b82f6', lo: 20, hi: 160, auto: true, gain: 1, gate: 0.15, attack: 0.02, release: 0.25, curve: 1, ...S },
+  { id: 'mid', name: 'Mid', color: '#10b981', lo: 160, hi: 2200, auto: true, gain: 1, gate: 0.15, attack: 0.02, release: 0.25, curve: 1, ...S },
+  { id: 'high', name: 'High', color: '#ef4444', lo: 2200, hi: 11000, auto: true, gain: 1, gate: 0.15, attack: 0.01, release: 0.2, curve: 1, ...S },
+];
+export const isCore = (id: string) => id === 'low' || id === 'mid' || id === 'high';
+
+/** One-shot actions a hit can fire, as the MIDI action table names them. */
+export const HIT_ACTIONS: { id: string; label: string }[] = [
+  { id: '!camCut', label: 'Camera cut' },
+  { id: '!palNext', label: 'Next palette' },
+  { id: '!nextShader', label: 'Next shader' },
+  { id: '!prevShader', label: 'Previous shader' },
+  { id: '!textFire', label: 'Fire text' },
+  { id: '!vidRetrig', label: 'Video: retrigger slice' },
+  { id: '!vidJump', label: 'Video: jump slice' },
+  { id: '!vidNext', label: 'Video: next slice' },
+  { id: '!burst', label: 'Model: burst' },
+  { id: '!implode', label: 'Model: implode' },
 ];
 
 export function newSignalId(existing: AudioSignal[]): string {
@@ -41,20 +68,23 @@ export function newSignalId(existing: AudioSignal[]): string {
 }
 
 export function defaultAudio(): AudioConfig {
-  // Kick, Snare and Hats to start with: the three a drum-led set wants most.
-  const signals = [0, 2, 3].map((p, i) => ({ id: `sig${i + 1}`, ...SIGNAL_PRESETS[p] }));
+  // Low, Mid and High, then Kick, Snare and Hats: what a drum-led set wants most.
+  const signals = [...CORE_SIGNALS.map((s) => ({ ...s })), ...[0, 2, 3].map((p, i) => ({ id: `sig${i + 1}`, ...SIGNAL_PRESETS[p] }))];
   return { signals, mods: [] };
 }
 
 /** Keep a saved audio config well-formed. */
 export function mergeAudio(base: AudioConfig, saved: any): AudioConfig {
   if (!saved || typeof saved !== 'object') return base;
-  const reserved = new Set(['none', 'low', 'mid', 'high', 'rawLow', 'rawMid', 'rawHigh']);
-  const signals: AudioSignal[] = Array.isArray(saved.signals)
+  const reserved = new Set(['none', 'rawLow', 'rawMid', 'rawHigh']);
+  let signals: AudioSignal[] = Array.isArray(saved.signals)
     ? saved.signals
         .filter((s: any) => s && typeof s.id === 'string' && !reserved.has(s.id))
         .map((s: any) => ({ ...SIGNAL_PRESETS[0], ...s }))
     : base.signals;
+  // Settings saved before Low / Mid / High became signals: put them in front.
+  const missing = CORE_SIGNALS.filter((c) => !signals.some((s) => s.id === c.id)).map((c) => ({ ...c }));
+  signals = [...missing, ...signals];
   const ids = new Set(['low', 'mid', 'high', ...signals.map((s) => s.id)]);
   const mods: Modulation[] = Array.isArray(saved.mods)
     ? saved.mods.filter((m: any) => m && ids.has(m.source) && typeof m.target === 'string')
@@ -80,6 +110,11 @@ interface SignalState {
   peak: number;
   floor: number;
   level: number;
+  /** Hit detection: a slow average to rise above, and when the last hit was. */
+  avg: number;
+  last: number;
+  /** Re-armed once the level settles after a hit; one sound, one hit. */
+  armed: boolean;
 }
 
 export class SignalEngine {
@@ -90,6 +125,9 @@ export class SignalEngine {
   private state = new Map<string, SignalState>();
   /** Last frame's levels before shaping, by id, for the editor's meters. */
   readonly levels: Record<string, number> = {};
+  /** Hits detected so far, by id: a counter, so a reader can tell a new one. */
+  readonly hits: Record<string, number> = {};
+  private clock = 0;
 
   constructor(node: AudioNode) {
     this.analyser = node.context.createAnalyser();
@@ -125,11 +163,14 @@ export class SignalEngine {
    */
   update(signals: AudioSignal[], dt: number, out: Record<string, number>) {
     this.analyser.getFloatFrequencyData(this.db as any);
+    this.clock += dt;
+    const now = this.clock;
     for (const s of signals) {
       let st = this.state.get(s.id);
       if (!st) {
-        st = { env: 0, peak: 0.3, floor: 0.3, level: 0 };
+        st = { env: 0, peak: 0.3, floor: 0.3, level: 0, avg: 0, last: -10, armed: true };
         this.state.set(s.id, st);
+        this.hits[s.id] = this.hits[s.id] || 0;
       }
       let v = Math.min(1, Math.max(0, (this.rangeDb(s.lo, s.hi) - DB_FLOOR) / DB_RANGE));
       st.level = v;
@@ -142,10 +183,30 @@ export class SignalEngine {
         v = Math.min(1, Math.max(0, (v - st.floor) / span));
       }
       v = Math.min(1, v * s.gain);
+      // Hits: a jump well above the recent average, no closer than 80 ms to
+      // the last. Onset sets how big a jump counts.
+      const jump = v - st.avg;
+      const need = 0.03 + (1 - Math.min(1, Math.max(0, s.onset ?? 0.6))) * 0.32;
+      if (st.armed && jump > need && now - st.last > 0.08) {
+        st.last = now;
+        st.armed = false;
+        this.hits[s.id] = (this.hits[s.id] || 0) + 1;
+      } else if (!st.armed && jump < need * 0.35) {
+        // The sound has settled (or died away): the next jump is a new hit.
+        st.armed = true;
+      }
+      st.avg += (v - st.avg) * (1 - Math.exp(-dt / 0.2));
       const g = Math.min(0.95, Math.max(0, s.gate));
       v = Math.max(0, v - g) / (1 - g);
-      const t = v > st.env ? s.attack : s.release;
-      st.env += (v - st.env) * (1 - Math.exp(-dt / Math.max(0.001, t)));
+      if (s.mode === 'trigger') {
+        // An envelope from the last hit: up over Attack, away over Release.
+        const age = now - st.last;
+        const a = Math.max(0.001, s.attack);
+        st.env = age < a ? age / a : Math.exp((-3 * (age - a)) / Math.max(0.01, s.release));
+      } else {
+        const t = v > st.env ? s.attack : s.release;
+        st.env += (v - st.env) * (1 - Math.exp(-dt / Math.max(0.001, t)));
+      }
       out[s.id] = Math.pow(Math.min(1, Math.max(0, st.env)), Math.max(0.1, s.curve));
       this.levels[s.id] = st.level;
     }

@@ -9,7 +9,7 @@ import { live } from 'lit/directives/live.js';
 import './shader-view';
 import { SHADERS, getShader, sanitizeConfig } from './shader-registry';
 import type { AudioSignal, Band, CameraMode, Modulation, PartInfo, PartSetting, ReactTarget, ShaderRitualConfig } from './types';
-import { SIGNAL_PRESETS, freqToX, newSignalId, xToFreq } from './audio-signals';
+import { HIT_ACTIONS, SIGNAL_PRESETS, freqToX, isCore, newSignalId, xToFreq } from './audio-signals';
 import { modulatable, paramRange } from './param-ranges';
 import { TEXT_MAX } from './types';
 
@@ -414,6 +414,12 @@ export class ShaderRitualApp extends LitElement {
   @state() private modSource: string | null = null;
   @state() private modNote = '';
   @state() private selSignal: string | null = null;
+  /** When each signal last hit (performance.now()), for the flashes. */
+  private hitAt: Record<string, number> = {};
+  private hitSeen: Record<string, number> = {};
+  private actionAt: Record<string, number> = {};
+  private remoteHits: Record<string, number> = {};
+  private palStep: Record<string, number> = {};
   private sigDrag: { id: string; mode: 'lo' | 'hi' | 'move'; x0: number; lo: number; hi: number } | null = null;
 
   // Live-coding code panel.
@@ -1040,6 +1046,7 @@ export class ShaderRitualApp extends LitElement {
           if (Array.isArray(msg.cameras)) this.cameras = msg.cameras;
           if (Array.isArray(msg.spectrum)) this.remoteSpectrum = msg.spectrum;
           if (msg.levels) this.remoteLevels = msg.levels;
+          if (msg.hits) this.remoteHits = msg.hits;
         }
         break;
       case 'command':
@@ -1107,6 +1114,7 @@ export class ShaderRitualApp extends LitElement {
     else if (name === 'scanMidi') this.initMidi();
     else if (name === 'burst' || name === 'implode' || name === 'reset') this.viewEl?.[name]?.();
     else if (name === 'startCapture' || name === 'stopCapture') this.toggleCapture();
+    else if (name === 'camCut') this.viewEl?.cameraCut?.();
     else if (name.startsWith('vid:')) this.viewEl?.videoTrigger?.(name.slice(4));
     else if (name === 'textFire') this.viewEl?.textTrigger?.();
     else if (name === 'removeVideo') {
@@ -1294,6 +1302,18 @@ export class ShaderRitualApp extends LitElement {
   /** One-shot actions (buttons), mappable to a MIDI note. */
   private readonly MIDI_ACTIONS: Record<string, () => void> = {
     '!burst': () => this.triggerPhysics('burst'),
+    '!camCut': () => {
+      if (this.isController) this.post({ type: 'command', name: 'camCut' });
+      else this.viewEl?.cameraCut?.();
+    },
+    '!palNext': () => {
+      const def = getShader(this.config.activeShader);
+      const n = def.palettes?.length || 0;
+      if (!n) return;
+      const k = ((this.palStep[def.id] ?? -1) + 1) % n;
+      this.palStep[def.id] = k;
+      this.applyPalette(`${def.id}:${k}`);
+    },
     '!implode': () => this.triggerPhysics('implode'),
     '!reset': () => this.triggerPhysics('reset'),
     '!audio': () => this.toggleAudio(),
@@ -1455,11 +1475,33 @@ export class ShaderRitualApp extends LitElement {
 
   /* ----------------------- Audio signals ------------------------- */
 
+  /**
+   * Notice new hits: flash them, and in the render window fire each signal's
+   * On hit action. Actions are spaced out (a shader change at most every
+   * 1.5 s, anything else every 120 ms) so a busy hat line cannot flood them.
+   */
+  private pollHits() {
+    const hits: Record<string, number> = this.isController
+      ? this.remoteHits
+      : (this.shadowRoot?.querySelector('shader-ritual-view') as any)?.getSignalHits?.() || {};
+    const now = performance.now();
+    for (const sg of this.config.audio?.signals || []) {
+      const n = hits[sg.id] ?? 0;
+      const seen = this.hitSeen[sg.id];
+      this.hitSeen[sg.id] = n;
+      if (seen === undefined || n <= seen) continue;
+      this.hitAt[sg.id] = now;
+      if (this.isController || !sg.action) continue;
+      const gap = sg.action === '!nextShader' || sg.action === '!prevShader' ? 1500 : 120;
+      if (now - (this.actionAt[sg.id] || 0) < gap) continue;
+      this.actionAt[sg.id] = now;
+      this.MIDI_ACTIONS[sg.action]?.();
+    }
+  }
+
   private bandOptions(value: string) {
     const opt = (v: string, label: string) => html`<option value=${v} ?selected=${v === value}>${label}</option>`;
-    return html`${opt('none', 'None')}${opt('low', 'Low')}${opt('mid', 'Mid')}${opt('high', 'High')}${(
-      this.config.audio?.signals || []
-    ).map((sg) => opt(sg.id, sg.name))}`;
+    return html`${opt('none', 'None')}${(this.config.audio?.signals || []).map((sg) => opt(sg.id, sg.name))}`;
   }
 
   private setSignals(signals: AudioSignal[], mods?: Modulation[]) {
@@ -1587,8 +1629,9 @@ export class ShaderRitualApp extends LitElement {
       ctx.fillRect(x0, H - out * H, x1 - x0, out * H);
       ctx.fillStyle = sg.color;
       ctx.fillRect(x0, H - lvl * (H - 14 * dpr), x1 - x0, 1.5 * dpr);
-      ctx.strokeStyle = sg.color;
-      ctx.lineWidth = (sel ? 2 : 1) * dpr;
+      const flash = performance.now() - (this.hitAt[sg.id] || 0) < 120;
+      ctx.strokeStyle = flash ? '#ffffff' : sg.color;
+      ctx.lineWidth = (flash ? 3 : sel ? 2 : 1) * dpr;
       ctx.strokeRect(x0, 0.5, x1 - x0, H - 1);
       ctx.fillStyle = '#fff';
       ctx.fillText(sg.name, x0 + 3 * dpr, 12 * dpr);
@@ -1692,7 +1735,9 @@ export class ShaderRitualApp extends LitElement {
                 <button class="action-btn map-btn ${this.modSource === sg.id ? 'active' : ''}"
                   title="Then click the ● next to any slider or amount"
                   @click=${() => this.startMapping(sg.id)}>${this.modSource === sg.id ? 'Cancel' : 'Map'}</button>
-                <button class="icon-btn" title="Remove this signal" @click=${() => this.removeSignal(sg.id)}>&times;</button>
+                ${isCore(sg.id)
+                  ? ''
+                  : html`<button class="icon-btn" title="Remove this signal" @click=${() => this.removeSignal(sg.id)}>&times;</button>`}
               </div>
               <div class="control-row">
                 <label>Range</label>
@@ -1708,11 +1753,28 @@ export class ShaderRitualApp extends LitElement {
                 <input type="checkbox" .checked=${sg.auto}
                   @change=${(e: any) => this.patchSignal(sg.id, { auto: e.target.checked })} />
               </div>
+              <div class="control-row">
+                <label title="Follow: the value follows the level. Trigger: each hit fires a clean envelope (up over Attack, away over Release), however long the sound lasts.">Mode</label>
+                <select .value=${live(sg.mode || 'follow')}
+                  @change=${(e: any) => this.patchSignal(sg.id, { mode: e.target.value })}>
+                  <option value="follow">Follow</option>
+                  <option value="trigger">Trigger</option>
+                </select>
+              </div>
               ${slider(sg, 'Gain', 'gain', 0, 4, 0.05)}
               ${slider(sg, 'Gate', 'gate', 0, 0.9, 0.01)}
               ${slider(sg, 'Attack', 'attack', 1, 300, 1, 1000, ' ms')}
               ${slider(sg, 'Release', 'release', 10, 2000, 5, 1000, ' ms')}
               ${slider(sg, 'Curve', 'curve', 0.3, 4, 0.05)}
+              ${slider(sg, 'Hit sensitivity', 'onset', 0, 1, 0.01)}
+              <div class="control-row">
+                <label title="A one-shot action fired on each hit">On hit</label>
+                <select .value=${live(sg.action || '')}
+                  @change=${(e: any) => this.patchSignal(sg.id, { action: e.target.value })}>
+                  <option value="">Nothing</option>
+                  ${HIT_ACTIONS.map((a) => html`<option value=${a.id}>${a.label}</option>`)}
+                </select>
+              </div>
               ${mods.map(
                 (m) => html`
                   <div class="mod-row">
@@ -1743,8 +1805,11 @@ export class ShaderRitualApp extends LitElement {
         <div class="element-desc">
           Attack and Release are how fast it follows: a kick wants a few ms up
           and ~150 ms down; a pad wants slow both ways. Curve above 1 makes
-          hits punchier. Settings driven by a signal have a purple ring on
-          their ●; their own slider sets where they rest.
+          hits punchier. Trigger mode turns each hit into a clean pulse, and On
+          hit fires an action with it (a camera cut on the kick, the next
+          palette on the snare); the box flashes white on every hit, so you can
+          tune Hit sensitivity by eye. Settings driven by a signal have a
+          purple ring on their ●; their own slider sets where they rest.
         </div>
       </div>`;
   }
@@ -1804,6 +1869,7 @@ export class ShaderRitualApp extends LitElement {
       this.monitorRaf = requestAnimationFrame(draw);
 
       if (!this.isController) this.syncCaptureSource();
+      this.pollHits();
 
       // Render window: stream the live meter + audio state to any controller.
       if (!this.isController && this.sync) {
@@ -1823,6 +1889,7 @@ export class ShaderRitualApp extends LitElement {
             // The spectrum editor, for a controller that has the panel open.
             spectrum: view?.getSpectrum?.(160)?.map((v: number) => Math.round(v * 100) / 100) ?? null,
             levels: view?.getSignalLevels?.() ?? {},
+            hits: view?.getSignalHits?.() ?? {},
           });
         }
       }
@@ -1853,28 +1920,23 @@ export class ShaderRitualApp extends LitElement {
         return;
       }
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const bands = [
-        { val: data.rawLow, threshold: this.config.thresholds.low, col: '#3b82f6', label: 'LOW' },
-        { val: data.rawMid, threshold: this.config.thresholds.mid, col: '#10b981', label: 'MID' },
-        { val: data.rawHigh, threshold: this.config.thresholds.high, col: '#ef4444', label: 'HIGH' },
-      ];
-      const w = canvas.width / 3;
-      bands.forEach((b, i) => {
-        const h = Math.min(1, b.val) * canvas.height;
-        ctx.fillStyle = b.col + '66';
-        ctx.fillRect(i * w, canvas.height - h, w - 2, h);
-        const thY = (1 - b.threshold) * canvas.height;
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 2]);
-        ctx.beginPath();
-        ctx.moveTo(i * w, thY);
-        ctx.lineTo((i + 1) * w - 2, thY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = b.val > b.threshold ? '#fff' : '#ffffff44';
-        ctx.font = 'bold 10px monospace';
-        ctx.fillText(b.label, i * w + 5, 15);
+      // Every signal as a bar in its own colour; a hit flashes its label.
+      const sigs = this.config.audio?.signals || [];
+      const w = canvas.width / Math.max(1, sigs.length);
+      const now = performance.now();
+      sigs.forEach((sg, i) => {
+        const v = Math.min(1, Math.max(0, data[sg.id] || 0));
+        const h = v * (canvas.height - 18);
+        ctx.fillStyle = sg.color + '88';
+        ctx.fillRect(i * w + 1, canvas.height - h, w - 3, h);
+        const hit = now - (this.hitAt[sg.id] || 0) < 120;
+        if (hit) {
+          ctx.fillStyle = sg.color;
+          ctx.fillRect(i * w + 1, 0, w - 3, 3);
+        }
+        ctx.fillStyle = hit ? '#fff' : v > 0.05 ? '#ffffffcc' : '#ffffff55';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(sg.name.slice(0, Math.max(3, Math.floor(w / 6.5))).toUpperCase(), i * w + 4, 14);
       });
       this.drawSpectrum(data);
     };
@@ -3005,23 +3067,6 @@ export class ShaderRitualApp extends LitElement {
 
         <!-- AUDIO SIGNALS (custom bands, mapping) -->
         ${this.renderSignalsSection()}
-
-        <!-- RESPONSE PROFILE -->
-        <div class="setting-group">
-          <span class="group-title">Response Profile</span>
-          ${this.renderSlider('FFT Smoothing', 'fftSmoothing', 0, 0.95, 0.05)}
-          ${this.renderSlider('Low Gain', 'sensitivity.low', 0, 5, 0.1)}
-          ${this.renderSlider('Mid Gain', 'sensitivity.mid', 0, 5, 0.1)}
-          ${this.renderSlider('High Gain', 'sensitivity.high', 0, 10, 0.1)}
-        </div>
-
-        <!-- NOISE GATES -->
-        <div class="setting-group">
-          <span class="group-title">Noise Gates</span>
-          ${this.renderSlider('Low Gate', 'thresholds.low', 0, 1, 0.01)}
-          ${this.renderSlider('Mid Gate', 'thresholds.mid', 0, 1, 0.01)}
-          ${this.renderSlider('High Gate', 'thresholds.high', 0, 1, 0.01)}
-        </div>
 
         <!-- POST FX (global, all shaders) -->
         <div class="setting-group">

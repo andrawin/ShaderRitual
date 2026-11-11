@@ -63,6 +63,14 @@ export interface CameraUniforms {
 export class CameraRig {
   /** Integrated orbit angle for manual / audio modes. */
   private orbitPhase = 0;
+  /** Bumped by cut(): picks a new framing in every mode. */
+  private cuts = 0;
+
+  /** Jump to a new framing now (an audio hit, a MIDI pad). */
+  cut() {
+    this.cuts++;
+    this.orbitPhase += 1.2 + stepNoise(this.cuts * 3.1, 4) * 1.5;
+  }
 
   /**
    * Advance the rig by `dt` seconds at absolute `time`, returning the uniforms
@@ -81,7 +89,7 @@ export class CameraRig {
 
     if (cam.mode === 'bpm') {
       // Tempo-locked: hold a framing for a bar, then cut to a new one.
-      const T = beat / 2;
+      const T = beat / 2 + this.cuts * 13.7;
       const levels = Math.round(2 + cam.cutChance * 4); // 2..6 distinct shots
       const na = stepNoise(T, 2);
       orbit = na + Math.sign(na) * T * 0.2; // jump + slow drift (as in reference)
@@ -104,6 +112,11 @@ export class CameraRig {
       orbit = this.orbitPhase;
     }
 
+    if (this.cuts && cam.mode !== 'bpm') {
+      // Outside the tempo cuts, a cut also reframes height and distance.
+      height = clamp(height + stepNoise(this.cuts * 5.3, 3) * 0.5, -1, 1);
+      dist = Math.max(0.2, dist * (1 + stepNoise(this.cuts * 7.9, 3) * 0.3));
+    }
     return { orbit, dist, height, fov, react, beat };
   }
 }

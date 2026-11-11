@@ -10,8 +10,6 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { decompose, type Part } from './decompose';
 import { fracture, type Fragment } from './fracture';
-import { Analyser } from './analyser';
-import { computeBands } from './audio-bands';
 import { SignalEngine, applyModulation } from './audio-signals';
 import { CameraRig } from './camera';
 import { ShaderLayer, hexToRgb } from './shader-layer';
@@ -339,7 +337,6 @@ void main(){
  */
 @customElement('shader-ritual-view')
 export class ShaderRitualView extends LitElement {
-  private analyser!: Analyser;
   private renderer!: THREE.WebGLRenderer;
   private camera!: THREE.OrthographicCamera;
   private canvas!: HTMLCanvasElement;
@@ -494,7 +491,6 @@ export class ShaderRitualView extends LitElement {
 
   @property()
   set inputNode(node: AudioNode) {
-    this.analyser = new Analyser(node);
     this.signals = new SignalEngine(node);
   }
 
@@ -515,6 +511,16 @@ export class ShaderRitualView extends LitElement {
   /** The live spectrum on the signal editor's log axis, 0..1 per point. */
   getSpectrum(points = 160): number[] | null {
     return this.signals ? this.signals.spectrum(points) : null;
+  }
+
+  /** Hits detected so far, by signal id (counters). */
+  getSignalHits(): Record<string, number> {
+    return this.signals ? this.signals.hits : {};
+  }
+
+  /** Cut the camera rig to a new framing now. */
+  cameraCut() {
+    this.cameraRig.cut();
   }
 
   /** Each signal's level before shaping, for the editor's meters. */
@@ -557,7 +563,6 @@ export class ShaderRitualView extends LitElement {
         this.resize();
         this.baseLayer.renderBufferB(this.camera);
       }
-      if (this.analyser) this.analyser.smoothing = this.config.fftSmoothing;
       // Re-apply the internal render resolution when the scale changes.
       if ((this.config.renderScale ?? 1) !== this.lastRenderScale) {
         this.lastRenderScale = this.config.renderScale ?? 1;
@@ -1002,7 +1007,6 @@ void main(){
     this.resize();
     this.baseLayer.renderBufferB(this.camera);
     window.addEventListener('resize', () => this.resize());
-    if (this.analyser) this.analyser.smoothing = this.cfg.fftSmoothing;
     this.renderLoop();
   }
 
@@ -1271,10 +1275,14 @@ void main(){
     this.lastFrame = now;
 
     this.frameConfig = null;
-    if (this.analyser) {
-      this.analyser.update();
-      this.lastBands = computeBands(this.analyser.data, this.config.sensitivity, this.config.thresholds);
-      this.signals?.update(this.config.audio?.signals || [], dt, this.lastBands);
+    if (this.signals) {
+      // Every band is a signal now, Low / Mid / High included.
+      const b: Bands = { low: 0, mid: 0, high: 0, rawLow: 0, rawMid: 0, rawHigh: 0 };
+      this.signals.update(this.config.audio?.signals || [], dt, b);
+      b.rawLow = this.signals.levels.low ?? 0;
+      b.rawMid = this.signals.levels.mid ?? 0;
+      b.rawHigh = this.signals.levels.high ?? 0;
+      this.lastBands = b;
     }
     if (this.signals) {
       this.signals.fillAudioTexture(this.audioData, 512);

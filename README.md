@@ -101,21 +101,27 @@ Two newer manipulation layers sit on top of the element system:
 
 ## Audio signals
 
-Beyond the fixed Low / Mid / High bands, **Audio Signals** works like
-TouchDesigner's Audio Spectrum, Lag and Math CHOPs:
+All audio reactivity runs on **signals**, TouchDesigner-style (Audio Spectrum,
+Lag, Math and Trigger CHOPs in one):
 
-- **Draw a range on the spectrum.** Each coloured box is a signal (Kick, Snare
-  and Hats to start; more from presets). Drag it, or drag its edges.
+- **Draw a range on the spectrum.** Each coloured box is a signal. Low, Mid and
+  High are always there (every shader's defaults use them); Kick, Snare and
+  Hats come next, and more from presets. Drag a box, or its edges.
 - **Shape it.** Auto-level (scales between its own recent floor and peak),
   Gain, Gate, Attack and Release in milliseconds, and a Curve for punch.
-  Signals read an unsmoothed FFT of their own, so transients come through.
+- **Follow or Trigger.** Follow tracks the level. Trigger turns each detected
+  hit into a clean envelope, up over Attack and away over Release. Hit
+  sensitivity sets how big a jump counts; the box flashes white on every hit.
+- **On hit.** Fire a one-shot action on each hit: camera cut, next palette,
+  next or previous shader, fire text, video slice jumps, model burst.
+  (Actions are spaced out so a hat line cannot flood them.)
 - **Use it anywhere a band is chosen.** Every Audio band menu lists the signals.
 - **Map it to any slider or amount.** Press Map on a signal, then click the ●
   next to any numeric setting. Its own slider sets where it rests; the depth
   (-100% to +100% of its range) sets how far the signal pushes it. Several
   signals add up on one setting. Driven settings have a purple ring.
 
-Code: `audio-signals.ts` (analysis, shaping, modulation), `param-ranges.ts`.
+Code: `audio-signals.ts` (analysis, hits, shaping, modulation), `param-ranges.ts`.
 
 ## Architecture
 
